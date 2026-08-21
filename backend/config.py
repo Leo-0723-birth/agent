@@ -34,7 +34,7 @@ LLM_MAX_TOKENS = 2000
 
 # ---------- Embedding ----------
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5")  # 或 stella-base-zh-v3
-EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "fallback")  # bge 需显式启用；默认零下载且不混称真实模型
+EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "bge")  # bge=BGE-large-zh-v1.5(1024维,权重已在项目内,自动回落)；fallback=零依赖兜底(65536维,与案例库不兼容)
 
 # ---------- 预测 ----------
 PREDICT_WINDOW = 60                       # 默认预测窗口（天）
@@ -86,3 +86,10 @@ INQUIRY_JSONL = Path(os.getenv("INQUIRY_JSONL", r"D:\新建文件夹\02_监管�
 RULE_RISKS_JSONL = Path(os.getenv("RULE_RISKS_JSONL", r"D:\新建文件夹\02_监管问询\02_风险标签\inquiry_rule_risks.jsonl"))
 EVAL_GT_NORMALIZED_CSV = Path(os.getenv("EVAL_GT_NORMALIZED_CSV", r"D:\新建文件夹\02_监管问询\05_标签评测与报告\evaluation_ground_truth_normalized.csv"))
 CASE_EXCERPT_CHARS = 1200      # 案例原文摘录截断长度
+
+# ---------- chunk 级段落检索（chunk_retriever / build_chunk_index） ----------
+CHUNK_DB_PATH = VECTOR_DB_DIR / "chunk_db.json"        # chunk 元数据（段落级）
+CHUNK_VEC_PATH = VECTOR_DB_DIR / "chunk_vectors.npy"   # chunk 向量（BGE 1024 维）
+CHUNK_TOP_K = 8                 # chunk 检索返回 Top-K
+CHUNK_INDEX_JSONL = Path(os.getenv("CHUNK_INDEX_JSONL",
+    r"D:\新建文件夹\02_监管问询\03_向量索引与Chroma\inquiry_embedding_index.jsonl"))
