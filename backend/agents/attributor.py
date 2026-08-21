@@ -17,27 +17,47 @@
 
 输入：company、ctx（prediction / semantic / financial / cases）
 输出：ctx.attribution
-      {top_risk_factors, evidence_citations, case_links, narrative, confidence}
+      {top_risk_factors, evidence_citations, case_links, narrative, confidence, validation}
+
+防幻觉（已落地）：
+    - narrative 生成只允许引用证据池（evidence_pool）中的 evidence_id；
+    - 生成后 validate_narrative() 校验引用，池外引用（幻觉）重试一次，再不行记录进
+      ctx.attribution.validation.hallucination_refs；
+    - evidence_citations 只输出被叙事实际引用的证据（白名单过滤）。
 
 TODO（后续优化）：
     - FEATURE_MAP 扩充：与 scripts/build_concern_dict.py 的关注点↔指标词典打通
-    - evidence_id 统一注册表：与公告研读/案例解析共用一套证据 ID 体系
-    - narrative 结构校验：LLM 输出引用必须都在证据池中，否则剔除/重试
+    - evidence_id 统一注册表：与公告研读/案例解析共用一套证据 ID 体系（当前为
+      本 Agent 本地生成 fin_XXX / sem_XXX，上游尚未写 evidence_id）
+    - 上游依赖：PredictorAgent 需产出 ctx.prediction.shap_features（当前为占位
+      NotImplementedError，归因只能走降级路径）
 """
+import re
+
 from ..llm import chat
 from .base import AgentBase
 
 # 标签 → 关键词：官方标签体系（任务1交付包）；缺失时退回 case_retriever 内置版
 try:
     from ..skills.risk_labels import expand_label_keywords
-except Exception:
-    from .case_retriever import LABEL_KEYWORDS as _FALLBACK_KWS
+except Exception:  # pragma: no cover - 仅当 risk_labels 不可用时兜底
+    from .case_retriever import label_keywords as _fallback_label_keywords
 
     def expand_label_keywords(labels):
         kws = set()
+        lk = _fallback_label_keywords()
         for lab in labels or []:
-            kws.update(_FALLBACK_KWS.get(lab, [lab]))
+            if not lab:
+                continue
+            mapped = lk.get(lab)
+            if mapped:
+                kws.update(mapped)
+            elif not str(lab).isascii():
+                kws.add(lab)
         return kws
+
+# 证据编号正则：只识别 fin_000 / sem_000 这类统一编号（防幻觉校验用）
+EVIDENCE_ID_RE = re.compile(r"\b(?:fin|sem)_\d{3}\b")
 
 # 特征 → 可读风险因素映射表（种子；build_concern_dict.py 产物可扩充）
 FEATURE_MAP = {
@@ -102,9 +122,18 @@ class AttributorAgent(AgentBase):
 
     # ============ Step 1b: 降级路径（无 SHAP 时用异常+风险标签） ============
     def fallback_factors(self, ctx):
-        """无 SHAP 时，用财务异常 + 公告风险标签作为诱因来源。"""
+        """无 SHAP 时，用财务异常 + 公告风险标签作为诱因来源。
+
+        返回结构与 SHAP 路径一致（统一 factor 字段），并标记 is_fallback=True，
+        供下游（报告/前端）区分"模型归因"与"规则降级归因"。
+        """
         factors = []
-        for a in ctx.financial.anomaly_list[:self.top_k]:
+        # 财务异常按严重度降序，取 top_k
+        anomalies = sorted(
+            ctx.financial.anomaly_list,
+            key=lambda a: -int(a.get("severity", 0)),
+        )
+        for a in anomalies[:self.top_k]:
             factors.append({
                 "feature": a.get("indicator", a.get("type")),
                 "shap": None,
@@ -112,24 +141,47 @@ class AttributorAgent(AgentBase):
                 "label_ref": a.get("label_ref", "综合"),
                 "source": "financial",
                 "evidence_id": None,
+                "is_fallback": True,
             })
-        for r in ctx.semantic.risk_factors[:self.top_k]:
+        # 公告风险要素按严重度降序，取 top_k
+        risks = sorted(
+            ctx.semantic.risk_factors,
+            key=lambda r: -int(r.get("severity", 0)),
+        )
+        for r in risks[:self.top_k]:
+            label = r.get("taxonomy_l2") or r.get("category") or "其他"
             factors.append({
-                "feature": "label_" + r.get("category", "其他"),
+                "feature": "label_" + str(label),
                 "shap": None,
                 "description": r.get("description", ""),
-                "label_ref": r.get("category", "其他"),
+                "label_ref": str(label),
                 "source": "semantic",
                 "evidence_id": None,
+                "is_fallback": True,
             })
         return factors
 
     # ============ Step 2: 特征 → 可读风险因素映射 ============
     def map_factors(self, top_features):
-        """黑盒特征名 → {description, label_ref, source}。"""
-        return [{"feature": n, "shap": v, **FEATURE_MAP.get(n,
-                {"desc": n, "label_ref": "其他", "source": "unknown"})}
-                for n, v in top_features]
+        """黑盒特征名 → 统一 factor 结构 {feature, shap, description, label_ref, source}。
+
+        FEATURE_MAP 中的 "desc" 统一归一为 "description"，与降级路径字段对齐。
+        """
+        mapped = []
+        for n, v in top_features:
+            m = FEATURE_MAP.get(
+                n, {"desc": n, "label_ref": "其他", "source": "unknown"}
+            )
+            mapped.append({
+                "feature": n,
+                "shap": v,
+                "description": m.get("desc", n),
+                "label_ref": m.get("label_ref", "其他"),
+                "source": m.get("source", "unknown"),
+                "evidence_id": None,
+                "is_fallback": False,
+            })
+        return mapped
 
     # ============ Step 3: 证据池 + 证据定位 ============
     def _build_evidence_pool(self, ctx):
@@ -181,21 +233,33 @@ class AttributorAgent(AgentBase):
         return [c for c, _ in scored[:3]]
 
     # ============ Step 5: LLM 归因叙事（证据白名单防幻觉） ============
-    def narrative_generate(self, company, ctx, factors, pool, links):
-        """生成自然语言归因。只允许引用证据池中的 evidence_id，禁止编造。"""
+    def narrative_generate(self, company, ctx, factors, pool, links, reject_ids=None):
+        """生成自然语言归因。只允许引用证据池中的 evidence_id，禁止编造。
+
+        reject_ids：上一次生成校验出的池外引用（幻觉编号），本次显式禁止。
+        """
         factor_text = "\n".join(
-            [f"- {f.get('description', f.get('feature'))}（SHAP={f.get('shap')}，证据={f.get('evidence_id')}）"
+            [f"- {f.get('description', f.get('feature'))}"
+             f"（{'规则降级' if f.get('is_fallback') else 'SHAP=' + str(f.get('shap'))}"
+             f"，证据={f.get('evidence_id')}）"
              for f in factors])
         pool_text = "\n".join(
             [f"[{e['evidence_id']}] {e['snippet']}" for e in pool if e.get("snippet")])
         case_text = "\n".join(
             [f"- {c.get('company')}｜{c.get('inquiry_type')}｜相似度{c.get('similarity')}｜关注点{c.get('topics')}"
              for c in links]) or "- 无高度重合的相似案例"
+        reject_text = ""
+        if reject_ids:
+            reject_text = (
+                f"\n【硬性约束】以下编号不在证据池中，本次禁止引用："
+                f"{', '.join(reject_ids)}"
+            )
         prompt = (
             f"公司 {company} 被问询概率 {ctx.prediction.get('probability_60d')}，"
             f"风险等级 {ctx.prediction.get('risk_level')}。\n\n"
             f"Top 风险因素（含证据编号）：\n{factor_text}\n\n"
-            f"证据池（只能引用以下 evidence_id，禁止编造任何证据）：\n{pool_text}\n\n"
+            f"证据池（只能引用以下 evidence_id，禁止编造任何证据）：\n{pool_text}"
+            f"{reject_text}\n\n"
             f"相似历史案例：\n{case_text}\n\n"
             "请生成 3-5 句话的归因解释：先讲最可能触发监管问询的诱因（引用证据编号），"
             "再讲历史先例佐证。必须引用证据池中的 evidence_id，禁止编造数字或证据。"
@@ -205,6 +269,16 @@ class AttributorAgent(AgentBase):
                         prompt, temperature=0.1, json_mode=False)
         except Exception as e:
             return f"[归因叙事生成失败] {e}"
+
+    def validate_narrative(self, narrative, pool):
+        """校验叙事引用的 evidence_id 是否都在证据池（防幻觉白名单）。
+
+        返回 (cited_ids, invalid_ids)：cited_ids 为叙事中出现的全部证据编号，
+        invalid_ids 为其中不在证据池的部分（幻觉引用，应剔除或重试）。
+        """
+        cited = set(EVIDENCE_ID_RE.findall(narrative or ""))
+        valid_ids = {e.get("evidence_id") for e in pool if e.get("evidence_id")}
+        return cited & valid_ids, cited - valid_ids
 
     # ============ 主入口 ============
     def execute(self, company, ctx):
@@ -224,18 +298,39 @@ class AttributorAgent(AgentBase):
         # Step 4: 案例链接
         links = self.case_link(factors, ctx.cases)
 
-        # Step 5: 叙事
+        # Step 5: 叙事（含防幻觉校验：池外引用重试一次，再不行记录）
         narrative = ""
+        hallucination_refs = []
         if self.use_llm:
             narrative = self.narrative_generate(company, ctx, factors, pool, links)
+            _cited, invalid = self.validate_narrative(narrative, pool)
+            if invalid:
+                narrative = self.narrative_generate(
+                    company, ctx, factors, pool, links, reject_ids=sorted(invalid)
+                )
+                _cited, invalid = self.validate_narrative(narrative, pool)
+                hallucination_refs = sorted(invalid)
 
-        # Step 6: 聚合输出
+        # Step 6: 聚合输出（evidence_citations 只保留被叙事实际引用的证据）
+        cited_ids = set(EVIDENCE_ID_RE.findall(narrative or "")) if narrative else set()
+        evidence_citations = [
+            {k: e.get(k) for k in ("evidence_id", "source", "label_ref", "snippet") if e.get(k)}
+            for e in pool
+            if e.get("evidence_id") and e.get("evidence_id") in cited_ids
+        ]
         ctx.attribution = {
             "top_risk_factors": factors,
-            "evidence_citations": [e for e in pool if e.get("evidence_id")],
+            "evidence_citations": evidence_citations,
             "case_links": links,
             "narrative": narrative,
             "confidence": ctx.prediction.get("confidence", 0),
+            "validation": {
+                "factors_with_evidence": len(factors),
+                "cited_evidence_count": len(evidence_citations),
+                "case_link_count": len(links),
+                "hallucination_refs": hallucination_refs,
+                "narrative_validated": not hallucination_refs,
+            },
         }
         return ctx
 
