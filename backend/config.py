@@ -34,7 +34,7 @@ LLM_MAX_TOKENS = 2000
 
 # ---------- Embedding ----------
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5")  # 或 stella-base-zh-v3
-EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "fallback")  # bge 需显式启用；默认零下载且不混称真实模型
+EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "bge")  # bge=BGE-large-zh-v1.5(1024维,权重已在项目内,自动回落)；fallback=零依赖兜底(65536维,与案例库不兼容)
 
 # ---------- 预测 ----------
 PREDICT_WINDOW = 60                       # 默认预测窗口（天）
