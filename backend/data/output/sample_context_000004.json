@@ -1,0 +1,533 @@
+{
+  "company": "000004.SZ",
+  "name": "",
+  "window": 60,
+  "as_of": "2025-12-02",
+  "semantic": {
+    "announcements": [
+      {
+        "id": "cn_1224841421",
+        "year": 2025,
+        "type": "risk_warning",
+        "path": "D:\\BaiduNetdiskDownload\\000004.SZ\\2025\\risk_warning\\cn_1224841421.pdf",
+        "date": "2025-12-02",
+        "title": "股票交易异常波动公告",
+        "char_count": 1977
+      },
+      {
+        "id": "cn_1224706390",
+        "year": 2025,
+        "type": "risk_warning",
+        "path": "D:\\BaiduNetdiskDownload\\000004.SZ\\2025\\risk_warning\\cn_1224706390.pdf",
+        "date": "2025-10-13",
+        "title": "股票交易异常波动公告",
+        "char_count": 1843
+      },
+      {
+        "id": "cn_1223627988",
+        "year": 2025,
+        "type": "risk_warning",
+        "path": "D:\\BaiduNetdiskDownload\\000004.SZ\\2025\\risk_warning\\cn_1223627988.pdf",
+        "date": "2025-05-22",
+        "title": "股票交易异常波动公告",
+        "char_count": 1570
+      },
+      {
+        "id": "cn_1223537551",
+        "year": 2025,
+        "type": "risk_warning",
+        "path": "D:\\BaiduNetdiskDownload\\000004.SZ\\2025\\risk_warning\\cn_1223537551.pdf",
+        "date": "2025-05-14",
+        "title": "股票交易异常波动公告",
+        "char_count": 1350
+      },
+      {
+        "id": "cn_1223478371",
+        "year": 2025,
+        "type": "risk_warning",
+        "path": "D:\\BaiduNetdiskDownload\\000004.SZ\\2025\\risk_warning\\cn_1223478371.pdf",
+        "date": "2025-05-07",
+        "title": "股票交易异常波动公告",
+        "char_count": 1342
+      },
+      {
+        "id": "cn_1223381900",
+        "year": 2025,
+        "type": "equity_distribution",
+        "path": "D:\\BaiduNetdiskDownload\\000004.SZ\\2025\\equity_distribution\\cn_1223381900.pdf",
+        "date": "2025-04-29",
+        "title": "关于2024 年度拟不进行利润分配的公告",
+        "char_count": 2044
+      },
+      {
+        "id": "cn_1222867799",
+        "year": 2025,
+        "type": "risk_warning",
+        "path": "D:\\BaiduNetdiskDownload\\000004.SZ\\2025\\risk_warning\\cn_1222867799.pdf",
+        "date": "2025-03-22",
+        "title": "第三次提示性公告",
+        "char_count": 1525
+      },
+      {
+        "id": "cn_1222606129",
+        "year": 2025,
+        "type": "risk_warning",
+        "path": "D:\\BaiduNetdiskDownload\\000004.SZ\\2025\\risk_warning\\cn_1222606129.pdf",
+        "date": "2025-02-22",
+        "title": "第二次提示性公告",
+        "char_count": 1514
+      },
+      {
+        "id": "cn_1222365678",
+        "year": 2024,
+        "type": "performance_forecast",
+        "path": "D:\\BaiduNetdiskDownload\\000004.SZ\\2024\\performance_forecast\\cn_1222365678.pdf",
+        "date": "2025-01-18",
+        "title": "本报告期",
+        "char_count": 1266
+      },
+      {
+        "id": "cn_1222365679",
+        "year": 2025,
+        "type": "risk_warning",
+        "path": "D:\\BaiduNetdiskDownload\\000004.SZ\\2025\\risk_warning\\cn_1222365679.pdf",
+        "date": "2025-01-18",
+        "title": "提示性公告",
+        "char_count": 1244
+      },
+      {
+        "id": "cn_1223381895",
+        "year": 2024,
+        "type": "annual_report",
+        "path": "D:\\BaiduNetdiskDownload\\000004.SZ\\2024\\annual_report\\cn_1223381895.pdf",
+        "date": "2025-01-02",
+        "title": "深圳国华网安科技股份有限公司2024 年年度报告摘要",
+        "char_count": 15397
+      },
+      {
+        "id": "cn_1223381901",
+        "year": 2024,
+        "type": "annual_report",
+        "path": "D:\\BaiduNetdiskDownload\\000004.SZ\\2024\\annual_report\\cn_1223381901.pdf",
+        "date": "2024-12-31",
+        "title": "深圳国华网安科技股份有限公司2024 年年度报告全文",
+        "char_count": 209995
+      },
+      {
+        "id": "cn_1222129862",
+        "year": 2024,
+        "type": "risk_warning",
+        "path": "D:\\BaiduNetdiskDownload\\000004.SZ\\2024\\risk_warning\\cn_1222129862.pdf",
+        "date": "2024-12-25",
+        "title": "股票交易异常波动公告",
+        "char_count": 1194
+      }
+    ],
+    "finbert_signals": [
+      {
+        "announcement_id": "cn_1224841421",
+        "categories": [],
+        "max_score": 0.0
+      },
+      {
+        "announcement_id": "cn_1224706390",
+        "categories": [],
+        "max_score": 0.0
+      },
+      {
+        "announcement_id": "cn_1223627988",
+        "categories": [],
+        "max_score": 0.0
+      },
+      {
+        "announcement_id": "cn_1223537551",
+        "categories": [],
+        "max_score": 0.0
+      },
+      {
+        "announcement_id": "cn_1223478371",
+        "categories": [],
+        "max_score": 0.0
+      },
+      {
+        "announcement_id": "cn_1223381900",
+        "categories": [],
+        "max_score": 0.0
+      },
+      {
+        "announcement_id": "cn_1222867799",
+        "categories": [],
+        "max_score": 0.0
+      },
+      {
+        "announcement_id": "cn_1222606129",
+        "categories": [],
+        "max_score": 0.0
+      },
+      {
+        "announcement_id": "cn_1222365678",
+        "categories": [],
+        "max_score": 0.0
+      },
+      {
+        "announcement_id": "cn_1222365679",
+        "categories": [],
+        "max_score": 0.0
+      },
+      {
+        "announcement_id": "cn_1223381895",
+        "categories": [],
+        "max_score": 0.0
+      },
+      {
+        "announcement_id": "cn_1223381901",
+        "categories": [],
+        "max_score": 0.0
+      },
+      {
+        "announcement_id": "cn_1222129862",
+        "categories": [],
+        "max_score": 0.0
+      }
+    ],
+    "risk_factors": [],
+    "evidence_snippets": [],
+    "per_announcement": {
+      "cn_1224841421": {
+        "risk_factors": [],
+        "risk_level": "none",
+        "summary": ""
+      },
+      "cn_1224706390": {
+        "risk_factors": [],
+        "risk_level": "none",
+        "summary": ""
+      },
+      "cn_1223627988": {
+        "risk_factors": [],
+        "risk_level": "none",
+        "summary": ""
+      },
+      "cn_1223537551": {
+        "risk_factors": [],
+        "risk_level": "none",
+        "summary": ""
+      },
+      "cn_1223478371": {
+        "risk_factors": [],
+        "risk_level": "none",
+        "summary": ""
+      },
+      "cn_1223381900": {
+        "risk_factors": [],
+        "risk_level": "none",
+        "summary": ""
+      },
+      "cn_1222867799": {
+        "risk_factors": [],
+        "risk_level": "none",
+        "summary": ""
+      },
+      "cn_1222606129": {
+        "risk_factors": [],
+        "risk_level": "none",
+        "summary": ""
+      },
+      "cn_1222365678": {
+        "risk_factors": [],
+        "risk_level": "none",
+        "summary": ""
+      },
+      "cn_1222365679": {
+        "risk_factors": [],
+        "risk_level": "none",
+        "summary": ""
+      },
+      "cn_1223381895": {
+        "risk_factors": [],
+        "risk_level": "none",
+        "summary": ""
+      },
+      "cn_1223381901": {
+        "risk_factors": [],
+        "risk_level": "none",
+        "summary": ""
+      },
+      "cn_1222129862": {
+        "risk_factors": [],
+        "risk_level": "none",
+        "summary": ""
+      }
+    },
+    "stats": {
+      "announcement_count": 13,
+      "llm_processed_count": 13,
+      "gated_count": 0,
+      "risk_factor_count": 0,
+      "high_severity_count": 0,
+      "window_days": 365,
+      "as_of": "2025-12-02"
+    }
+  },
+  "financial": {
+    "features": {
+      "anomaly_count": 2,
+      "max_severity": 4,
+      "cf_income_ratio": 4.381,
+      "roe": -7.05,
+      "roe_trend_4q": 8.462,
+      "debt_to_assets_ratio": 66.5686248588,
+      "revenue_yoy_growth": -9.340795922822,
+      "net_profit_yoy_growth": 45.348429138349
+    },
+    "anomaly_list": [
+      {
+        "type": "双负信号",
+        "severity": 4,
+        "indicator": "cf_income_ratio",
+        "value": 4.381,
+        "threshold": "net_profit<0 且 operating_cash_flow<0（比值失真，直接预警）",
+        "evidence": "净利润 -639万 与经营现金流 -2799万 均为负，盈利质量严重恶化",
+        "label_ref": "盈利质量"
+      },
+      {
+        "type": "亏损",
+        "severity": 4,
+        "indicator": "roe",
+        "value": -7.05,
+        "threshold": "< 0.0",
+        "evidence": "ROE = -7.05% < 0.0，净资产亏损",
+        "label_ref": "盈利能力"
+      }
+    ],
+    "indicators": {
+      "report_period": 20260331,
+      "total_revenue": 16622745.12,
+      "net_profit": -6388269.49,
+      "operating_cash_flow": -27987206.99,
+      "roe": -7.05,
+      "roa": -1.0487025968,
+      "debt_to_assets_ratio": 66.5686248588,
+      "revenue_yoy_growth": -9.340795922822,
+      "net_profit_yoy_growth": 45.348429138349,
+      "cf_to_profit": 4.381,
+      "roe_trend_4q": 8.462,
+      "industry": "信息传输、软件和信息技术服务业-软件和信息技术服务业"
+    },
+    "benchmarks": {
+      "note": "无行业对标样本（config.FIN_WIND_CSV 未配置）"
+    },
+    "industry": "信息传输、软件和信息技术服务业-软件和信息技术服务业",
+    "risk_level": "中",
+    "skip": false,
+    "skip_reason": "",
+    "llm_analysis": ""
+  },
+  "features": {},
+  "prediction": {
+    "probability_60d": null,
+    "risk_level": "未预测",
+    "confidence": null,
+    "shap_features": []
+  },
+  "cases": [
+    {
+      "case_id": "IC-000005.SZ-2023614",
+      "company": "000005.SZ",
+      "inquiry_type": "年报问询函",
+      "publish_date": "2023/6/14",
+      "topics": [
+        "分析营业收入、扣非前后净利润及经营性现金流下滑原因",
+        "持续经营能力是否存在不确定性",
+        "保留意见事项的审计证据获取情况和广泛性判断",
+        "违规担保事项进展与合规性",
+        "非经营性资金占用及其他关联资金往来情况"
+      ],
+      "similarity": 0.0313,
+      "letter_excerpt": "1深圳证券交易所关于对深圳世纪星源股份有限公司2022年年报的问询函公司部年报问询函〔2023〕第320号深圳世纪星源股份有限公司董事会：我部在对你公司2022年年度报告（以下简称年报）进行审查的过程中，关注到如下事项：1、报告期内，你公司实现营业收入2.84亿元，同比下滑26.02%；实现归属于上市公司股东的净利润（以下简称净利润）-1.56亿元，同比下滑212.24%；实现归属于上市公司股东的"
+    },
+    {
+      "case_id": "IC-000014.SZ-2022127",
+      "company": "000014.SZ",
+      "inquiry_type": "关注函",
+      "publish_date": "2022/1/27",
+      "topics": [
+        "核实第四季度主营业务收入构成、毛利率差异及扭亏合理性",
+        "说明长沙沙河城项目及新乡世纪新城项目销售情况及其收入确认",
+        "是否存在应扣除的营业收入并核查其合规性",
+        "评估是否触及退市风险警示情形"
+      ],
+      "similarity": 0.0312,
+      "letter_excerpt": "1关于对沙河实业股份有限公司2021年年报的问询函公司部年报问询函〔2022〕第67号沙河实业股份有限公司董事会：我部在对你公司2021年年度报告（以下简称“年报”）进行审查的过程中，关注到如下事项：1.年报显示，你公司2021年营业收入、归属于上市公司股东的净利润（以下简称“净利润”）、归属于上市公司股东的扣除非经常性损益的净利润（以下简称“扣非后净利润”）分别较上年大幅增加85.11%、709"
+    },
+    {
+      "case_id": "IC-000005.SZ-2022525",
+      "company": "000005.SZ",
+      "inquiry_type": "年报问询函",
+      "publish_date": "2022/5/25",
+      "topics": [
+        "2021年审计意见类型为保留意见的具体事项及原因",
+        "非经营性资金占用及其他关联资金往来的具体情况",
+        "内部控制缺陷的整改情况及影响",
+        "子公司股权因诉讼被冻结的情况",
+        "扣非净利润、营业收入与经营活动现金流量净额变动不匹配的原因"
+      ],
+      "similarity": 0.0306,
+      "letter_excerpt": "1关于对深圳世纪星源股份有限公司的关注函公司部关注函〔2022〕第16号深圳世纪星源股份有限公司董事会：2021年4月30日，你公司披露《关于违规担保整改进展公告》称，公司与各民间借贷出借人、被担保债务原其他担保人等就公司担保义务的免责事项达成《对世纪星源公司担保义务的免责协议书》（以下简称《免责协议书》），约定出借人无条件同意免除你公司担保义务，放弃对你公司担保的任何法律追索，被担保债务的主债务"
+    },
+    {
+      "case_id": "IC-000014.SZ-2022413",
+      "company": "000014.SZ",
+      "inquiry_type": "年报问询函",
+      "publish_date": "2022/4/13",
+      "topics": [
+        "营业收入和扣非前后净利润大幅增加的原因及合理性，以及经营活动产生的现金流量净额为负且与营业收入、净利润变动趋势相背离的原因。",
+        "资本化借款费用的计算过程及合规性，存货跌价准备计提的充分性和合规性。",
+        "报告期新增在建工程的具体情况及其审计程序。",
+        "土地储备和未来经营业绩的相关问题"
+      ],
+      "similarity": 0.0306,
+      "letter_excerpt": "1关于对沙河实业股份有限公司2021年年报的问询函公司部年报问询函〔2022〕第67号沙河实业股份有限公司董事会：我部在对你公司2021年年度报告（以下简称“年报”）进行审查的过程中，关注到如下事项：1.年报显示，你公司2021年营业收入、归属于上市公司股东的净利润（以下简称“净利润”）、归属于上市公司股东的扣除非经常性损益的净利润（以下简称“扣非后净利润”）分别较上年大幅增加85.11%、709"
+    },
+    {
+      "case_id": "IC-000009.SZ-202397",
+      "company": "000009.SZ",
+      "inquiry_type": "关注函",
+      "publish_date": "2023/9/7",
+      "topics": [
+        "未按时完成董事局和监事会换届选举及进展披露"
+      ],
+      "similarity": 0.0164,
+      "letter_excerpt": "1深圳证券交易所关于对中国宝安集团股份有限公司的关注函公司部关注函〔2023〕第305号中国宝安集团股份有限公司董事会：2019年6月27日，你公司股东大会完成了第十四届董事局、第十届监事会的换届选举。根据你公司《公司章程》，董事、监事的任期均为三年，你公司第十四届董事局、第十届监事会的任期现均已届满。截至目前，你公司仍未完成董事局和监事会的换届选举工作，也未披露董事局和监事会延期换届事项具体进展"
+    }
+  ],
+  "attribution": {
+    "top_risk_factors": [
+      {
+        "feature": "cf_income_ratio",
+        "shap": null,
+        "description": "净利润 -639万 与经营现金流 -2799万 均为负，盈利质量严重恶化",
+        "label_ref": "盈利质量",
+        "source": "financial",
+        "evidence_id": "fin_000"
+      },
+      {
+        "feature": "roe",
+        "shap": null,
+        "description": "ROE = -7.05% < 0.0，净资产亏损",
+        "label_ref": "盈利能力",
+        "source": "financial",
+        "evidence_id": "fin_001"
+      }
+    ],
+    "evidence_citations": [
+      {
+        "evidence_id": "fin_000",
+        "source": "财务异常检测",
+        "label_ref": "盈利质量",
+        "indicator": "cf_income_ratio",
+        "snippet": "净利润 -639万 与经营现金流 -2799万 均为负，盈利质量严重恶化"
+      },
+      {
+        "evidence_id": "fin_001",
+        "source": "财务异常检测",
+        "label_ref": "盈利能力",
+        "indicator": "roe",
+        "snippet": "ROE = -7.05% < 0.0，净资产亏损"
+      }
+    ],
+    "case_links": [
+      {
+        "case_id": "IC-000005.SZ-2023614",
+        "company": "000005.SZ",
+        "inquiry_type": "年报问询函",
+        "publish_date": "2023/6/14",
+        "topics": [
+          "分析营业收入、扣非前后净利润及经营性现金流下滑原因",
+          "持续经营能力是否存在不确定性",
+          "保留意见事项的审计证据获取情况和广泛性判断",
+          "违规担保事项进展与合规性",
+          "非经营性资金占用及其他关联资金往来情况"
+        ],
+        "similarity": 0.0313,
+        "letter_excerpt": "1深圳证券交易所关于对深圳世纪星源股份有限公司2022年年报的问询函公司部年报问询函〔2023〕第320号深圳世纪星源股份有限公司董事会：我部在对你公司2022年年度报告（以下简称年报）进行审查的过程中，关注到如下事项：1、报告期内，你公司实现营业收入2.84亿元，同比下滑26.02%；实现归属于上市公司股东的净利润（以下简称净利润）-1.56亿元，同比下滑212.24%；实现归属于上市公司股东的"
+      },
+      {
+        "case_id": "IC-000005.SZ-2022525",
+        "company": "000005.SZ",
+        "inquiry_type": "年报问询函",
+        "publish_date": "2022/5/25",
+        "topics": [
+          "2021年审计意见类型为保留意见的具体事项及原因",
+          "非经营性资金占用及其他关联资金往来的具体情况",
+          "内部控制缺陷的整改情况及影响",
+          "子公司股权因诉讼被冻结的情况",
+          "扣非净利润、营业收入与经营活动现金流量净额变动不匹配的原因"
+        ],
+        "similarity": 0.0306,
+        "letter_excerpt": "1关于对深圳世纪星源股份有限公司的关注函公司部关注函〔2022〕第16号深圳世纪星源股份有限公司董事会：2021年4月30日，你公司披露《关于违规担保整改进展公告》称，公司与各民间借贷出借人、被担保债务原其他担保人等就公司担保义务的免责事项达成《对世纪星源公司担保义务的免责协议书》（以下简称《免责协议书》），约定出借人无条件同意免除你公司担保义务，放弃对你公司担保的任何法律追索，被担保债务的主债务"
+      },
+      {
+        "case_id": "IC-000014.SZ-2022413",
+        "company": "000014.SZ",
+        "inquiry_type": "年报问询函",
+        "publish_date": "2022/4/13",
+        "topics": [
+          "营业收入和扣非前后净利润大幅增加的原因及合理性，以及经营活动产生的现金流量净额为负且与营业收入、净利润变动趋势相背离的原因。",
+          "资本化借款费用的计算过程及合规性，存货跌价准备计提的充分性和合规性。",
+          "报告期新增在建工程的具体情况及其审计程序。",
+          "土地储备和未来经营业绩的相关问题"
+        ],
+        "similarity": 0.0306,
+        "letter_excerpt": "1关于对沙河实业股份有限公司2021年年报的问询函公司部年报问询函〔2022〕第67号沙河实业股份有限公司董事会：我部在对你公司2021年年度报告（以下简称“年报”）进行审查的过程中，关注到如下事项：1.年报显示，你公司2021年营业收入、归属于上市公司股东的净利润（以下简称“净利润”）、归属于上市公司股东的扣除非经常性损益的净利润（以下简称“扣非后净利润”）分别较上年大幅增加85.11%、709"
+      }
+    ],
+    "narrative": "",
+    "confidence": null
+  },
+  "report": {},
+  "trace_log": [
+    {
+      "run_id": "a1063314",
+      "agent": "AnnouncementReader",
+      "company": "000004.SZ",
+      "timestamp": "2026-08-18T16:58:14.989831",
+      "output_summary": {},
+      "latency_ms": 1074,
+      "trace_complete": true
+    },
+    {
+      "run_id": "d67ff97e",
+      "agent": "FinancialDetector",
+      "company": "000004.SZ",
+      "timestamp": "2026-08-18T16:58:16.217818",
+      "output_summary": {},
+      "latency_ms": 1227,
+      "trace_complete": true
+    },
+    {
+      "agent": "Predictor",
+      "status": "skipped",
+      "reason": "预测建模 Agent 未填充: ",
+      "trace_complete": true
+    },
+    {
+      "run_id": "3e3ea575",
+      "agent": "CaseRetriever",
+      "company": "000004.SZ",
+      "timestamp": "2026-08-18T16:58:16.232857",
+      "output_summary": {},
+      "latency_ms": 13,
+      "trace_complete": true
+    },
+    {
+      "run_id": "3c39f2b2",
+      "agent": "Attributor",
+      "company": "000004.SZ",
+      "timestamp": "2026-08-18T16:58:16.233193",
+      "output_summary": {},
+      "latency_ms": 0,
+      "trace_complete": true
+    }
+  ]
+}

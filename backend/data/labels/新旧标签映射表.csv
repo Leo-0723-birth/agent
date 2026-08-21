@@ -1,0 +1,14 @@
+﻿旧标签,旧类别,新体系映射,处理方式,说明
+performance_loss_or_decline,财务与业绩风险,A03 利润、扣非利润与业绩波动,直接映射,
+material_asset_impairment,财务与业绩风险,C01/C02/C03/C04/C05 + C类候选,★按资产对象拆分,原标签混合了各类资产减值。拆为：商誉→C03、应收→C01、存货→C02、固定资产/在建工程→C04、无形资产→C05；仅写'重大资产减值'未指明对象的，规则层只召回C类候选，由LLM结合上下文判定，仍无法识别则进C-OTHER观察池
+debt_overdue_or_default,偿债与流动性风险,D04 债务逾期、违约与展期,直接映射,
+liquidity_pressure,偿债与流动性风险,D03 债务结构与偿债能力,直接映射,
+fund_occupation_or_illegal_guarantee,公司治理风险,E03 + D05,★拆分为两条,原标签混合两个不同风险对象。资金占用→E03非经营性资金占用；违规担保→D05担保、抵质押与或有负债。注：'违规'属质疑性质(Q11合规性)，不改变主题归属
+internal_control_defect,公司治理风险,F06 内部控制、三会治理与公司独立性,直接映射,
+controlling_shareholder_pledge_or_freeze,公司治理风险,F03 股权质押、冻结与司法处置,直接映射,
+regulatory_investigation_or_penalty,合规与诉讼风险,G07 立案调查、监管处罚与其他合规事项,直接映射,
+material_litigation_or_arbitration,合规与诉讼风险,G07 或 D05（候选）,仅召回L1,诉讼仲裁可能属合规问题(G07)或或有负债(D05)，规则层不定L2，由LLM结合上下文判定
+modified_audit_opinion,合规与诉讼风险,G01 审计意见与非标准审计意见,直接映射,
+material_operation_disruption,经营与市场风险,A06 经营稳定性与持续经营能力,直接映射,扩展标签：停产/重大事故/生产经营中断。若同时涉及监管处罚，可加辅助主题G07
+delisting_or_listing_risk,经营与市场风险,A06 经营稳定性与持续经营能力,直接映射,退市风险本质是持续经营能力问题
+abnormal_stock_trading,经营与市场风险,H01 股价、成交量与市场交易异常,直接映射,

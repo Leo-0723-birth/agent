@@ -1,0 +1,14 @@
+# 扫雷预警系统 依赖
+python-dotenv>=1.0      # .env 密钥加载
+numpy>=1.26
+pandas>=2.0
+scipy>=1.11             # F2 特征计算（Beneish/Benford 等）
+requests>=2.31          # 东方财富/腾讯接口
+PyMuPDF>=1.23           # PDF 解析（公告/问询函）
+torch>=2.0              # FinBERT2-base / BGE 向量
+transformers>=4.38
+streamlit>=1.30         # 演示页
+
+# 可选（接入队友预测模型后启用）：
+# lightgbm>=4.0         # PredictorAgent
+# pyarrow>=15.0         # 读 modeling_dataset.parquet
