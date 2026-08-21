@@ -1,19 +1,27 @@
 # -*- coding: utf-8 -*-
-"""agents 包：7 个 Agent + 基类 + 主控编排。
-
-填充说明：各 Agent 类实现后，取消下方注释即可统一导出。
-当前已实现：base（AgentBase/TraceLogger）。
-"""
+"""Agent 公共导出；具体实现按需加载，避免无关可选依赖互相阻塞。"""
 from .base import AgentBase, TraceLogger
-from .announcement_reader import AnnouncementReaderAgent
-from .financial_detector import FinancialDetectorAgent
-from .case_retriever import CaseRetrieverAgent
-from .attributor import AttributorAgent
-from .reporter import ReporterAgent
-from .orchestrator import SweepingOrchestrator
-
-# from .predictor import PredictorAgent
 
 __all__ = ["AgentBase", "TraceLogger", "AnnouncementReaderAgent",
            "FinancialDetectorAgent", "CaseRetrieverAgent",
            "AttributorAgent", "ReporterAgent", "SweepingOrchestrator"]
+
+_LAZY_EXPORTS = {
+    "AnnouncementReaderAgent": (".announcement_reader", "AnnouncementReaderAgent"),
+    "FinancialDetectorAgent": (".financial_detector", "FinancialDetectorAgent"),
+    "CaseRetrieverAgent": (".case_retriever", "CaseRetrieverAgent"),
+    "AttributorAgent": (".attributor", "AttributorAgent"),
+    "ReporterAgent": (".reporter", "ReporterAgent"),
+    "SweepingOrchestrator": (".orchestrator", "SweepingOrchestrator"),
+}
+
+
+def __getattr__(name):
+    if name not in _LAZY_EXPORTS:
+        raise AttributeError(name)
+    from importlib import import_module
+
+    module_name, attribute = _LAZY_EXPORTS[name]
+    value = getattr(import_module(module_name, __name__), attribute)
+    globals()[name] = value
+    return value

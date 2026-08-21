@@ -79,13 +79,15 @@ def _fallback_embed(texts):
 
 
 # ================= 统一入口 =================
-def embed(texts):
-    """把若干文本编码为 L2 归一化向量 (n, dim)。"""
+def embed(texts, allow_fallback=True):
+    """把文本编码为向量；生产特征可禁止静默降级以避免混用向量空间。"""
     texts = [t if t else " " for t in texts]
     if EMBEDDING_BACKEND == "bge":
         try:
             return _bge_embed(texts)
         except Exception as e:
+            if not allow_fallback:
+                raise RuntimeError(f"BGE embedding failed: {e}") from e
             print(f"[embedding] BGE 加载失败，退回 fallback: {e}")
     return _fallback_embed(texts)
 

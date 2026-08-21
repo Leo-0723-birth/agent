@@ -1,0 +1,113 @@
+from pathlib import Path
+
+from streamlit.testing.v1 import AppTest
+
+from backend.dashboard_utils import (
+    risk_theme_distribution_rows,
+    risk_theme_name,
+    risk_window_comparison_rows,
+)
+
+
+def test_streamlit_app_initial_view_has_query_form():
+    app_path = Path(__file__).resolve().parents[2] / "streamlit_app.py"
+    app = AppTest.from_file(str(app_path), default_timeout=15).run()
+
+    assert not app.exception
+    assert app.title[0].value == "公告研读 Agent"
+    assert app.text_input[0].value == "000001"
+    assert app.button[0].label == "开始研读"
+
+
+def test_risk_theme_distribution_uses_selected_window_and_readable_names():
+    counts = {
+        "30d": {"A03": 1},
+        "60d": {"A03": 2},
+        "90d": {"C-CANDIDATE": 3, "A03": 1},
+    }
+
+    rows = risk_theme_distribution_rows(counts, 90)
+
+    assert [row["主题代码"] for row in rows] == ["C-CANDIDATE", "A03"]
+    assert rows[0]["风险主题"] == "资产质量与减值（待精分类）"
+    assert rows[0]["事件数"] == 3
+    assert rows[0]["占比"] == 0.75
+    assert risk_theme_name("A03") == "利润、扣非利润与业绩波动"
+
+
+def test_risk_theme_distribution_ignores_invalid_or_empty_counts():
+    counts = {"90d": {"A03": "2", "G07": 0, "BAD": {"nested": 1}}}
+
+    rows = risk_theme_distribution_rows(counts, 90)
+
+    assert len(rows) == 1
+    assert rows[0]["主题代码"] == "A03"
+    assert rows[0]["事件数"] == 2
+
+
+def test_streamlit_result_view_renders_selected_window_chart():
+    app_path = Path(__file__).resolve().parents[2] / "streamlit_app.py"
+    app = AppTest.from_file(str(app_path), default_timeout=15)
+    app.session_state["announcement_analysis"] = {
+        "name": "测试公司",
+        "company": "000001",
+        "as_of": "2026-08-21",
+        "semantic": {
+            "stats": {},
+            "data_quality": {"lookback_days": 365, "source": "巨潮资讯网"},
+            "channel_summary": {},
+            "risk_factors": [],
+            "announcements": [],
+            "f1_features": {
+                "category_event_counts": {
+                    "30d": {"A03": 1},
+                    "60d": {"A03": 2},
+                    "90d": {"C-CANDIDATE": 3, "A03": 1},
+                },
+                "scalar_features": {
+                    "announcement_count_30d": 5,
+                    "announcement_count_60d": 8,
+                    "announcement_count_90d": 10,
+                    "risk_event_count_30d": 1,
+                    "risk_event_count_60d": 2,
+                    "risk_event_count_90d": 4,
+                    "high_risk_event_count_30d": 0,
+                    "high_risk_event_count_60d": 1,
+                    "high_risk_event_count_90d": 2,
+                },
+            },
+        },
+    }
+
+    app.run()
+
+    assert not app.exception
+    assert app.segmented_control[0].value == "最近 90 天"
+    assert any(item.value == "最近 90 天风险主题分布" for item in app.subheader)
+    assert any(item.value == "30/60/90 天风险数量对比" for item in app.subheader)
+    assert len(app.get("vega_lite_chart")) == 2
+
+
+def test_risk_window_comparison_keeps_all_three_windows_and_real_denominator():
+    rows = risk_window_comparison_rows(
+        {
+            "announcement_count_30d": 4,
+            "risk_event_count_30d": 2,
+            "high_risk_event_count_30d": 1,
+            "announcement_count_60d": 8,
+            "risk_event_count_60d": 3,
+            "high_risk_event_count_60d": 1,
+            "announcement_count_90d": 10,
+            "risk_event_count_90d": 5,
+            "high_risk_event_count_90d": 2,
+        }
+    )
+
+    assert [row["时间窗口"] for row in rows] == [
+        "最近 30 天",
+        "最近 60 天",
+        "最近 90 天",
+    ]
+    assert rows[0]["公告总数"] == 4
+    assert rows[0]["风险事件"] == 2
+    assert rows[0]["每份公告风险事件"] == 0.5

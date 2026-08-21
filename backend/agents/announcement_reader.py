@@ -1,313 +1,509 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""
-公告研读 Agent (AnnouncementReaderAgent) —— 任务1 的核心 Agent
-================================================================
-职责：输入公司代码 → 检索近一年公告 → FinBERT 粗分类（门控）→ LLM 精细抽取风险要素
-      → 输出 F1 语义特征（标签统计 + 向量化）+ 初步风险异常因素（供案例检索/归因使用）。
+"""公告研读 Agent：巨潮事实主源 → 三通道风险抽取 → 可审计 F1。"""
+from __future__ import annotations
 
-流程：
-  resolve 公司 → announcement_search(近一年) → FinBERT 粗分类(门控)
-  → LLM 风险要素抽取 → F1 特征构建 → 写回 ctx.semantic
-
-输出（写回 ctx.semantic）：
-    announcements       公告元数据（不含全文，全文走 store 按需取）
-    finbert_signals     FinBERT 粗分类信号（含门控分数）
-    risk_factors        风险要素（跨公告汇总：category/description/evidence/severity/announcement_id）
-    evidence_snippets   证据片段（原文引用）
-    per_announcement    每份公告的抽取结果
-    f1_features         F1 标签统计特征（label_*_count / label_*_max_severity / ...）
-    f1_vector           F1 语义向量（风险要素 embedding 均值）
-    stats               统计（公告数/送LLM数/门控数/要素数/高危数）
-
-调用的 Skill：
-    skills/announcement_search  （AnnouncementStore：本地公告 PDF 检索）
-    skills/finbert_classify     （FinBERT2-base：风险粗分类门控）
-    skills/embedding            （F1 语义向量化；bge / fallback）
-    llm.chat / llm.chat_json    （DeepSeek-v4-flash：输入解析 + 风险要素抽取）
-
-使用的模型：
-    - FinBERT2-base（valuesimplex-ai-lab，本地权重，中文金融预训练）
-    - DeepSeek-v4-flash（API，.env 配置 DEEPSEEK_API_KEY）
-    - Embedding：config.EMBEDDING_BACKEND（bge 或 fallback）
-
-数据位置：
-    - 公告数据：config.DATA_RAW / {公司代码} / 年份 / 类型 / *.pdf（本地官方数据）
-    - 公告索引缓存：config.INDEX_DIR / {code}_index.json
-"""
+import hashlib
+import os
 import re
-import sys
 from collections import Counter
 from datetime import date
-from pathlib import Path
 
-if sys.platform == "win32":
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except (ValueError, AttributeError, OSError):
-        pass
-
-from ..config import ANNOUNCE_WINDOW_DAYS, DATA_RAW, FINBERT_GATE, INDEX_DIR, MAX_TEXT_CHARS
+from ..config import (
+    ANNOUNCE_MAX_DOCUMENTS,
+    ANNOUNCE_SOURCE,
+    ANNOUNCE_WINDOW_DAYS,
+    EMBEDDING_BACKEND,
+    EMBEDDING_MODEL,
+    FINBERT_GATE,
+    FINBERT_ENABLED,
+    FINBERT_GATE_ENABLED,
+    MAX_TEXT_CHARS,
+)
 from ..llm import chat_json
+from ..skills.rule_risk_extract import RuleRiskExtractor
 from .base import AgentBase
 
 
+SEVERITY_NUMBER = {"critical": 5, "high": 5, "medium": 3, "low": 2}
+WINDOWS = (30, 60, 90)
+
+
+def _severity(value):
+    if isinstance(value, (int, float)):
+        return max(1, min(5, int(value)))
+    return SEVERITY_NUMBER.get(str(value or "").lower(), 2)
+
+
+def _event_key(announcement_id, label):
+    return hashlib.sha256(f"{announcement_id}|{label}".encode("utf-8")).hexdigest()[:20]
+
+
+def _risk_id(event_key, method, evidence_start):
+    return hashlib.sha256(
+        f"{event_key}|{method}|{evidence_start}".encode("utf-8")
+    ).hexdigest()[:20]
+
+
+def _within(value, cutoff, days):
+    delta = (cutoff - date.fromisoformat(str(value)[:10])).days
+    return 0 <= delta < days
+
+
 class AnnouncementReaderAgent(AgentBase):
+    """只写 ``ctx.semantic``，不负责财务、预测、案例检索或报告。"""
+
     name = "AnnouncementReader"
 
-    def __init__(self, data_root=None, use_finbert=True, use_llm=True, use_rule=True,
-                 max_text_chars=MAX_TEXT_CHARS, gate_threshold=FINBERT_GATE):
+    def __init__(
+        self,
+        data_root=None,
+        use_finbert=True,
+        use_llm=True,
+        use_rule=True,
+        max_text_chars=MAX_TEXT_CHARS,
+        gate_threshold=FINBERT_GATE,
+        source=None,
+        rule_extractor=None,
+        llm_callable=None,
+    ):
         super().__init__()
-        self.data_root = data_root or str(DATA_RAW)
-        self.use_llm = use_llm
-        self.use_rule = use_rule          # 规则抽取通道（官方 risk_dictionary，零成本兜底）
-        self.max_text_chars = max_text_chars
-        self.gate_threshold = gate_threshold
+        self.data_root = data_root
+        self.use_finbert = bool(use_finbert)
+        self.use_llm = bool(use_llm)
+        self.use_rule = bool(use_rule)
+        self.max_text_chars = int(max_text_chars)
+        self.gate_threshold = float(gate_threshold)
+        self.rule_extractor = rule_extractor or RuleRiskExtractor()
+        self.source = source or self._default_source()
+        self.llm_callable = llm_callable or chat_json
+        self.llm_configured = bool(llm_callable is not None or os.getenv("DEEPSEEK_API_KEY"))
         self.finbert = None
-        self.rule_extractor = None        # 懒加载
-        if use_finbert:
+        self.finbert_error = ""
+        if self.use_finbert and FINBERT_ENABLED:
             try:
                 from ..skills.finbert_classify import FinBERTClient
+
                 self.finbert = FinBERTClient()
-            except Exception as e:
-                print(f"[公告研读] FinBERT 加载失败，跳过粗分类（改用全量送 LLM）: {e}")
+            except Exception as exc:
+                self.finbert_error = f"{type(exc).__name__}: {exc}"
 
-    # ================= 数据访问 =================
-    def _store(self, company):
-        """公告仓库：数据目录 = DATA_RAW/{code}，索引缓存到 data/index/。"""
+    def _default_source(self):
+        if ANNOUNCE_SOURCE == "local":
+            return None
+        from ..skills.announcement_search import CninfoAnnouncementSource
+
+        return CninfoAnnouncementSource(max_documents=ANNOUNCE_MAX_DOCUMENTS)
+
+    def _load_announcements(self, company, as_of):
+        if self.source is not None:
+            return self.source.search(company, days=ANNOUNCE_WINDOW_DAYS, as_of=as_of)
+        from pathlib import Path
+
+        from ..config import DATA_RAW, INDEX_DIR
         from ..skills.announcement_search import AnnouncementStore
-        cache = Path(INDEX_DIR) / f"{company.replace('.', '_')}_index.json"
-        return AnnouncementStore(Path(self.data_root) / company, cache_path=str(cache))
 
-    # ================= Skill 1: 输入解析（LLM 可选） =================
-    def resolve_company(self, user_input):
-        """把名称/简称/代码解析为标准 secucode。失败返回空 dict。"""
-        prompt = f"""你是A股上市公司识别助手。请识别用户输入所指的公司，输出 JSON：
-{{"secucode": "6位代码.交易所后缀", "company_name": "公司简称", "matched": true/false}}
-规则：6/9开头→.SH，0/3开头→.SZ，4/8开头→.BJ；无法识别 matched=false。
-用户输入：{user_input}"""
-        try:
-            return chat_json("", prompt, max_tokens=200)
-        except Exception:
-            return {}
+        code = re.search(r"\d{6}", str(company))
+        if not code:
+            raise ValueError("本地公告模式需要六位公司代码")
+        secucode = str(company) if "." in str(company) else code.group(0)
+        cache = Path(INDEX_DIR) / f"{secucode.replace('.', '_')}_index.json"
+        store = AnnouncementStore(Path(self.data_root or DATA_RAW) / secucode, str(cache))
+        announcements = store.search(days=ANNOUNCE_WINDOW_DAYS, as_of=as_of)
+        identity = {
+            "code": code.group(0),
+            "secucode": secucode,
+            "company_name": secucode,
+            "exchange": "",
+            "org_id": "",
+            "source_url": str(Path(self.data_root or DATA_RAW).resolve()),
+        }
+        for item in announcements:
+            item.setdefault("announcement_id", item["id"])
+            item.setdefault("published_at", item.get("date"))
+            item.setdefault("source_name", "本地官方公告副本")
+            item.setdefault("source_tier", "official_local_copy")
+            item.setdefault("source_url", "")
+            item.setdefault("pdf_url", "")
+            item.setdefault("text_status", "local_parsed" if item.get("text") else "local_empty_text")
+            item.setdefault("content_sha256", "")
+        return identity, announcements
 
-    # ================= Skill 2: 公告检索（近一年） =================
-    def announcement_search(self, store, days=ANNOUNCE_WINDOW_DAYS, as_of=None):
-        return store.search(days=days, as_of=as_of)
-
-    # ================= Skill 3: FinBERT 粗分类（门控信号） =================
-    def finbert_classify(self, announcements):
-        signals = []
-        for a in announcements:
-            if self.finbert is None:
-                signals.append({"announcement_id": a["id"], "categories": [], "max_score": 0.0})
-                continue
-            try:
-                cls = self.finbert.classify(a["text"][:self.max_text_chars])
-            except Exception:
-                cls = {"categories": [], "top_category": None, "max_score": 0.0}
-            signals.append({"announcement_id": a["id"], **cls})
-        return signals
-
-    # ================= Skill 4: LLM 风险要素抽取（evidence 原文强制） =================
-    def llm_extract(self, company_name, announcements):
-        """对单份公告做风险要素抽取（防幻觉：evidence 必须是正文原话）。"""
-        risk_factors, evidence_snippets, per_ann = [], [], {}
-        for a in announcements:
-            aid = a["id"]
-            prompt = f"""你是资深投研/合规风控专家，正在扫描A股上市公司公告，识别可能触发监管问询的风险要素。
-
-公司：{company_name}
-公告标题：{a.get('title', '')}
-公告日期：{a.get('date', '')}
-公告类型：{a.get('type', '')}
-
-公告正文（可能被截断）：
-\"\"\"
-{(a.get('text') or '')[:self.max_text_chars]}
-\"\"\"
-
-请从这份公告中抽取可能引发监管问询的风险关注点，只抽取【真实存在、有原文依据】的风险，不要臆测。请以 json 格式输出（不要多余文字）：
-{{
-  "risk_factors": [
-    {{"category": "财务异常|披露矛盾|关联交易|担保事项|资金占用|业绩预告偏差|会计处理争议|公司治理|并购重组|其他",
-      "description": "一句话描述该风险点",
-      "evidence": "从正文原文引用的关键句子",
-      "severity": 1到5的整数}}
-  ],
-  "risk_level": "high|medium|low|none",
-  "summary": "一句话总结该公告的整体风险"
-}}
-规则：
-- evidence 必须是公告正文中的原话，若找不到原文依据，不要输出这条 risk_factor。
-- 若该公告没有明显风险，risk_factors 输出空数组 []，risk_level 为 "none"。
-- 只输出 JSON 对象本身。"""
-            try:
-                result = chat_json("", prompt, max_tokens=2000)
-            except Exception as e:
-                result = {"risk_factors": [], "risk_level": "none", "summary": "", "error": str(e)}
-            rfs = result.get("risk_factors", [])
-            for rf in rfs:
-                rf["announcement_id"] = aid
-                rf["announcement_date"] = a.get("date")
-                rf["announcement_type"] = a.get("type")
-                risk_factors.append(rf)
-                if rf.get("evidence"):
-                    evidence_snippets.append({
-                        "announcement_id": aid,
-                        "category": rf.get("category"),
-                        "text": rf["evidence"],
-                    })
-            per_ann[aid] = {
-                "risk_factors": rfs,
-                "risk_level": result.get("risk_level", "none"),
-                "summary": result.get("summary", ""),
-            }
-        return risk_factors, evidence_snippets, per_ann
-
-    # ================= Skill 5: F1 特征构建（标签统计 + 向量化） =================
-    def build_f1(self, risk_factors):
-        """F1 语义特征：① 标签统计（one-hot/计数/最高严重度）② 语义向量（embedding 均值）。"""
-        counts = Counter(r.get("category", "其他") for r in risk_factors)
-        max_sev = {}
-        for r in risk_factors:
-            c = r.get("category", "其他")
-            max_sev[c] = max(max_sev.get(c, 0), r.get("severity", 0))
-
-        f1_features = {f"label_{c}_count": n for c, n in counts.items()}
-        f1_features.update({f"label_{c}_max_severity": s for c, s in max_sev.items()})
-        f1_features["total_risk_factors"] = len(risk_factors)
-        f1_features["high_severity_count"] = sum(
-            1 for r in risk_factors if r.get("severity", 0) >= 4)
-
-        # 语义向量：风险要素描述 embedding 的均值（无要素时返回 None）
-        f1_vector = None
-        texts = [f"{r.get('category', '')}:{r.get('description', '')}" for r in risk_factors]
-        if texts:
-            from ..skills.embedding import embed
-            vecs = embed(texts)
-            f1_vector = vecs.mean(axis=0).tolist()
-        return f1_features, f1_vector
-
-    # ================= Skill 4b: 规则风险抽取（三通道之一，官方词典） =================
-    def rule_extract(self, announcements):
-        """用官方 risk_dictionary 做规则抽取（关键词+正则+否定词，evidence 原文强制）。
-        返回的风险要素 category = 官方二级编码（如 C03/A03），与官方标签体系对齐。"""
-        if not self.use_rule:
-            return []
-        if self.rule_extractor is None:
-            try:
-                from ..skills.rule_risk_extract import RuleRiskExtractor
-                self.rule_extractor = RuleRiskExtractor()
-            except Exception as e:
-                print(f"[公告研读] 规则抽取器加载失败（跳过规则通道）: {e}")
-                self.rule_extractor = False
-        if not self.rule_extractor:
-            return []
-
-        sev_map = {"low": 2, "medium": 3, "high": 4}
-        factors = []
-        for a in announcements:
-            try:
-                hits = self.rule_extractor.extract((a.get("text") or "")[:self.max_text_chars])
-            except Exception:
-                continue
-            for h in hits:
-                if h.get("negated"):
+    def _rule_extract(self, announcements):
+        factors, suppressed = [], 0
+        per_announcement = {}
+        for announcement in announcements:
+            source_text = announcement.get("text") or announcement.get("title") or ""
+            evidence_field = "pdf_text" if announcement.get("text") else "title"
+            hits = self.rule_extractor.extract(source_text)
+            accepted = []
+            for hit in hits:
+                if hit.get("negated") or hit.get("excluded"):
+                    suppressed += 1
                     continue
-                factors.append({
-                    "category": h.get("label"),              # 官方二级编码（如 C03）
-                    "category_id": h.get("category_id"),     # 官方一级（如 C）
-                    "description": h.get("matched_key", ""),
-                    "evidence": h.get("evidence", ""),
-                    "severity": sev_map.get(h.get("severity"), 3),
-                    "source": "rule",
-                    "announcement_id": a["id"],
-                    "announcement_date": a.get("date"),
-                    "announcement_type": a.get("type"),
-                })
-        return factors
+                label = str(hit.get("label") or hit.get("rule_id") or "OTHER")
+                event_key = _event_key(announcement["id"], label)
+                factor = {
+                    "risk_id": _risk_id(event_key, "deterministic_rule", hit.get("evidence_start", 0)),
+                    "event_key": event_key,
+                    "category": str(hit.get("category_id") or "OTHER"),
+                    "label": label,
+                    "risk_label": label,
+                    "description": f"风险词典命中 {hit.get('matched_key')}；仅为候选信号，需复核原文。",
+                    "severity": _severity(hit.get("severity")),
+                    "confidence": 0.84 if evidence_field == "pdf_text" else 0.70,
+                    "matched_keyword": hit.get("matched_key"),
+                    "evidence": hit.get("evidence") or "",
+                    "evidence_start": hit.get("evidence_start", 0),
+                    "evidence_end": hit.get("evidence_end", 0),
+                    "evidence_field": evidence_field,
+                    "text_extraction": (
+                        "rapidocr" if announcement.get("ocr_succeeded_pages", 0) else evidence_field
+                    ),
+                    "ocr_status": announcement.get("ocr_status", "not_reported"),
+                    "ocr_mean_confidence": announcement.get("ocr_mean_confidence"),
+                    "evidence_valid": bool(hit.get("evidence_valid")),
+                    "announcement_id": announcement["id"],
+                    "announcement_title": announcement.get("title", ""),
+                    "announcement_date": announcement.get("date", ""),
+                    "source_url": announcement.get("source_url", ""),
+                    "pdf_url": announcement.get("pdf_url", ""),
+                    "method": "deterministic_rule_with_negation",
+                    "rule_id": hit.get("rule_id", ""),
+                    "taxonomy_l1": hit.get("category_id", ""),
+                    "taxonomy_l2": label,
+                    "negation_checked": True,
+                    "agreement_status": "rule_only",
+                }
+                factors.append(factor)
+                accepted.append(factor)
+            per_announcement[announcement["id"]] = {"rule_factors": accepted}
+        return factors, per_announcement, suppressed
 
-    # ================= 主入口 =================
+    def _finbert_classify(self, announcements):
+        if not self.use_finbert:
+            return [], "disabled"
+        if self.finbert is None:
+            return [
+                {"announcement_id": item["id"], "categories": [], "max_score": None}
+                for item in announcements
+            ], "not_configured"
+        signals = []
+        for item in announcements:
+            try:
+                result = self.finbert.classify(
+                    (item.get("text") or item.get("title") or "")[: self.max_text_chars]
+                )
+                signals.append({"announcement_id": item["id"], **result})
+            except Exception as exc:
+                signals.append(
+                    {
+                        "announcement_id": item["id"],
+                        "categories": [],
+                        "max_score": None,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+        return signals, "experimental_unvalidated"
+
+    def _llm_extract(self, company_name, announcements):
+        factors, rejected, failed, per_announcement = [], 0, 0, {}
+        for item in announcements:
+            text = item.get("text") or ""
+            if not text:
+                per_announcement[item["id"]] = {"llm_factors": [], "status": "no_full_text"}
+                continue
+            prompt_text = text[: self.max_text_chars]
+            prompt = f"""你是上市公司公告证据抽取器。只能依据给出的公告正文，不得补充外部事实。
+公司：{company_name}
+公告：{item.get('title', '')}
+日期：{item.get('date', '')}
+正文：\n{prompt_text}
+
+只输出 JSON：
+{{"risk_factors":[{{"taxonomy_l1":"A-H或OTHER","taxonomy_l2":"如A03或OTHER","description":"风险描述","evidence":"正文中连续原文","severity":1}}]}}
+要求：evidence 必须逐字存在于上面正文；severity 为1到5；没有证据则返回空数组。"""
+            try:
+                result = self.llm_callable("", prompt, max_tokens=2000)
+            except Exception as exc:
+                failed += 1
+                per_announcement[item["id"]] = {
+                    "llm_factors": [],
+                    "status": "failed",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+                continue
+            if not isinstance(result, dict) or "risk_factors" not in result:
+                failed += 1
+                per_announcement[item["id"]] = {
+                    "llm_factors": [],
+                    "status": "invalid_response",
+                }
+                continue
+            accepted = []
+            for raw in result.get("risk_factors", []):
+                evidence = str(raw.get("evidence") or "").strip()
+                start = prompt_text.find(evidence) if evidence else -1
+                if start < 0:
+                    rejected += 1
+                    continue
+                l1 = str(raw.get("taxonomy_l1") or "OTHER").upper()
+                if l1 not in {*"ABCDEFGH", "OTHER"}:
+                    l1 = "OTHER"
+                label = str(raw.get("taxonomy_l2") or "OTHER").upper()
+                if not re.fullmatch(r"(?:[A-H]\d{2}(?:-CANDIDATE)?|OTHER)", label):
+                    label = "OTHER"
+                event_key = _event_key(item["id"], label)
+                factor = {
+                    "risk_id": _risk_id(event_key, "llm_evidence_validated", start),
+                    "event_key": event_key,
+                    "category": l1,
+                    "label": label,
+                    "risk_label": label,
+                    "description": str(raw.get("description") or ""),
+                    "severity": _severity(raw.get("severity")),
+                    "confidence": None,
+                    "matched_keyword": "",
+                    "evidence": evidence,
+                    "evidence_start": start,
+                    "evidence_end": start + len(evidence),
+                    "evidence_field": "pdf_text",
+                    "text_extraction": (
+                        "rapidocr" if item.get("ocr_succeeded_pages", 0) else "pdf_text"
+                    ),
+                    "ocr_status": item.get("ocr_status", "not_reported"),
+                    "ocr_mean_confidence": item.get("ocr_mean_confidence"),
+                    "evidence_valid": True,
+                    "announcement_id": item["id"],
+                    "announcement_title": item.get("title", ""),
+                    "announcement_date": item.get("date", ""),
+                    "source_url": item.get("source_url", ""),
+                    "pdf_url": item.get("pdf_url", ""),
+                    "method": "llm_evidence_validated",
+                    "rule_id": "",
+                    "taxonomy_l1": l1,
+                    "taxonomy_l2": label,
+                    "negation_checked": False,
+                    "agreement_status": "llm_only",
+                }
+                factors.append(factor)
+                accepted.append(factor)
+            per_announcement[item["id"]] = {"llm_factors": accepted, "status": "ok"}
+        return factors, per_announcement, rejected, failed
+
+    def _build_f1(self, announcements, factors, as_of):
+        cutoff = date.fromisoformat(str(as_of)[:10])
+        valid = [factor for factor in factors if factor.get("evidence_valid")]
+        scalar, category_counts = {}, {}
+        for days in WINDOWS:
+            window_announcements = [item for item in announcements if _within(item["date"], cutoff, days)]
+            window_factors = [item for item in valid if _within(item["announcement_date"], cutoff, days)]
+            unique_events = {item["event_key"] for item in window_factors}
+            high_events = {item["event_key"] for item in window_factors if item["severity"] >= 4}
+            scalar[f"announcement_count_{days}d"] = len(window_announcements)
+            scalar[f"risk_event_count_{days}d"] = len(unique_events)
+            scalar[f"high_risk_event_count_{days}d"] = len(high_events)
+            category_counts[f"{days}d"] = dict(
+                sorted(Counter(item["taxonomy_l2"] for item in window_factors).items())
+            )
+        recent = [item for item in valid if _within(item["announcement_date"], cutoff, 90)]
+        scalar["max_severity_90d"] = max((item["severity"] for item in recent), default=0)
+        scalar["avg_severity_90d"] = round(
+            sum(item["severity"] for item in recent) / len(recent), 4
+        ) if recent else 0.0
+        scalar["evidence_valid_ratio"] = round(
+            len(valid) / len(factors), 4
+        ) if factors else 1.0
+        for label, count in Counter(item["taxonomy_l2"] for item in recent).items():
+            scalar[f"label_{label}_count_90d"] = count
+        return {
+            "feature_version": "f1_announcement_evidence_v2",
+            "as_of": cutoff.isoformat(),
+            "window_semantics": "累计窗口[as_of-days+1, as_of]；同一公告同一L2标签跨通道去重",
+            "scalar_features": scalar,
+            "category_event_counts": category_counts,
+            "vector_names": list(scalar),
+            "vector_values": list(scalar.values()),
+            "probability": None,
+            "probability_status": "F1是文本特征，不是风险概率",
+        }
+
     def execute(self, company, ctx):
-        # 1. 输入解析（名称 → 代码）
-        code = company
-        if self.use_llm and not re.match(r"^\d{6}", code):
-            resolved = self.resolve_company(code)
-            code = resolved.get("secucode") or code
-            ctx.name = resolved.get("company_name") or ctx.name
-        ctx.company = code
+        as_of = str(ctx.as_of or date.today().isoformat())[:10]
+        identity, announcements = self._load_announcements(company, as_of)
+        ctx.company = identity["secucode"]
+        ctx.name = identity["company_name"]
 
-        # 2. 公告检索（近一年，截至 ctx.as_of）
-        store = self._store(code)
-        as_of = ctx.as_of or str(date.today())
-        announcements = self.announcement_search(store, days=ANNOUNCE_WINDOW_DAYS, as_of=as_of)
+        if self.use_rule:
+            rule_factors, per_announcement, suppressed = self._rule_extract(announcements)
+        else:
+            rule_factors, suppressed = [], 0
+            per_announcement = {
+                item["id"]: {"rule_factors": []} for item in announcements
+            }
+        finbert_signals, finbert_status = self._finbert_classify(announcements)
+        signal_map = {item["announcement_id"]: item for item in finbert_signals}
+        rule_ids = {item["announcement_id"] for item in rule_factors}
+        gate_active = bool(
+            FINBERT_GATE_ENABLED and self.finbert is not None and self.use_finbert
+        )
+        if self.use_llm and self.llm_configured:
+            if gate_active:
+                llm_candidates = [
+                    item for item in announcements
+                    if item["id"] in rule_ids
+                    or (signal_map.get(item["id"], {}).get("max_score") or 0) >= self.gate_threshold
+                ]
+            else:
+                llm_candidates = announcements
+            llm_factors, llm_per_announcement, rejected_llm, failed_llm = self._llm_extract(
+                identity["company_name"], llm_candidates
+            )
+            llm_status = "partial_failed" if failed_llm else "enabled"
+        else:
+            llm_candidates, llm_factors, llm_per_announcement = [], [], {}
+            rejected_llm, failed_llm = 0, 0
+            llm_status = "disabled" if not self.use_llm else "not_configured"
 
-        # 3. FinBERT 粗分类 + 门控（低于阈值的不送 LLM）
-        finbert_signals = self.finbert_classify(announcements)
-        signal_map = {s["announcement_id"]: s for s in finbert_signals}
-        if self.use_llm and self.gate_threshold is not None:
-            llm_candidates = [
-                a for a in announcements
-                if signal_map.get(a["id"], {}).get("max_score", 0.0) >= self.gate_threshold
+        for announcement_id, payload in llm_per_announcement.items():
+            per_announcement.setdefault(announcement_id, {}).update(payload)
+        llm_event_keys = {item["event_key"] for item in llm_factors}
+        rule_event_keys = {item["event_key"] for item in rule_factors}
+        for factor in rule_factors:
+            if factor["event_key"] in llm_event_keys:
+                factor["agreement_status"] = "rule_llm_agree"
+        for factor in llm_factors:
+            if factor["event_key"] in rule_event_keys:
+                factor["agreement_status"] = "rule_llm_agree"
+
+        factors, seen = [], set()
+        for factor in rule_factors + llm_factors:
+            key = factor["event_key"]
+            if key in seen:
+                continue
+            seen.add(key)
+            factors.append(factor)
+
+        f1 = self._build_f1(announcements, factors, as_of)
+        f1_vector = None
+        f1_vector_backend = "not_generated: EMBEDDING_BACKEND is not bge"
+        if EMBEDDING_BACKEND == "bge" and factors:
+            texts = [
+                f"{item['taxonomy_l2']}:{item['description']}:{item['evidence']}"
+                for item in factors
             ]
+            try:
+                from ..skills.embedding import embed
+
+                vectors = embed(texts, allow_fallback=False)
+                f1_vector = vectors.mean(axis=0).tolist()
+                f1_vector_backend = f"bge:{EMBEDDING_MODEL}:risk_factor_mean"
+            except Exception as exc:
+                f1_vector_backend = f"not_generated:{type(exc).__name__}:{str(exc)[:120]}"
+        parsed = [item for item in announcements if "_parsed" in item.get("text_status", "")]
+        attempted = [item for item in announcements if item.get("text_status") != "not_fetched"]
+        evidence = [item for item in factors if item.get("evidence_valid")]
+        ocr_candidate_pages = sum(item.get("ocr_candidate_pages", 0) for item in attempted)
+        ocr_attempted_pages = sum(item.get("ocr_attempted_pages", 0) for item in attempted)
+        ocr_succeeded_pages = sum(item.get("ocr_succeeded_pages", 0) for item in attempted)
+        ocr_failed_pages = sum(item.get("ocr_failed_pages", 0) for item in attempted)
+        ocr_skipped_pages = sum(item.get("ocr_skipped_pages", 0) for item in attempted)
+        ocr_states = {item.get("ocr_status", "") for item in attempted}
+        if not ocr_candidate_pages:
+            aggregate_ocr_status = "not_needed"
+        elif "not_available" in ocr_states:
+            aggregate_ocr_status = "not_available"
+        elif "disabled" in ocr_states:
+            aggregate_ocr_status = "disabled"
+        elif ocr_skipped_pages:
+            aggregate_ocr_status = "partial_truncated"
+        elif ocr_failed_pages and ocr_succeeded_pages:
+            aggregate_ocr_status = "partial_failed"
+        elif ocr_failed_pages:
+            aggregate_ocr_status = "failed"
         else:
-            llm_candidates = announcements
+            aggregate_ocr_status = "completed"
 
-        # 4. LLM 精细抽取（关闭 LLM 时为空，流程不断）
-        if self.use_llm:
-            risk_factors, evidence_snippets, per_ann = self.llm_extract(
-                ctx.name or code, llm_candidates)
-        else:
-            risk_factors, evidence_snippets = [], []
-            per_ann = {a["id"]: {"risk_factors": [], "risk_level": "none", "summary": ""}
-                       for a in llm_candidates}
-
-        # 4.5 被门控过滤的公告补标记
-        gated_ids = {a["id"] for a in announcements} - {a["id"] for a in llm_candidates}
-        for aid in gated_ids:
-            per_ann.setdefault(aid, {"risk_factors": [], "risk_level": "none",
-                                     "summary": "", "gated_by_finbert": True})
-
-        # 4.6 规则抽取通道（官方词典，确定性兜底 + 交叉校验；LLM 与规则并集）
-        rule_factors = self.rule_extract(announcements)
-        if rule_factors:
-            risk_factors = rule_factors + risk_factors
-
-        # 5. F1 特征
-        f1_features, f1_vector = self.build_f1(risk_factors)
-
-        # 6. 统计 + 写回 ctx.semantic
-        ctx.semantic.announcements = [{k: v for k, v in a.items() if k != "text"}
-                                      for a in announcements]
+        ctx.semantic.announcements = [
+            {key: value for key, value in item.items() if key != "text"}
+            for item in announcements
+        ]
         ctx.semantic.finbert_signals = finbert_signals
-        ctx.semantic.risk_factors = risk_factors
-        ctx.semantic.evidence_snippets = evidence_snippets
-        ctx.semantic.per_announcement = per_ann
-        ctx.semantic.f1_features = f1_features
+        ctx.semantic.risk_factors = factors
+        ctx.semantic.evidence_snippets = [
+            {
+                "announcement_id": item["announcement_id"],
+                "label": item["taxonomy_l2"],
+                "text": item["evidence"],
+                "start": item["evidence_start"],
+                "end": item["evidence_end"],
+                "source_url": item["source_url"],
+            }
+            for item in evidence
+        ]
+        ctx.semantic.per_announcement = per_announcement
+        ctx.semantic.f1_features = f1
         ctx.semantic.f1_vector = f1_vector
+        ctx.semantic.f1_vector_backend = f1_vector_backend
+        ctx.semantic.channel_summary = {
+            "rule": {
+                "status": "enabled" if self.use_rule else "disabled",
+                "dictionary_version": self.rule_extractor.version,
+                "factor_count": len(rule_factors),
+                "suppressed_count": suppressed,
+            },
+            "finbert": {
+                "status": finbert_status,
+                "gate_active": gate_active,
+                "gate_threshold": self.gate_threshold if gate_active else None,
+                "warning": "未经公告标注集校准，不得把相似度称为概率",
+                "error": self.finbert_error,
+            },
+            "llm": {
+                "status": llm_status,
+                "processed_count": len(llm_candidates),
+                "accepted_factor_count": len(llm_factors),
+                "rejected_nonverbatim_evidence": rejected_llm,
+                "failed_document_count": failed_llm,
+            },
+        }
+        ctx.semantic.source_policy = (
+            "当前事实仅来自截止日以前的巨潮在线公告和官方PDF；"
+            "规则或模型只生成待复核信号，不构成事实认定。"
+        )
+        ctx.semantic.data_quality = {
+            "source": "巨潮资讯网" if self.source is not None else "本地官方公告副本",
+            "as_of": as_of,
+            "lookback_days": ANNOUNCE_WINDOW_DAYS,
+            "announcement_count": len(announcements),
+            "pdf_attempted_count": len(attempted),
+            "pdf_parsed_count": len(parsed),
+            "pdf_parsed_ratio": round(len(parsed) / len(attempted), 4) if attempted else None,
+            "not_fetched_count": len(announcements) - len(attempted),
+            "not_fulltext_count": len(attempted) - len(parsed),
+            "document_limit_truncated": len(attempted) < len(announcements),
+            "evidence_valid_ratio": f1["scalar_features"]["evidence_valid_ratio"],
+            "ocr_status": aggregate_ocr_status,
+            "ocr_engine": next(
+                (item.get("ocr_engine") for item in attempted if item.get("ocr_engine")), ""
+            ),
+            "ocr_candidate_pages": ocr_candidate_pages,
+            "ocr_attempted_pages": ocr_attempted_pages,
+            "ocr_succeeded_pages": ocr_succeeded_pages,
+            "ocr_failed_pages": ocr_failed_pages,
+            "ocr_skipped_pages": ocr_skipped_pages,
+            "f1_vector_backend": f1_vector_backend,
+        }
         ctx.semantic.stats = {
             "announcement_count": len(announcements),
             "llm_processed_count": len(llm_candidates),
-            "gated_count": len(gated_ids),
-            "risk_factor_count": len(risk_factors),
-            "high_severity_count": sum(1 for r in risk_factors if r.get("severity", 0) >= 4),
+            "gated_count": len(announcements) - len(llm_candidates) if gate_active else 0,
+            "risk_factor_count": len(factors),
+            "high_severity_count": sum(item["severity"] >= 4 for item in factors),
+            "risk_event_count_30d": f1["scalar_features"]["risk_event_count_30d"],
+            "risk_event_count_60d": f1["scalar_features"]["risk_event_count_60d"],
+            "risk_event_count_90d": f1["scalar_features"]["risk_event_count_90d"],
             "window_days": ANNOUNCE_WINDOW_DAYS,
             "as_of": as_of,
         }
         return ctx
-
-
-# ============================================================
-# 自测入口（python -m backend.agents.announcement_reader）
-# ============================================================
-if __name__ == "__main__":
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-    from backend.context import Context
-
-    agent = AnnouncementReaderAgent(use_finbert=False, use_llm=False)
-    ctx = Context(company="000004.SZ", window=60, as_of="2025-12-02")
-    agent.execute("000004.SZ", ctx)
-    print(f"公告数: {ctx.semantic.stats['announcement_count']}")
-    print(f"风险要素: {len(ctx.semantic.risk_factors)} | F1特征: {ctx.semantic.f1_features}")
-    print(f"F1向量维度: {len(ctx.semantic.f1_vector) if ctx.semantic.f1_vector else '空'}")

@@ -28,6 +28,7 @@ class RuleRiskExtractor:
     def __init__(self, dict_path=None):
         self.dict_path = Path(dict_path or DICT_PATH)
         self.data = self._load()
+        self.version = str(self.data.get("dictionary_version") or "unknown")
         self.negations = self.data.get("global_negation_patterns", [])
         self.rules = []
         for cat in self.data.get("categories", []):
@@ -41,18 +42,33 @@ class RuleRiskExtractor:
             return json.load(f)
 
     # ---------- 主入口 ----------
-    def extract(self, text, max_evidence=80):
-        """对文本做规则抽取，返回命中列表（已过滤否定与排除段落）。"""
+    def extract(self, text, max_evidence=240):
+        """返回可审计候选；否定/模板命中保留状态，但不得作为有效风险。"""
         text = text or ""
         hits = []
         for rule in self.rules:
-            matched_key, pos = self._match_rule(rule, text)
-            if matched_key is None:
+            candidates = []
+            for keyword in rule.get("keywords", []):
+                candidates.extend(
+                    (match.start(), match.end(), match.group(0))
+                    for match in re.finditer(re.escape(keyword), text, re.IGNORECASE)
+                )
+            for expression in rule.get("regexes", []):
+                try:
+                    candidates.extend(
+                        (match.start(), match.end(), match.group(0))
+                        for match in re.finditer(expression, text, re.IGNORECASE)
+                    )
+                except re.error:
+                    continue
+            if not candidates:
                 continue
-            # 排除段落（模板话术等，如退市风险提示的免责条款）
-            if self._in_excluded_paragraph(rule, text, pos):
-                continue
+            pos, end, matched_key = sorted(candidates, key=lambda row: (row[0], -len(row[2])))[0]
+            excluded = self._in_excluded_paragraph(rule, text, pos)
             negated = self._is_negated(text, pos, len(matched_key))
+            evidence, evidence_start, evidence_end = self._evidence(
+                text, pos, end, max_evidence
+            )
             hits.append({
                 "rule_id": rule.get("rule_id"),
                 "label": rule.get("label"),              # 二级主题编码（如 C03）
@@ -60,7 +76,12 @@ class RuleRiskExtractor:
                 "severity": rule.get("severity"),
                 "matched_key": matched_key,
                 "negated": negated,
-                "evidence": self._evidence(text, pos, max_evidence),
+                "excluded": excluded,
+                "evidence": evidence,
+                "evidence_start": evidence_start,
+                "evidence_end": evidence_end,
+                "evidence_valid": bool(matched_key and matched_key in text[evidence_start:evidence_end]),
+                "dictionary_version": self.version,
             })
         return hits
 
@@ -113,11 +134,16 @@ class RuleRiskExtractor:
         return any(re.search(rx, ctx) for rx in excls)
 
     @staticmethod
-    def _evidence(text, pos, max_evidence):
+    def _evidence(text, pos, end, max_evidence):
         if pos < 0:
-            return ""
-        start = max(0, pos - 20)
-        return text[start:start + max_evidence]
+            return "", 0, 0
+        sentence_start = max(text.rfind(mark, 0, pos) for mark in ("\n", "。", "！", "？", "；"))
+        start = max(sentence_start + 1, pos - max_evidence // 2)
+        candidates = [text.find(mark, end) for mark in ("\n", "。", "！", "？", "；")]
+        positive = [value for value in candidates if value >= 0]
+        sentence_end = min(positive) + 1 if positive else len(text)
+        stop = min(sentence_end, start + max_evidence)
+        return re.sub(r"\s+", " ", text[start:stop]).strip(), start, stop
 
 
 # ============================================================

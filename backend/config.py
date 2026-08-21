@@ -34,7 +34,7 @@ LLM_MAX_TOKENS = 2000
 
 # ---------- Embedding ----------
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5")  # 或 stella-base-zh-v3
-EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "bge")  # bge(需下载权重) | fallback(零依赖) | bge 加载失败自动退回 fallback
+EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "fallback")  # bge 需显式启用；默认零下载且不混称真实模型
 
 # ---------- 预测 ----------
 PREDICT_WINDOW = 60                       # 默认预测窗口（天）
@@ -42,7 +42,25 @@ RISK_THRESHOLDS = {"high": 0.6, "medium": 0.3}   # 风险等级阈值
 
 # ---------- 公告研读 ----------
 ANNOUNCE_WINDOW_DAYS = 365    # 公告检索窗口（天）
-FINBERT_GATE = 0.5            # FinBERT 粗分类门控：低于该相似度的公告不送 LLM
+ANNOUNCE_MAX_DOCUMENTS = int(os.getenv("ANNOUNCE_MAX_DOCUMENTS", "120"))
+ANNOUNCE_PDF_CACHE = Path(
+    os.getenv("ANNOUNCE_PDF_CACHE", str(DATA_DIR / "cache" / "pdfs"))
+)
+ANNOUNCE_SOURCE = os.getenv("ANNOUNCE_SOURCE", "cninfo").lower()
+OCR_ENABLED = os.getenv("OCR_ENABLED", "true").lower() in {
+    "1", "true", "yes", "on"
+}
+OCR_DPI = int(os.getenv("OCR_DPI", "180"))
+OCR_MIN_PAGE_CHARS = int(os.getenv("OCR_MIN_PAGE_CHARS", "40"))
+OCR_MIN_CONFIDENCE = float(os.getenv("OCR_MIN_CONFIDENCE", "0.50"))
+OCR_MAX_PAGES_PER_DOCUMENT = int(os.getenv("OCR_MAX_PAGES_PER_DOCUMENT", "80"))
+FINBERT_GATE = float(os.getenv("FINBERT_GATE", "0.5"))
+FINBERT_ENABLED = os.getenv("FINBERT_ENABLED", "false").lower() in {
+    "1", "true", "yes", "on"
+}
+FINBERT_GATE_ENABLED = os.getenv("FINBERT_GATE_ENABLED", "false").lower() in {
+    "1", "true", "yes", "on"
+}  # 未经公告标注集校准前默认不启用门控
 MAX_TEXT_CHARS = 8000         # 送 LLM 的公告正文截断长度
 
 # ---------- 财务异常检测（backend/agents/financial_detector.py 使用） ----------

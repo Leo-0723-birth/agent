@@ -12,6 +12,8 @@ build/
 
 # 大体积模型权重（BGE 1.3GB / FinBERT 500MB，不入库；用 HF_HOME 可重下）
 backend/models/embedding/
+backend/data/cache/
+data/cache/
 
 # 临时/历史遗留
 无关文件夹/

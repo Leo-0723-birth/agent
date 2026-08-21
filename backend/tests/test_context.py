@@ -13,6 +13,8 @@ def test_context_defaults():
     assert ctx.window == 60
     assert ctx.semantic.risk_factors == []
     assert ctx.trace_log == []
+    assert ctx.semantic.f1_features == {}
+    assert ctx.semantic.f1_vector is None
 
 
 def test_context_write_and_to_dict():
@@ -21,3 +23,5 @@ def test_context_write_and_to_dict():
     d = ctx.to_dict()
     assert d["company"] == "000004.SZ"
     assert d["semantic"]["risk_factors"][0]["category"] == "财务异常"
+    assert "f1_features" in d["semantic"]
+    assert "data_quality" in d["semantic"]

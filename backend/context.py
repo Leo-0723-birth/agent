@@ -24,6 +24,12 @@ class Semantic:
     risk_factors: list = field(default_factory=list)        # LLM 抽取风险要素（跨公告汇总）
     evidence_snippets: list = field(default_factory=list)   # 证据片段（原文引用）
     per_announcement: dict = field(default_factory=dict)    # 每份公告的抽取结果
+    f1_features: dict = field(default_factory=dict)         # F1 标量/类别/窗口特征
+    f1_vector: list | None = None                           # 可选 BGE 语义向量
+    f1_vector_backend: str = "not_generated"               # bge / not_generated
+    channel_summary: dict = field(default_factory=dict)     # 规则/FinBERT/LLM 状态
+    data_quality: dict = field(default_factory=dict)        # 来源、覆盖率、缺失和限制
+    source_policy: str = ""                                # 当前事实来源边界
     stats: dict = field(default_factory=dict)               # 统计（公告数/要素数/门控数）
 
 

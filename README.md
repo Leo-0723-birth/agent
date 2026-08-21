@@ -11,14 +11,15 @@ backend/          后端核心
 ├── context.py    共享 Context（Agent 间唯一通信）
 ├── agents/       7 个 Agent + 基类 + 主控编排
 │   ├── base.py                AgentBase（统一 execute(company, ctx) + trace）
-│   ├── announcement_reader.py 公告研读（FinBERT 门控 + LLM 抽取 + F1 向量化）
+│   ├── announcement_reader.py 公告研读（巨潮在线 + 规则/FinBERT/LLM + 可审计 F1）
 │   ├── financial_detector.py  财务检测（F2 67 维 + F3 35 维 + 双负兜底 + F2 规则）
 │   ├── case_retriever.py      案例检索（4785 案例库 + RRF + 三源标签通道 + 维度守卫）
 │   ├── attributor.py          归因解释（SHAP + 证据白名单 + 案例链接）
 │   └── orchestrator.py        主控编排（完整流水线 + 确定性 ReAct）
 │   └── predictor.py           （待接入队友训练好的 LightGBM 模型）
 ├── skills/       原子能力
-│   ├── announcement_search.py 公告检索（本地 PDF 仓库）
+│   ├── announcement_search.py 巨潮在线公告检索、官方 PDF 下载与本地副本兼容
+│   ├── ocr_extract.py         扫描型 PDF 按页 OCR 与审计元数据
 │   ├── finbert_classify.py    FinBERT2-base 风险粗分类（门控）
 │   ├── rule_risk_extract.py   规则风险抽取（官方 risk_dictionary.yaml）
 │   ├── risk_labels.py         官方标签体系加载（任务1交付包 A-H/45 二级）
@@ -40,7 +41,8 @@ backend/          后端核心
 │   ├── train_predictor.py     训练预测模型（骨架）
 │   └── build_concern_dict.py  关注点词典构建（骨架）
 └── tests/        单元测试
-app.py            Streamlit 演示入口（骨架，完整版参考 web开发方案/Streamlit快速版_app.py）
+app.py            全流程 Streamlit 演示入口
+streamlit_app.py  公告研读 Agent 独立可审计展示页
 公告研读agents/    旧版独立实现（保留参考，功能已迁入 backend/agents/）
 context/          公告研读输出的共享 context 样例（000004.SZ）
 无关文件夹/        与系统无关的历史文件
@@ -54,6 +56,8 @@ pip install -r requirements.txt        # 含 pandas/numpy/scipy/requests/pymupdf
 # 2.（可选）配置 LLM：复制 .env.example 为 .env，填 DEEPSEEK_API_KEY
 # 3. 一键演示（公告研读 → 财务检测 → 案例检索 → 归因）
 python -m backend.agents.orchestrator   # 000004.SZ 全流程自测
+# 4. 公告研读 Agent 独立页面（输入代码或公司名称）
+streamlit run streamlit_app.py
 ```
 
 ## 数据产物（非官方源文件，已内置）
@@ -71,14 +75,14 @@ python -m backend.agents.orchestrator   # 000004.SZ 全流程自测
 
 ## 开发状态
 
-- [x] 公告研读 Agent（FinBERT 门控 + LLM 抽取 + F1 向量化）
+- [x] 公告研读 Agent（近一年巨潮公告 + OCR + 三通道抽取 + 30/60/90 天 F1）
 - [x] 财务检测 Agent（F2 67 维 + F3 35 维 + 双负兜底，110 特征）
 - [x] 案例检索 Agent（4785 案例库 + RRF + 三源标签通道 + 维度守卫）
 - [x] 归因解释 Agent（SHAP + 证据白名单 + 案例链接）
 - [x] 主控编排 Agent（完整流水线 + trace）
 - [ ] 预测建模 Agent（待接入队友 LightGBM 模型：predictor.py + modeling_dataset.parquet + models/）
 - [ ] 语义通道 BGE（`EMBEDDING_BACKEND=bge`，需下载权重；当前维度守卫自动禁用语义通道、仅标签通道）
-- [ ] Streamlit 演示页（骨架就绪，待接入 orchestrator）
+- [x] 公告研读 Streamlit 独立展示页（证据、数据质量、窗口和主题对比）
 
 ## 说明
 
