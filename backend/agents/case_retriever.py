@@ -161,6 +161,25 @@ class CaseRetrieverAgent(AgentBase):
             ctx.cases = []
             return ctx
 
+        # ---- 防泄漏加固：时间穿越控制 + 排除目标公司自身 ----
+        target = str(ctx.company or company)
+        as_of = str(getattr(ctx, "as_of", "") or "")[:10]
+        keep_idx = [
+            i for i, e in enumerate(entries)
+            if str(e.get("company", "")) != target
+            and (not as_of or not str(e.get("publish_date", ""))[:10]
+                 or str(e.get("publish_date", ""))[:10] <= as_of)
+        ]
+        if len(keep_idx) != len(entries):
+            print(f"[case_retriever] 防泄漏过滤：剔除自身/未来案例 "
+                  f"{len(entries) - len(keep_idx)} 条（剩 {len(keep_idx)} 条）")
+            entries = [entries[i] for i in keep_idx]
+            if vectors is not None and len(vectors) > 0:
+                vectors = vectors[keep_idx]
+        if not entries:
+            ctx.cases = []
+            return ctx
+
         profile = self._profile_text(ctx)
         labels = self._profile_labels(ctx)
         if not profile and not labels:
@@ -203,6 +222,7 @@ class CaseRetrieverAgent(AgentBase):
                 "topics": e["focus_points"][:5],
                 "similarity": round(float(score), 4),
                 "letter_excerpt": (e.get("letter_excerpt") or "")[:200],
+                "reply_excerpt": (e.get("reply_excerpt") or "")[:200],
             })
         return ctx
 

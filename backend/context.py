@@ -60,6 +60,7 @@ class Context:
     features: dict = field(default_factory=dict)            # 特征组装后（F1-F6 拼接）
     prediction: dict = field(default_factory=dict)          # 预测：概率/等级/置信度
     cases: list = field(default_factory=list)               # 案例检索：相似案例 Top-5
+    chunks: list = field(default_factory=list)              # chunk 级检索：相似问询段落（证据定位）
     attribution: dict = field(default_factory=dict)         # 归因：诱因/证据/案例对照
     report: dict = field(default_factory=dict)              # 报告
     trace_log: list = field(default_factory=list)           # 全链路追踪

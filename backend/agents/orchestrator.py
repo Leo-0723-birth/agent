@@ -59,6 +59,7 @@ class SweepingOrchestrator(AgentBase):
         self._run_financial(company, ctx)      # Phase 2
         self._run_predict(company, ctx)        # Phase 3（占位，待填充）
         self._run_cases(company, ctx)          # Phase 4
+        self._run_chunks(company, ctx)         # Phase 4.5（段落级证据召回，可选）
         self._run_attribution(company, ctx)    # Phase 5
         self._run_report(company, ctx)         # Phase 6
         return ctx
@@ -112,6 +113,17 @@ class SweepingOrchestrator(AgentBase):
         from .attributor import AttributorAgent
         agent = AttributorAgent(use_llm=self.use_llm)
         agent.run(company, ctx)
+
+    def _run_chunks(self, company, ctx):
+        """chunk 级段落检索（可选）：chunk 索引缺失时自动跳过，不打断流水线。"""
+        try:
+            from .chunk_retriever import ChunkRetrieverAgent
+            agent = ChunkRetrieverAgent()
+            agent.run(company, ctx)
+        except Exception as e:
+            ctx.trace_log.append({"agent": "ChunkRetriever", "status": "skipped",
+                                  "reason": f"chunk 索引不可用: {e}",
+                                  "trace_complete": True})
 
     def _run_report(self, company, ctx):
         from .reporter import ReporterAgent
