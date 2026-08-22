@@ -93,3 +93,9 @@ CHUNK_VEC_PATH = VECTOR_DB_DIR / "chunk_vectors.npy"   # chunk 向量（BGE 1024
 CHUNK_TOP_K = 8                 # chunk 检索返回 Top-K
 CHUNK_INDEX_JSONL = Path(os.getenv("CHUNK_INDEX_JSONL",
     r"D:\新建文件夹\02_监管问询\03_向量索引与Chroma\inquiry_embedding_index.jsonl"))
+
+# ---------- 预测建模（PredictorAgent / train_models） ----------
+PREDICTOR_MODEL_DIR = Path(BASE_DIR) / "backend" / "models" / "predictor"   # 模型+清单
+MODELING_DATASET = Path(BASE_DIR) / "backend" / "data" / "modeling" / "processed_dataset.csv"  # 查表推理用
+PREDICTOR_HORIZONS = ("30d", "60d", "90d")   # 推理输出窗口
+PREDICTOR_TOP_SHAP = 8                        # SHAP 输出 Top-K 特征
