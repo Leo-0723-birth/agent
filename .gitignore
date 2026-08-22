@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# IDE
+.idea/
+.vscode/
+
+# Environment
+.env
+
+# Model weights
+models/*
+!models/models_README.md
+
+# Runtime output
+backend/data/output/
+
+# Temporary
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
