@@ -10,7 +10,7 @@ from backend.dashboard_utils import (
 
 
 def test_streamlit_app_initial_view_has_query_form():
-    app_path = Path(__file__).resolve().parents[2] / "streamlit_app.py"
+    app_path = Path(__file__).resolve().parents[2] / "公告研读agent.py"
     app = AppTest.from_file(str(app_path), default_timeout=15).run()
 
     assert not app.exception
@@ -46,7 +46,7 @@ def test_risk_theme_distribution_ignores_invalid_or_empty_counts():
 
 
 def test_streamlit_result_view_renders_selected_window_chart():
-    app_path = Path(__file__).resolve().parents[2] / "streamlit_app.py"
+    app_path = Path(__file__).resolve().parents[2] / "公告研读agent.py"
     app = AppTest.from_file(str(app_path), default_timeout=15)
     app.session_state["announcement_analysis"] = {
         "name": "测试公司",

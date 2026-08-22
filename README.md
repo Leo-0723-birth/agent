@@ -47,8 +47,15 @@ backend/          后端核心
 │   ├── select_f1_top50.py     F1 语义特征 Spearman Top-50 选取
 │   └── build_concern_dict.py  关注点词典构建（骨架）
 └── tests/        单元测试
-app.py            全流程 Streamlit 演示入口
-streamlit_app.py  公告研读 Agent 独立可审计展示页
+导航入口.py       单入口导航壳（st.navigation，一个端口聚合全部页面，默认打开主控）
+启动导航入口.bat   一键启动导航入口（双击即用，终端显示 Local/Network/External 网址）
+主控agent.py       全流程 Streamlit 演示页（主控编排 Agent，经 导航入口.py 打开，也可独立运行）
+公告研读agent.py   公告研读 Agent 独立可审计展示页（端口 8502）
+财务异常agent.py   财务异常 Agent 独立审计页（端口 8503）
+预测建模agent.py   预测建模 Agent 独立审计页（端口 8504）
+案例匹配agent.py   案例匹配 Agent 独立审计页（端口 8505）
+归因分析agent.py   归因分析 Agent 独立审计页（端口 8506）
+报告生成agent.py   报告生成 Agent 独立审计页（端口 8507）
 公告研读agents/    旧版独立实现（保留参考，功能已迁入 backend/agents/）
 context/          公告研读输出的共享 context 样例（000004.SZ）
 无关文件夹/        与系统无关的历史文件
@@ -62,8 +69,18 @@ pip install -r requirements.txt        # 含 pandas/numpy/scipy/requests/pymupdf
 # 2.（可选）配置 LLM：复制 .env.example 为 .env，填 DEEPSEEK_API_KEY
 # 3. 一键演示（公告研读 → 财务检测 → 案例检索 → 归因）
 python -m backend.agents.orchestrator   # 000004.SZ 全流程自测
-# 4. 公告研读 Agent 独立页面（输入代码或公司名称）
-streamlit run streamlit_app.py
+# 4. 单入口导航（推荐，一个端口切换全部页面）
+streamlit run 导航入口.py               # http://localhost:8501 侧边栏切换 7 页
+#    或双击 启动导航入口.bat（终端窗口显示 Local/Network/External 网址，便于分享给他人）
+#    或在 PyCharm 运行配置中选择「导航入口 (streamlit)」点 ▶
+# 5. 各 Agent 独立审计页面（端口固定，便于联调）：
+streamlit run 公告研读agent.py --server.port 8502
+streamlit run 财务异常agent.py --server.port 8503
+streamlit run 预测建模agent.py --server.port 8504
+streamlit run 案例匹配agent.py --server.port 8505
+streamlit run 归因分析agent.py --server.port 8506
+streamlit run 报告生成agent.py --server.port 8507
+#    独立页面仅在需要"逐 Agent 审计"时使用；日常演示只用 8501 导航入口即可
 ```
 
 ## 数据产物（非官方源文件，已内置）
@@ -91,11 +108,33 @@ streamlit run streamlit_app.py
 - [x] 归因解释 Agent（SHAP + 证据白名单 + validate_narrative 防幻觉 + 单测）
 - [x] 报告生成 Agent（Markdown/JSON 六章报告）
 - [x] 主控编排 Agent（7 环节完整流水线 + trace，7-Agent 全闭环）
-- [x] 公告研读 Streamlit 独立展示页 + 全流程 app.py
+- [x] 公告研读 Streamlit 独立展示页 + 全流程 主控agent.py
 - [ ] 正样本率提升（月度采样/多标签，见 backend/data/output/正样本率提升方案.md）
+
+## 环境修复（常见问题）
+
+| 问题 | 修复 |
+|------|------|
+| 首次启动卡在 `Welcome to Streamlit! ... Email:` 输入（服务不启动、网页拒绝连接） | 已内置 `.streamlit/config.toml`（`gatherUsageStats=false`）关闭引导；若仍出现，删除 `C:\Users\<你>\.streamlit\credentials.toml` 后重试 |
+| `.bat` 双击后中文乱码/启动失败 | 批处理必须 CRLF 换行 + GBK 编码（本项目的 启动导航入口.bat 已按要求生成；不要用编辑器改成 UTF-8/LF） |
+| `rapidocr` / `onnxruntime` 未安装（扫描型 PDF OCR 不可用） | `pip install "rapidocr>=3.9,<4" "onnxruntime>=1.29,<2"` |
+| `xgboost` 未安装（预测三模型集成缺第三腿） | `pip install "xgboost>=2.0"`（lightgbm 同理已内置） |
+| FinBERT 权重不完整（`models/embedding/hub` 下存在 `.incomplete`） | 删除该模型目录后重下：`Remove-Item backend\models\embedding\hub\models--valuesimplex-ai-lab--FinBERT2-base -Recurse -Force`，然后运行一次任意启用 FinBERT 的页面（走 hf-mirror.com，约 1.3GB），或直接 `python -c "from backend.skills.finbert_classify import FinBERTClient; FinBERTClient()"` |
+| 预测显示"未预测" | 确认公司代码在 `backend/data/modeling/processed_dataset.csv` 内（如 000004.SZ）；`models/predictor/` 下 9 个模型文件齐全时自动推理 |
+| Windows 下随机森林推理报 `WinError 5` | predictor.py 已内置 `n_jobs=1` 修复（单条样本推理不需要多线程） |
 
 ## 说明
 
 - **Embedding**：默认 `EMBEDDING_BACKEND=bge`（BGE-large-zh-v1.5，1024 维，权重在 backend/models/embedding/，加载失败自动回落 fallback 且维度守卫拦截语义通道）。
 - **防幻觉约定**：所有 LLM 生成内容绑定原文证据 ID；证据一律取原文（公告/问询函原句），不存 LLM 转述；`evaluation_ground_truth` 仅用于归因评估，不作预测特征。
 - **预测模型指标**（测试集集成）：30d AUC 0.805 / 60d 0.8335 / 90d 0.830；Top10% 召回 38.0%/46.1%/43.2%。
+
+## 更新记录（2026-08-22）
+
+1. **预测建模接入完善**：修复 `backend/agents/predictor.py`（RF 推理固定 `n_jobs=1` 规避 Windows WinError 5 + 逐模型 try/except 容错），补装 `xgboost`，三模型集成（RF/LGB/XGB）实测生效（000004.SZ 60d 概率 0.3822，Predictor 环节由 skipped → done，归因升级为 SHAP 归因）。
+2. **文件重命名**：`app.py` → `主控agent.py`；`streamlit_app.py` → `公告研读agent.py`（中文文件名不影响运行；对应测试 `backend/tests/test_streamlit_app.py` 已同步）。
+3. **新增 5 个 Agent 独立审计页**（项目根目录，与 公告研读agent.py 同层）：财务异常 / 预测建模 / 案例匹配 / 归因分析 / 报告生成，每页可独立 `streamlit run --server.port XXXX` 运行。
+4. **单入口导航**：新增 `导航入口.py`（`st.navigation` 聚合全部 7 页，一个端口侧边栏切换），端口方案：主控 8501 / 公告研读 8502 / 财务异常 8503 / 预测建模 8504 / 案例匹配 8505 / 归因分析 8506 / 报告生成 8507。
+5. **启动方式精简**：新增 `启动导航入口.bat`（双击启动，终端显示 Local/Network/External 网址）；删除冗余的 `启动全部Agent页面.ps1`；新增 PyCharm 运行配置 `.run/导航入口.run.xml`（配置名「导航入口 (streamlit)」）。
+6. **环境修复**：FinBERT2-base 权重完整重下（451MB，修复 `.incomplete`）；安装 `rapidocr 3.9.2` + `onnxruntime 1.29.0`（扫描 PDF OCR 可用）；新增 `.streamlit/config.toml` 关闭 Streamlit 首次运行邮箱引导（否则非 headless 启动会卡在 `Email:` 输入导致端口不绑定）。
+7. **requirements.txt**：`lightgbm` / `xgboost` 转正为正式依赖（预测集成所需）。

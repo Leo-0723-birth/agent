@@ -2,7 +2,8 @@
 """
 上市公司监管问询扫雷预警系统 —— Streamlit 演示页
 ================================================
-运行：streamlit run app.py
+运行：streamlit run 导航入口.py（推荐，单入口导航，默认打开本页）
+     或 streamlit run 主控agent.py --server.port 8501（独立运行）
 功能：
   - 单公司/批量扫雷（真实 6-Agent 流水线：公告研读 → 财务检测 → 案例检索 → 归因 → 报告）
   - 流水线实时状态（st.status 逐环节点亮）

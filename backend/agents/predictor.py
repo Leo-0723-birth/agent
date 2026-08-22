@@ -64,6 +64,10 @@ class PredictorAgent(AgentBase):
         try:
             import joblib
             loaded["rf"] = joblib.load(self.model_dir / f"model_rf_{w}d.pkl")
+            # 单条样本推理固定单线程：避免 Windows 下 joblib 线程池/命名管道
+            # 被安全软件或受限环境拒绝（WinError 5），同时更快、更稳。
+            if loaded["rf"] is not None:
+                loaded["rf"].n_jobs = 1
         except Exception:
             loaded["rf"] = None
         try:
@@ -115,12 +119,22 @@ class PredictorAgent(AgentBase):
         X = np.asarray(row[feats].values, dtype=np.float32).reshape(1, -1)
 
         probs = []
+        # 每个模型单独 try/except：单个模型推理失败（如环境缺依赖）不打断整窗口
         if models.get("rf") is not None:
-            probs.append(0.30 * models["rf"].predict_proba(X)[0][1])
+            try:
+                probs.append(0.30 * models["rf"].predict_proba(X)[0][1])
+            except Exception:
+                pass
         if models.get("lgb") is not None:
-            probs.append(0.35 * models["lgb"].predict(X)[0])
+            try:
+                probs.append(0.35 * models["lgb"].predict(X)[0])
+            except Exception:
+                pass
         if models.get("xgb") is not None:
-            probs.append(0.35 * models["xgb"].predict(xgb_dmatrix(X, feats))[0])
+            try:
+                probs.append(0.35 * models["xgb"].predict(xgb_dmatrix(X, feats))[0])
+            except Exception:
+                pass
         if not probs:
             return None, None, []
         p = float(sum(probs))

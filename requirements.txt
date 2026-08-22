@@ -13,6 +13,6 @@ transformers>=4.38
 streamlit>=1.61.1       # 公告研读独立展示页与主系统演示页
 pytest>=7.0             # 单元测试
 
-# 可选（接入队友预测模型后启用）：
-# lightgbm>=4.0         # PredictorAgent
-# pyarrow>=15.0         # 读 modeling_dataset.parquet
+lightgbm>=4.0            # PredictorAgent（三模型集成之一）
+xgboost>=2.0             # PredictorAgent（三模型集成之一，含 XGBoost 推理）
+pyarrow>=15.0            # 读 modeling_dataset.parquet（可选）
