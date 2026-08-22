@@ -138,3 +138,5 @@ streamlit run 报告生成agent.py --server.port 8507
 5. **启动方式精简**：新增 `启动导航入口.bat`（双击启动，终端显示 Local/Network/External 网址）；删除冗余的 `启动全部Agent页面.ps1`；新增 PyCharm 运行配置 `.run/导航入口.run.xml`（配置名「导航入口 (streamlit)」）。
 6. **环境修复**：FinBERT2-base 权重完整重下（451MB，修复 `.incomplete`）；安装 `rapidocr 3.9.2` + `onnxruntime 1.29.0`（扫描 PDF OCR 可用）；新增 `.streamlit/config.toml` 关闭 Streamlit 首次运行邮箱引导（否则非 headless 启动会卡在 `Email:` 输入导致端口不绑定）。
 7. **requirements.txt**：`lightgbm` / `xgboost` 转正为正式依赖（预测集成所需）。
+8. **财务检测不再跳过金融/地产**：`SPECIAL_INDUSTRY_PROFILES` 中金融业/房地产业改为参与常规异常检测（实测平安银行 000001.SZ：跳过=False、风险等级=中、2 条异常）。
+9. **页面日期默认值修正**：预测建模 / 报告生成页面 `date_input` 默认值由 2025-12-02 改为当天，可直接选择近期日期（`max_value=date.today()`）。

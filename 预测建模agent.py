@@ -42,7 +42,8 @@ st.caption("按 (company, as_of) 从建模数据集取最新一行特征 → 三
 
 with st.sidebar:
     st.subheader("运行设置")
-    as_of_value = st.date_input("特征锚点 T", value=date(2025, 12, 2), max_value=date.today())
+    as_of_value = st.date_input("特征锚点 T", value=date.today(), max_value=date.today(),
+                                help="取该日前最新一期特征（建模数据集的最近报告期）进行推理。")
     st.caption("公司需在建模数据集 backend/data/modeling/processed_dataset.csv 内。")
     st.caption("端口约定：8504（独立运行：streamlit run 预测建模agent.py --server.port 8504）")
 

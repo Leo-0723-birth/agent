@@ -39,7 +39,7 @@ st.caption("聚合全流水线结果（预测/财务/公告/案例/归因/trace�
 
 with st.sidebar:
     st.subheader("运行设置")
-    as_of_value = st.date_input("数据截止日", value=date(2025, 12, 2), max_value=date.today())
+    as_of_value = st.date_input("数据截止日", value=date.today(), max_value=date.today())
     window = st.selectbox("预测窗口（天）", [30, 60, 90], index=1)
     use_llm = st.toggle("启用 LLM 精细抽取", value=False, help="需要 DEEPSEEK_API_KEY。")
     use_finbert = st.toggle("启用 FinBERT", value=False)
