@@ -18,7 +18,8 @@ backend/          后端核心
 │   └── orchestrator.py        主控编排（完整流水线 + 确定性 ReAct）
 │   └── predictor.py           （待接入队友训练好的 LightGBM 模型）
 ├── skills/       原子能力
-│   ├── announcement_search.py 巨潮在线公告检索、官方 PDF 下载与本地副本兼容
+│   ├── announcement_search.py 巨潮在线公告检索、标题预过滤、官方 PDF 下载与本地副本兼容
+│   ├── announcement_context_filter.py 制度公告、规范条款与事件锚点过滤
 │   ├── ocr_extract.py         扫描型 PDF 按页 OCR 与审计元数据
 │   ├── finbert_classify.py    FinBERT2-base 风险粗分类（门控）
 │   ├── rule_risk_extract.py   规则风险抽取（官方 risk_dictionary.yaml）
@@ -75,7 +76,7 @@ streamlit run streamlit_app.py
 
 ## 开发状态
 
-- [x] 公告研读 Agent（近一年巨潮公告 + OCR + 三通道抽取 + 30/60/90 天 F1）
+- [x] 公告研读 Agent（近一年巨潮公告 + OCR + 标题/语境过滤 + 三通道抽取 + 30/60/90 天 F1）
 - [x] 财务检测 Agent（F2 67 维 + F3 35 维 + 双负兜底，110 特征）
 - [x] 案例检索 Agent（4785 案例库 + RRF + 三源标签通道 + 维度守卫）
 - [x] 归因解释 Agent（SHAP + 证据白名单 + 案例链接）
@@ -86,5 +87,7 @@ streamlit run streamlit_app.py
 
 ## 说明
 
+- **公告误报过滤**：公司章程、议事规则、候选人声明和通用管理制度只保留官方元数据，不下载 PDF、不进入风险抽取；真实处罚、立案、辞职、冻结等风险标题优先保留。
+- **事实语境校验**：法规引用、董监高职责/任职资格、禁止性或假设性条款、会计政策及报表模板会记录过滤原因，但不计入风险事件。LLM 是可选精细通道，输出仍需通过逐字证据和事实语境双重校验。
 - **案例检索维度守卫**：案例库为 BGE 1024 维，当前 embedding 后端为 fallback（65536 维）时语义通道自动禁用、仅标签通道工作（打印提示，不报错）；切 `EMBEDDING_BACKEND=bge` 后自动恢复语义检索，无需改代码。
 - **防幻觉约定**：所有 LLM 生成内容绑定原文证据 ID；证据一律取原文（公告/问询函原句），不存 LLM 转述；`evaluation_ground_truth` 仅用于归因评估，不作预测特征。

@@ -18,6 +18,7 @@ import re
 from pathlib import Path
 
 from ..config import BASE_DIR
+from .announcement_context_filter import contextual_suppression_reason
 
 DICT_PATH = Path(BASE_DIR) / "backend" / "data" / "labels" / "risk_dictionary.yaml"
 
@@ -63,26 +64,51 @@ class RuleRiskExtractor:
                     continue
             if not candidates:
                 continue
-            pos, end, matched_key = sorted(candidates, key=lambda row: (row[0], -len(row[2])))[0]
-            excluded = self._in_excluded_paragraph(rule, text, pos)
-            negated = self._is_negated(text, pos, len(matched_key))
-            evidence, evidence_start, evidence_end = self._evidence(
-                text, pos, end, max_evidence
+            evaluated = []
+            for pos, end, matched_key in sorted(
+                set(candidates), key=lambda row: (row[0], -len(row[2]))
+            ):
+                negated = self._is_negated(text, pos, len(matched_key))
+                rule_excluded = self._in_excluded_paragraph(rule, text, pos)
+                context_reason = contextual_suppression_reason(
+                    rule_id=str(rule.get("rule_id") or ""),
+                    label=str(rule.get("label") or ""),
+                    text=text,
+                    start=pos,
+                    end=end,
+                )
+                suppression_reason = (
+                    "negated_context" if negated else
+                    "rule_paragraph_exclusion" if rule_excluded else
+                    context_reason
+                )
+                evidence, evidence_start, evidence_end = self._evidence(
+                    text, pos, end, max_evidence
+                )
+                evaluated.append({
+                    "rule_id": rule.get("rule_id"),
+                    "label": rule.get("label"),              # 二级主题编码（如 C03）
+                    "category_id": rule.get("category_id"),  # 一级主题（如 C）
+                    "severity": rule.get("severity"),
+                    "matched_key": matched_key,
+                    "negated": negated,
+                    "excluded": bool(rule_excluded or context_reason),
+                    "suppression_reason": suppression_reason,
+                    "evidence": evidence,
+                    "evidence_start": evidence_start,
+                    "evidence_end": evidence_end,
+                    "evidence_valid": bool(
+                        matched_key and matched_key in text[evidence_start:evidence_end]
+                    ),
+                    "dictionary_version": self.version,
+                })
+                if not suppression_reason:
+                    break
+            accepted = next(
+                (candidate for candidate in evaluated if not candidate["suppression_reason"]),
+                None,
             )
-            hits.append({
-                "rule_id": rule.get("rule_id"),
-                "label": rule.get("label"),              # 二级主题编码（如 C03）
-                "category_id": rule.get("category_id"),  # 一级主题（如 C）
-                "severity": rule.get("severity"),
-                "matched_key": matched_key,
-                "negated": negated,
-                "excluded": excluded,
-                "evidence": evidence,
-                "evidence_start": evidence_start,
-                "evidence_end": evidence_end,
-                "evidence_valid": bool(matched_key and matched_key in text[evidence_start:evidence_end]),
-                "dictionary_version": self.version,
-            })
+            hits.append(accepted or evaluated[0])
         return hits
 
     def summarize(self, text):
@@ -90,7 +116,7 @@ class RuleRiskExtractor:
         hits = self.extract(text)
         summary = {}
         for h in hits:
-            if h["negated"]:
+            if h["negated"] or h["excluded"]:
                 continue
             cid = h["category_id"]
             s = summary.setdefault(cid, {"count": 0, "labels": set(), "max_severity": "low"})

@@ -54,10 +54,39 @@ def test_streamlit_result_view_renders_selected_window_chart():
         "as_of": "2026-08-21",
         "semantic": {
             "stats": {},
-            "data_quality": {"lookback_days": 365, "source": "巨潮资讯网"},
-            "channel_summary": {},
+            "data_quality": {
+                "lookback_days": 365,
+                "source": "巨潮资讯网",
+                "title_excluded_count": 1,
+            },
+            "channel_summary": {
+                "rule": {"suppressed_count": 1},
+                "llm": {"rejected_nonfactual_context": 1},
+            },
             "risk_factors": [],
-            "announcements": [],
+            "announcements": [
+                {
+                    "id": "policy",
+                    "date": "2026-08-20",
+                    "title": "独立董事候选人声明",
+                    "analysis_status": "excluded_by_title",
+                    "analysis_skip_reason": "candidate_declaration",
+                    "source_url": "https://www.cninfo.com.cn/policy",
+                    "pdf_url": "https://static.cninfo.com.cn/policy.pdf",
+                }
+            ],
+            "per_announcement": {
+                "policy": {
+                    "suppressed_rule_hits": [
+                        {
+                            "label": "G07",
+                            "matched_keyword": "立案调查",
+                            "suppression_reason": "governance_eligibility_clause",
+                            "evidence": "被中国证监会立案调查的不得担任董事",
+                        }
+                    ]
+                }
+            },
             "f1_features": {
                 "category_event_counts": {
                     "30d": {"A03": 1},
@@ -86,6 +115,8 @@ def test_streamlit_result_view_renders_selected_window_chart():
     assert any(item.value == "最近 90 天风险主题分布" for item in app.subheader)
     assert any(item.value == "30/60/90 天风险数量对比" for item in app.subheader)
     assert len(app.get("vega_lite_chart")) == 2
+    assert any(item.label == "标题过滤公告" for item in app.metric)
+    assert any(item.label == "规则语境过滤" for item in app.metric)
 
 
 def test_risk_window_comparison_keeps_all_three_windows_and_real_denominator():
