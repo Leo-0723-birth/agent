@@ -16,3 +16,9 @@ pytest>=7.0             # 单元测试
 lightgbm>=4.0            # PredictorAgent（三模型集成之一）
 xgboost>=2.0             # PredictorAgent（三模型集成之一，含 XGBoost 推理）
 pyarrow>=15.0            # 读 modeling_dataset.parquet（可选）
+
+# --- Agentic 编排（LangChain + LangGraph，锁 1.x 同一大版本线，升级需单独评估）---
+langchain-core==1.5.3     # LLM 应用框架核心（结构化输出/重试/可观测）
+langchain-deepseek==1.1.0 # DeepSeek 官方适配器（ChatDeepSeek）
+langgraph==1.2.10         # 图编排引擎（StateGraph/节点/条件路由/checkpointer）
+langgraph-checkpoint==4.2.0  # 断点续跑/回放（MemorySaver 等）

@@ -17,7 +17,8 @@ backend/          后端核心
 │   ├── chunk_retriever.py     chunk 级段落检索（段落证据召回）
 │   ├── predictor.py           预测建模（三模型集成 30/60/90d + SHAP，查表推理）
 │   ├── attributor.py          归因解释（SHAP + 证据白名单 + validate_narrative 防幻觉）
-│   └── orchestrator.py        主控编排（7 环节完整流水线 + 确定性 ReAct）
+│   └── orchestrator.py        主控编排（LangGraph 图编排首选，确定性串行兜底）
+│   └── graph.py               LangGraph 7 节点 StateGraph（可选 checkpointer 断点续跑）
 ├── skills/       原子能力
 │   ├── announcement_search.py 巨潮在线公告检索、官方 PDF 下载与本地副本兼容
 │   ├── ocr_extract.py         扫描型 PDF 按页 OCR 与审计元数据
@@ -140,3 +141,10 @@ streamlit run 报告生成agent.py --server.port 8507
 7. **requirements.txt**：`lightgbm` / `xgboost` 转正为正式依赖（预测集成所需）。
 8. **财务检测不再跳过金融/地产**：`SPECIAL_INDUSTRY_PROFILES` 中金融业/房地产业改为参与常规异常检测（实测平安银行 000001.SZ：跳过=False、风险等级=中、2 条异常）。
 9. **页面日期默认值修正**：预测建模 / 报告生成页面 `date_input` 默认值由 2025-12-02 改为当天，可直接选择近期日期（`max_value=date.today()`）。
+10. **LangChain + LangGraph 接入**（锁 1.x，未推送前本地已验证）：
+    - `backend/llm.py` 双通道：LangChain `ChatDeepSeek` 首选（异常自动回落 requests 直连），`chat/chat_json` 签名不变 → 全部 Agent 调用方零改动；
+    - 新增 `chat_structured`：Pydantic + JSON Schema 约束的结构化输出（DeepSeek thinking 模式不支持 tool_choice，故走 `response_format=json_object` 兼容路径）；
+    - 新增 `backend/agents/graph.py`：LangGraph `StateGraph` 7 节点流水线（announcement→financial→predictor→case→chunk→attribution→report），`ctx` 即 State，trace 格式不变；可选 `MemorySaver` checkpointer（断点续跑/回放，实测 9 个历史快照）；
+    - `orchestrator.py` 改薄封装：`sweep_one/execute` 首选 `graph.invoke()`，LangGraph 不可用时回落原确定性串行链——**对外接口与页面全部零改动**；
+    - 依赖锁定（requirements.txt）：`langchain-core==1.5.3` / `langchain-deepseek==1.1.0` / `langgraph==1.2.10` / `langgraph-checkpoint==4.2.0`。
+    - 验证：全流程 7 节点 done（预测 0.3822）、6 页面 AppTest 通过、pytest 5 passed、单 Agent 独立可用。

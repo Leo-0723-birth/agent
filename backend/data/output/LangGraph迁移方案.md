@@ -1,7 +1,7 @@
-# LangGraph 迁移方案（评估稿 · 暂未实施）
+# LangGraph 迁移方案（已落地轻量版 · 本地验证通过 · 未推送）
 
-> 状态：**方案文档**，代码未动。决策入口：`SweepingOrchestrator` 改为 LangGraph 薄封装，7 个 Agent 业务代码零改动。
-> 更新：2026-08-22
+> 状态：**轻量方案已实施**（2026-08-22）：`backend/agents/graph.py` + `orchestrator` 薄封装 + `llm.py` LangChain 双通道；7 个 Agent 业务代码零改动，对外接口不变。
+> 未实施（按评审需要再加）：并行、human-in-the-loop、前端流式推送。
 
 ## 1. 现状架构（无需大改的部分）
 
@@ -133,3 +133,14 @@ class SweepingOrchestrator(AgentBase):
 
 - 现编排层已足够支撑演示；LangGraph 是**叙事加分项**（图编排/状态机/条件路由/断点续跑，正好呼应赛题"Agentic AI"）。
 - 建议在答辩定稿前按"步骤 1-4"落地轻量版，增值项（并行/HITL/流式）按评审反馈再加。
+
+## 6. 实施记录（2026-08-22，本地未推送）
+
+| 项 | 结果 |
+|---|---|
+| 依赖 | `langchain-core==1.5.3` / `langchain-deepseek==1.1.0` / `langgraph==1.2.10` / `langgraph-checkpoint==4.2.0`（Python 3.14 兼容，清华镜像安装） |
+| graph.py | 7 节点线性 StateGraph，`SweepState = {ctx, company, window, as_of}`；predictor/chunk 容错节点（异常标记 skipped）；`build_graph(..., checkpointer=)` 支持 MemorySaver |
+| orchestrator | `execute()` 首选 `graph.invoke()`，LangGraph 不可用时回落原 `_run_*` 串行链；`use_checkpointer` 参数新增 |
+| llm.py | LangChain `ChatDeepSeek` 首选通道 + requests 直连兜底；`chat/chat_json` 签名不变；新增 `chat_structured`（Pydantic+JSON Schema；DeepSeek thinking 模式不支持 tool_choice，走 json_object 兼容路径） |
+| 验证 | 全流程 7 节点 done（预测 0.3822）；checkpointer 历史快照 9 个、可回放；6 页面 AppTest 通过；pytest 5 passed；单 Agent 独立可用 |
+| 未做 | 并行（announcement∥financial）、条件路由分支、human-in-the-loop、前端流式推送（`graph.stream` 已在设计内，未接入 UI） |
