@@ -23,6 +23,7 @@ from backend.dashboard_utils import (
     risk_theme_distribution_rows,
     risk_window_comparison_rows,
 )
+from backend.skills.announcement_context_filter import FILTER_VERSION
 from backend.skills.announcement_search import CninfoAnnouncementSource
 
 
@@ -65,6 +66,7 @@ def analyze_company(
     use_ocr: bool,
     use_finbert: bool,
     use_llm: bool,
+    filter_version: str,
 ) -> dict:
     """执行一次可复用的公告研读；结果按输入和开关缓存。"""
     source = CninfoAnnouncementSource(
@@ -79,6 +81,7 @@ def analyze_company(
     context = Context(company=company, as_of=as_of)
     result, trace = agent.run(company, context)
     payload = result.to_dict()
+    payload["announcement_filter_version"] = filter_version
     payload["run_trace"] = trace
     return payload
 
@@ -247,6 +250,7 @@ if submitted:
                     use_ocr,
                     use_finbert,
                     use_llm,
+                    FILTER_VERSION,
                 )
                 st.write("下载或读取 PDF 缓存，执行风险抽取")
                 st.session_state["announcement_analysis"] = result
