@@ -36,6 +36,7 @@ from ..config import (
     OCR_MIN_CONFIDENCE,
     OCR_MIN_PAGE_CHARS,
 )
+from .announcement_context_filter import apply_title_policy, is_analysis_eligible
 from .ocr_extract import OCR_PIPELINE_VERSION, RapidOCRPageEngine, extract_pdf_text
 
 
@@ -369,7 +370,10 @@ class CninfoAnnouncementSource:
         cutoff = str(as_of or date.today().isoformat())[:10]
         company = self.resolve_company(user_input)
         announcements = self._list_metadata(company, cutoff, days)
-        for item in announcements[: self.max_documents]:
+        for item in announcements:
+            apply_title_policy(item, mark_unfetched=True)
+        eligible = [item for item in announcements if is_analysis_eligible(item)]
+        for item in eligible[: self.max_documents]:
             self._process_pdf(item)
         return company, announcements
 

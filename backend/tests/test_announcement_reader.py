@@ -219,3 +219,84 @@ def test_rule_channel_can_be_disabled_by_orchestrator():
         item["rule_factors"] == []
         for item in context.semantic.per_announcement.values()
     )
+
+
+def test_title_policy_excludes_governance_document_from_all_channels():
+    announcements = [
+        {
+            "id": "policy",
+            "announcement_id": "policy",
+            "title": "独立董事候选人声明",
+            "date": "2026-08-18",
+            "text": "候选人因涉嫌证券期货违法犯罪，被中国证监会立案调查的不得任职。",
+            "text_status": "fixture_parsed",
+            "source_url": "https://www.cninfo.com.cn/policy",
+            "pdf_url": "https://static.cninfo.com.cn/policy.pdf",
+        },
+        {
+            "id": "actual",
+            "announcement_id": "actual",
+            "title": "关于收到立案告知书的公告",
+            "date": "2026-08-17",
+            "text": "公司收到中国证监会立案告知书，中国证监会决定对公司立案调查。",
+            "text_status": "fixture_parsed",
+            "source_url": "https://www.cninfo.com.cn/actual",
+            "pdf_url": "https://static.cninfo.com.cn/actual.pdf",
+        },
+    ]
+    agent = AnnouncementReaderAgent(
+        source=FakeSource(announcements), use_finbert=False, use_llm=False
+    )
+
+    context = agent.execute("000001", Context(as_of="2026-08-20"))
+
+    assert context.semantic.data_quality["title_excluded_count"] == 1
+    assert context.semantic.data_quality["analysis_eligible_count"] == 1
+    assert {item["announcement_id"] for item in context.semantic.risk_factors} == {
+        "actual"
+    }
+
+
+def test_llm_normative_evidence_is_rejected_even_when_verbatim():
+    evidence = "因涉嫌证券期货违法犯罪，被中国证监会立案调查的不得担任董事"
+
+    def fake_chat_json(*args, **kwargs):
+        return {
+            "risk_factors": [
+                {
+                    "taxonomy_l1": "G",
+                    "taxonomy_l2": "G07",
+                    "description": "错误地把任职条款当作现实立案",
+                    "evidence": evidence,
+                    "severity": 5,
+                    "assertion_type": "actual_event",
+                    "subject": "候选人",
+                    "event_action": "被立案调查",
+                }
+            ]
+        }
+
+    announcements = [
+        {
+            "id": "board",
+            "announcement_id": "board",
+            "title": "董事会决议公告",
+            "date": "2026-08-18",
+            "text": evidence,
+            "text_status": "fixture_parsed",
+            "source_url": "https://www.cninfo.com.cn/board",
+            "pdf_url": "https://static.cninfo.com.cn/board.pdf",
+        }
+    ]
+    agent = AnnouncementReaderAgent(
+        source=FakeSource(announcements),
+        rule_extractor=EmptyRuleExtractor(),
+        use_finbert=False,
+        use_llm=True,
+        llm_callable=fake_chat_json,
+    )
+
+    context = agent.execute("000001", Context(as_of="2026-08-20"))
+
+    assert context.semantic.risk_factors == []
+    assert context.semantic.channel_summary["llm"]["rejected_nonfactual_context"] == 1

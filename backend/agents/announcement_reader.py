@@ -21,6 +21,12 @@ from ..config import (
     MAX_TEXT_CHARS,
 )
 from ..llm import chat_json
+from ..skills.announcement_context_filter import (
+    FILTER_VERSION,
+    apply_title_policy,
+    contextual_suppression_reason,
+    is_analysis_eligible,
+)
 from ..skills.rule_risk_extract import RuleRiskExtractor
 from .base import AgentBase
 
@@ -136,10 +142,20 @@ class AnnouncementReaderAgent(AgentBase):
             source_text = announcement.get("text") or announcement.get("title") or ""
             evidence_field = "pdf_text" if announcement.get("text") else "title"
             hits = self.rule_extractor.extract(source_text)
-            accepted = []
+            accepted, suppressed_hits = [], []
             for hit in hits:
                 if hit.get("negated") or hit.get("excluded"):
                     suppressed += 1
+                    suppressed_hits.append(
+                        {
+                            "rule_id": hit.get("rule_id", ""),
+                            "label": hit.get("label", ""),
+                            "matched_keyword": hit.get("matched_key", ""),
+                            "evidence": hit.get("evidence", ""),
+                            "suppression_reason": hit.get("suppression_reason")
+                            or ("negated_context" if hit.get("negated") else "excluded_context"),
+                        }
+                    )
                     continue
                 label = str(hit.get("label") or hit.get("rule_id") or "OTHER")
                 event_key = _event_key(announcement["id"], label)
@@ -177,7 +193,10 @@ class AnnouncementReaderAgent(AgentBase):
                 }
                 factors.append(factor)
                 accepted.append(factor)
-            per_announcement[announcement["id"]] = {"rule_factors": accepted}
+            per_announcement[announcement["id"]] = {
+                "rule_factors": accepted,
+                "suppressed_rule_hits": suppressed_hits,
+            }
         return factors, per_announcement, suppressed
 
     def _finbert_classify(self, announcements):
@@ -207,7 +226,7 @@ class AnnouncementReaderAgent(AgentBase):
         return signals, "experimental_unvalidated"
 
     def _llm_extract(self, company_name, announcements):
-        factors, rejected, failed, per_announcement = [], 0, 0, {}
+        factors, rejected, rejected_context, failed, per_announcement = [], 0, 0, 0, {}
         for item in announcements:
             text = item.get("text") or ""
             if not text:
@@ -221,8 +240,13 @@ class AnnouncementReaderAgent(AgentBase):
 正文：\n{prompt_text}
 
 只输出 JSON：
-{{"risk_factors":[{{"taxonomy_l1":"A-H或OTHER","taxonomy_l2":"如A03或OTHER","description":"风险描述","evidence":"正文中连续原文","severity":1}}]}}
-要求：evidence 必须逐字存在于上面正文；severity 为1到5；没有证据则返回空数组。"""
+{{"risk_factors":[{{"taxonomy_l1":"A-H或OTHER","taxonomy_l2":"如A03或OTHER","description":"风险描述","evidence":"正文中连续原文","severity":1,"assertion_type":"actual_event","subject":"实际发生事件的主体","event_action":"已经发生的动作"}}]}}
+要求：
+1. evidence 必须逐字存在于正文，severity 为1到5；没有事实证据返回空数组。
+2. 只有公司、控股股东、实际控制人或董监高已经发生的现实事件，assertion_type 才能写 actual_event。
+3. 法规引用、公司章程、管理制度、董监高职责或任职资格、禁止性/条件性条款、会计政策、表头、目录、附件模板不得识别为风险。
+4. “如发生、若发生、存在下列情形之一、不得、应当、有权”等假设或规范描述不是已发生事实。
+5. 描述其他公司、行业或历史案例时不得归因于本公司；无法区分时不输出。"""
             try:
                 result = self.llm_callable("", prompt, max_tokens=2000)
             except Exception as exc:
@@ -253,6 +277,16 @@ class AnnouncementReaderAgent(AgentBase):
                 label = str(raw.get("taxonomy_l2") or "OTHER").upper()
                 if not re.fullmatch(r"(?:[A-H]\d{2}(?:-CANDIDATE)?|OTHER)", label):
                     label = "OTHER"
+                assertion_type = str(raw.get("assertion_type") or "").lower()
+                context_reason = contextual_suppression_reason(
+                    label=label,
+                    text=prompt_text,
+                    start=start,
+                    end=start + len(evidence),
+                )
+                if (assertion_type and assertion_type != "actual_event") or context_reason:
+                    rejected_context += 1
+                    continue
                 event_key = _event_key(item["id"], label)
                 factor = {
                     "risk_id": _risk_id(event_key, "llm_evidence_validated", start),
@@ -285,11 +319,14 @@ class AnnouncementReaderAgent(AgentBase):
                     "taxonomy_l2": label,
                     "negation_checked": False,
                     "agreement_status": "llm_only",
+                    "assertion_type": assertion_type or "actual_event_validated",
+                    "event_subject": str(raw.get("subject") or ""),
+                    "event_action": str(raw.get("event_action") or ""),
                 }
                 factors.append(factor)
                 accepted.append(factor)
             per_announcement[item["id"]] = {"llm_factors": accepted, "status": "ok"}
-        return factors, per_announcement, rejected, failed
+        return factors, per_announcement, rejected, rejected_context, failed
 
     def _build_f1(self, announcements, factors, as_of):
         cutoff = date.fromisoformat(str(as_of)[:10])
@@ -297,10 +334,14 @@ class AnnouncementReaderAgent(AgentBase):
         scalar, category_counts = {}, {}
         for days in WINDOWS:
             window_announcements = [item for item in announcements if _within(item["date"], cutoff, days)]
+            eligible_announcements = [
+                item for item in window_announcements if is_analysis_eligible(item)
+            ]
             window_factors = [item for item in valid if _within(item["announcement_date"], cutoff, days)]
             unique_events = {item["event_key"] for item in window_factors}
             high_events = {item["event_key"] for item in window_factors if item["severity"] >= 4}
             scalar[f"announcement_count_{days}d"] = len(window_announcements)
+            scalar[f"analyzed_announcement_count_{days}d"] = len(eligible_announcements)
             scalar[f"risk_event_count_{days}d"] = len(unique_events)
             scalar[f"high_risk_event_count_{days}d"] = len(high_events)
             category_counts[f"{days}d"] = dict(
@@ -333,15 +374,23 @@ class AnnouncementReaderAgent(AgentBase):
         identity, announcements = self._load_announcements(company, as_of)
         ctx.company = identity["secucode"]
         ctx.name = identity["company_name"]
+        for item in announcements:
+            apply_title_policy(item)
+        eligible_announcements = [
+            item for item in announcements if is_analysis_eligible(item)
+        ]
 
         if self.use_rule:
-            rule_factors, per_announcement, suppressed = self._rule_extract(announcements)
+            rule_factors, per_announcement, suppressed = self._rule_extract(
+                eligible_announcements
+            )
         else:
             rule_factors, suppressed = [], 0
             per_announcement = {
-                item["id"]: {"rule_factors": []} for item in announcements
+                item["id"]: {"rule_factors": [], "suppressed_rule_hits": []}
+                for item in eligible_announcements
             }
-        finbert_signals, finbert_status = self._finbert_classify(announcements)
+        finbert_signals, finbert_status = self._finbert_classify(eligible_announcements)
         signal_map = {item["announcement_id"]: item for item in finbert_signals}
         rule_ids = {item["announcement_id"] for item in rule_factors}
         gate_active = bool(
@@ -350,19 +399,25 @@ class AnnouncementReaderAgent(AgentBase):
         if self.use_llm and self.llm_configured:
             if gate_active:
                 llm_candidates = [
-                    item for item in announcements
+                    item for item in eligible_announcements
                     if item["id"] in rule_ids
                     or (signal_map.get(item["id"], {}).get("max_score") or 0) >= self.gate_threshold
                 ]
             else:
-                llm_candidates = announcements
-            llm_factors, llm_per_announcement, rejected_llm, failed_llm = self._llm_extract(
+                llm_candidates = eligible_announcements
+            (
+                llm_factors,
+                llm_per_announcement,
+                rejected_llm,
+                rejected_llm_context,
+                failed_llm,
+            ) = self._llm_extract(
                 identity["company_name"], llm_candidates
             )
             llm_status = "partial_failed" if failed_llm else "enabled"
         else:
             llm_candidates, llm_factors, llm_per_announcement = [], [], {}
-            rejected_llm, failed_llm = 0, 0
+            rejected_llm, rejected_llm_context, failed_llm = 0, 0, 0
             llm_status = "disabled" if not self.use_llm else "not_configured"
 
         for announcement_id, payload in llm_per_announcement.items():
@@ -400,8 +455,17 @@ class AnnouncementReaderAgent(AgentBase):
                 f1_vector_backend = f"bge:{EMBEDDING_MODEL}:risk_factor_mean"
             except Exception as exc:
                 f1_vector_backend = f"not_generated:{type(exc).__name__}:{str(exc)[:120]}"
-        parsed = [item for item in announcements if "_parsed" in item.get("text_status", "")]
-        attempted = [item for item in announcements if item.get("text_status") != "not_fetched"]
+        parsed = [
+            item for item in eligible_announcements
+            if "_parsed" in item.get("text_status", "")
+        ]
+        attempted = [
+            item for item in eligible_announcements
+            if item.get("text_status") != "not_fetched"
+        ]
+        title_excluded = [
+            item for item in announcements if not is_analysis_eligible(item)
+        ]
         evidence = [item for item in factors if item.get("evidence_valid")]
         ocr_candidate_pages = sum(item.get("ocr_candidate_pages", 0) for item in attempted)
         ocr_attempted_pages = sum(item.get("ocr_attempted_pages", 0) for item in attempted)
@@ -464,24 +528,29 @@ class AnnouncementReaderAgent(AgentBase):
                 "processed_count": len(llm_candidates),
                 "accepted_factor_count": len(llm_factors),
                 "rejected_nonverbatim_evidence": rejected_llm,
+                "rejected_nonfactual_context": rejected_llm_context,
                 "failed_document_count": failed_llm,
             },
         }
         ctx.semantic.source_policy = (
             "当前事实仅来自截止日以前的巨潮在线公告和官方PDF；"
             "规则或模型只生成待复核信号，不构成事实认定。"
+            "制度类公告和规范性段落会保留审计记录但不计入风险。"
         )
         ctx.semantic.data_quality = {
             "source": "巨潮资讯网" if self.source is not None else "本地官方公告副本",
             "as_of": as_of,
             "lookback_days": ANNOUNCE_WINDOW_DAYS,
             "announcement_count": len(announcements),
+            "analysis_eligible_count": len(eligible_announcements),
+            "title_excluded_count": len(title_excluded),
+            "title_filter_version": FILTER_VERSION,
             "pdf_attempted_count": len(attempted),
             "pdf_parsed_count": len(parsed),
             "pdf_parsed_ratio": round(len(parsed) / len(attempted), 4) if attempted else None,
-            "not_fetched_count": len(announcements) - len(attempted),
+            "not_fetched_count": len(eligible_announcements) - len(attempted),
             "not_fulltext_count": len(attempted) - len(parsed),
-            "document_limit_truncated": len(attempted) < len(announcements),
+            "document_limit_truncated": len(attempted) < len(eligible_announcements),
             "evidence_valid_ratio": f1["scalar_features"]["evidence_valid_ratio"],
             "ocr_status": aggregate_ocr_status,
             "ocr_engine": next(
@@ -496,8 +565,10 @@ class AnnouncementReaderAgent(AgentBase):
         }
         ctx.semantic.stats = {
             "announcement_count": len(announcements),
+            "analysis_eligible_count": len(eligible_announcements),
+            "title_excluded_count": len(title_excluded),
             "llm_processed_count": len(llm_candidates),
-            "gated_count": len(announcements) - len(llm_candidates) if gate_active else 0,
+            "gated_count": len(eligible_announcements) - len(llm_candidates) if gate_active else 0,
             "risk_factor_count": len(factors),
             "high_severity_count": sum(item["severity"] >= 4 for item in factors),
             "risk_event_count_30d": f1["scalar_features"]["risk_event_count_30d"],

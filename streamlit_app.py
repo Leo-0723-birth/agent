@@ -23,6 +23,7 @@ from backend.dashboard_utils import (
     risk_theme_distribution_rows,
     risk_window_comparison_rows,
 )
+from backend.skills.announcement_context_filter import FILTER_VERSION
 from backend.skills.announcement_search import CninfoAnnouncementSource
 
 
@@ -41,6 +42,21 @@ SEVERITY_LABELS = {
     1: "提示",
 }
 
+FILTER_REASON_LABELS = {
+    "governance_rules": "公司治理制度",
+    "candidate_declaration": "候选人/提名人声明",
+    "general_management_policy": "通用管理制度",
+    "governance_eligibility_clause": "董监高职责或任职资格条款",
+    "conditional_or_hypothetical_clause": "条件性或假设性描述",
+    "prohibition_or_duty_clause": "禁止性或职责条款",
+    "definition_or_template_clause": "定义或附件模板",
+    "accounting_policy_or_table": "会计政策或报表模板",
+    "missing_event_anchors": "缺少主体与现实事件动作",
+    "negated_context": "否定语境",
+    "rule_paragraph_exclusion": "风险词典段落排除规则",
+    "excluded_context": "非事实语境",
+}
+
 
 @st.cache_data(ttl="6h", max_entries=20, show_spinner=False)
 def analyze_company(
@@ -50,6 +66,7 @@ def analyze_company(
     use_ocr: bool,
     use_finbert: bool,
     use_llm: bool,
+    filter_version: str,
 ) -> dict:
     """执行一次可复用的公告研读；结果按输入和开关缓存。"""
     source = CninfoAnnouncementSource(
@@ -64,6 +81,7 @@ def analyze_company(
     context = Context(company=company, as_of=as_of)
     result, trace = agent.run(company, context)
     payload = result.to_dict()
+    payload["announcement_filter_version"] = filter_version
     payload["run_trace"] = trace
     return payload
 
@@ -125,6 +143,15 @@ def announcement_dataframe(announcements: list[dict]) -> pd.DataFrame:
                 "日期": item.get("date", ""),
                 "公告标题": item.get("title", ""),
                 "类型": item.get("type", ""),
+                "研读状态": (
+                    "已过滤"
+                    if item.get("analysis_status") == "excluded_by_title"
+                    else "进入研读"
+                ),
+                "过滤原因": FILTER_REASON_LABELS.get(
+                    item.get("analysis_skip_reason", ""),
+                    item.get("analysis_skip_reason", ""),
+                ),
                 "PDF 状态": item.get("text_status", ""),
                 "OCR 状态": item.get("ocr_status", ""),
                 "OCR 成功页": item.get("ocr_succeeded_pages", 0),
@@ -136,6 +163,27 @@ def announcement_dataframe(announcements: list[dict]) -> pd.DataFrame:
                 "SHA256": item.get("content_sha256", ""),
             }
         )
+    return pd.DataFrame(rows)
+
+
+def suppression_dataframe(per_announcement: dict, announcements: list[dict]) -> pd.DataFrame:
+    metadata = {item.get("id"): item for item in announcements}
+    rows = []
+    for announcement_id, payload in per_announcement.items():
+        announcement = metadata.get(announcement_id, {})
+        for hit in payload.get("suppressed_rule_hits", []):
+            reason = hit.get("suppression_reason", "")
+            rows.append(
+                {
+                    "日期": announcement.get("date", ""),
+                    "公告标题": announcement.get("title", ""),
+                    "L2": hit.get("label", ""),
+                    "命中词": hit.get("matched_keyword", ""),
+                    "过滤原因": FILTER_REASON_LABELS.get(reason, reason),
+                    "原文片段": hit.get("evidence", ""),
+                    "公告详情": announcement.get("source_url", ""),
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -202,6 +250,7 @@ if submitted:
                     use_ocr,
                     use_finbert,
                     use_llm,
+                    FILTER_VERSION,
                 )
                 st.write("下载或读取 PDF 缓存，执行风险抽取")
                 st.session_state["announcement_analysis"] = result
@@ -225,6 +274,13 @@ if result:
     )
     show_status_badges(semantic.get("channel_summary", {}), quality)
     show_kpis(semantic)
+
+    if quality.get("title_excluded_count", 0):
+        st.info(
+            f"已保留全部官方公告元数据，其中 {quality['title_excluded_count']} 份明确制度/候选人声明类公告"
+            "未下载 PDF、未进入风险抽取；可在审计信息中核对原因。",
+            icon=":material/filter_alt:",
+        )
 
     if quality.get("document_limit_truncated"):
         st.warning(
@@ -403,6 +459,24 @@ if result:
         )
 
     with audit_tab:
+        rule_summary = semantic.get("channel_summary", {}).get("rule", {})
+        llm_summary = semantic.get("channel_summary", {}).get("llm", {})
+        with st.container(horizontal=True):
+            st.metric(
+                "标题过滤公告",
+                quality.get("title_excluded_count", 0),
+                border=True,
+            )
+            st.metric(
+                "规则语境过滤",
+                rule_summary.get("suppressed_count", 0),
+                border=True,
+            )
+            st.metric(
+                "LLM 非事实语境拒绝",
+                llm_summary.get("rejected_nonfactual_context", 0),
+                border=True,
+            )
         left, right = st.columns(2)
         with left.container(border=True):
             st.subheader("三通道状态")
@@ -410,6 +484,48 @@ if result:
         with right.container(border=True):
             st.subheader("数据质量")
             st.json(quality, expanded=True)
+        announcements = semantic.get("announcements", [])
+        filtered_announcements = [
+            item for item in announcements
+            if item.get("analysis_status") == "excluded_by_title"
+        ]
+        if filtered_announcements:
+            with st.expander(
+                "查看按标题过滤的公告",
+                icon=":material/filter_alt:",
+            ):
+                filtered_df = announcement_dataframe(filtered_announcements)
+                st.dataframe(
+                    filtered_df[
+                        ["日期", "公告标题", "过滤原因", "公告详情", "官方 PDF"]
+                    ],
+                    hide_index=True,
+                    column_config={
+                        "公告详情": st.column_config.LinkColumn(
+                            "公告详情", display_text="打开"
+                        ),
+                        "官方 PDF": st.column_config.LinkColumn(
+                            "官方 PDF", display_text="查看"
+                        ),
+                    },
+                )
+        suppressed_df = suppression_dataframe(
+            semantic.get("per_announcement", {}), announcements
+        )
+        if not suppressed_df.empty:
+            with st.expander(
+                "查看被规则过滤的候选证据",
+                icon=":material/rule:",
+            ):
+                st.dataframe(
+                    suppressed_df,
+                    hide_index=True,
+                    column_config={
+                        "公告详情": st.column_config.LinkColumn(
+                            "公告详情", display_text="打开"
+                        )
+                    },
+                )
         with st.expander("查看完整 F1 特征", icon=":material/data_object:"):
             st.json(features, expanded=False)
         st.info(semantic.get("source_policy", ""), icon=":material/verified:")
