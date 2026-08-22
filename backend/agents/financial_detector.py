@@ -411,6 +411,16 @@ class FinancialDetectorAgent(AgentBase):
         except Exception as e:
             print(f"  [F3 抓取失败] {code}: {e}")
 
+        # 3.7 F4/F5/F6 特征（离线预处理表，队员 feature_loader 迁移；失败降级空）
+        f456_features = {}
+        try:
+            from ..skills.feature_loader import load_latest_features
+            for fam in ("F4", "F5", "F6"):
+                feats = load_latest_features(code, fam)
+                f456_features.update({k: _safe_float(v) for k, v in feats.items()})
+        except Exception as e:
+            print(f"  [F4/F5/F6 加载失败] {code}: {e}")
+
         # 4. 行业对标 Z-Score（可选）
         benchmarks = self.industry_benchmark(code, indicators)
 
@@ -428,10 +438,11 @@ class FinancialDetectorAgent(AgentBase):
         ctx.financial.anomaly_list = anomalies
         ctx.financial.risk_level = _risk_level(len(anomalies))
         ctx.financial.llm_analysis = llm_analysis
-        # F2-F6 特征（供预测模型）：F2 67 维 + F3 35 维 + 异常统计 + 关键指标
+        # F2-F6 特征（供预测模型）：F2 67 + F3 35 + F4/F5/F6 离线 + 异常统计 + 关键指标
         ctx.financial.features = {
             **f2_features,
             **mkt_features,
+            **f456_features,
             "anomaly_count": len(anomalies),
             "max_severity": max((a["severity"] for a in anomalies), default=0),
             "cf_income_ratio": indicators.get("cf_to_profit"),
@@ -441,6 +452,15 @@ class FinancialDetectorAgent(AgentBase):
             "revenue_yoy_growth": indicators.get("revenue_yoy_growth"),
             "net_profit_yoy_growth": indicators.get("net_profit_yoy_growth"),
         }
+
+        # 7.5 规则引擎风险因素（队员 risk_factors 迁移：F2-F6 特征 → 风险因素 JSON 输出②）
+        ctx.financial.risk_factors = {}
+        try:
+            from ..skills.risk_factors import generate_risk_factors
+            ctx.financial.risk_factors = generate_risk_factors(
+                ctx.financial.features, code, str(indicators.get("report_period", "")))
+        except Exception as e:
+            print(f"  [风险因素生成失败] {code}: {e}")
         return ctx
 
     def _industry_characteristics(self, industry):
