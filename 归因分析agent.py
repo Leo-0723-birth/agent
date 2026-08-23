@@ -22,6 +22,7 @@ from backend.agents.announcement_reader import AnnouncementReaderAgent
 from backend.agents.attributor import AttributorAgent
 from backend.agents.financial_detector import FinancialDetectorAgent
 from backend.agents.predictor import PredictorAgent
+from backend.config import ANNOUNCE_SOURCE
 from backend.context import Context
 from backend.skills.announcement_search import CninfoAnnouncementSource
 
@@ -44,7 +45,10 @@ def analyze_company(
     shap_threshold: float,
 ) -> dict:
     """公告研读 → 财务检测 → 预测建模(SHAP) → 归因解释（SHAP + 证据白名单 + validate_narrative 防幻觉）。"""
-    source = CninfoAnnouncementSource(max_documents=max_documents, ocr_enabled=use_ocr)
+    # 离线（ANNOUNCE_SOURCE=local）时不传 source，AnnouncementReaderAgent 自动走本地 PDF 扫描
+    source = None
+    if ANNOUNCE_SOURCE != "local":
+        source = CninfoAnnouncementSource(max_documents=max_documents, ocr_enabled=use_ocr)
     ctx = Context(company=company, as_of=as_of)
     AnnouncementReaderAgent(source=source, use_finbert=use_finbert, use_llm=use_llm).run(company, ctx)
     FinancialDetectorAgent(use_llm=False).run(company, ctx)
