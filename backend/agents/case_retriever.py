@@ -194,6 +194,7 @@ class CaseRetrieverAgent(AgentBase):
             cutoff_date,
             getattr(ctx, "cutoff_date", None),
             getattr(ctx, "as_of_date", None),
+            getattr(ctx, "as_of", None),
         ]
 
         for obj_name in ("prediction", "meta"):
