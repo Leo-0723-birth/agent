@@ -103,13 +103,32 @@ class CaseRetrieverAgent(AgentBase):
         return self._db, self._vecs
 
     # ================= 目标画像 =================
+    # 实时财务关键指标（供画像文本/标签）：F2-F6 特征 + 异常统计中挑选有判别力的
+    PROFILE_KEY_INDICATORS = (
+        "f2_roe", "f2_net_margin", "f2_debt_ratio", "f2_loss_flag", "f2_high_debt_flag",
+        "f2_beneish_m", "f2_benford_flag", "f2_trend_deterioration",
+        "mkt_return_20d", "mkt_max_drawdown_60d", "mkt_risk_warning_flag_30d",
+    )
+
     def _profile_text(self, ctx):
-        """目标公司风险画像文本（语义通道查询）。"""
+        """目标公司风险画像文本（语义通道查询）。含公告风险 + 财务异常 + 实时关键指标。"""
         parts = []
         for r in ctx.semantic.risk_factors:
             parts.append(f"{r.get('category', '')}:{r.get('description', '')}")
         for a in ctx.financial.anomaly_list:
             parts.append(f"{a.get('label_ref', '')}:{a.get('evidence', '')}")
+        # 实时财务关键指标（财务异常 agent 实时输出，作为检索分析依据）
+        feats = getattr(ctx.financial, "features", {}) or {}
+        for k in self.PROFILE_KEY_INDICATORS:
+            v = feats.get(k)
+            if v is not None and not (isinstance(v, float) and (v != v)):
+                parts.append(f"财务指标 {k}:{v}")
+        # 异常统计
+        stats = {
+            "异常条数": len(ctx.financial.anomaly_list),
+            "风险等级": ctx.financial.risk_level,
+        }
+        parts.append("财务异常统计:" + ",".join(f"{k}={v}" for k, v in stats.items() if v))
         return "；".join(parts)
 
     def _profile_labels(self, ctx):
@@ -123,6 +142,18 @@ class CaseRetrieverAgent(AgentBase):
             l = str(a.get("label_ref", ""))
             if l:
                 labels.add(l)
+        # 实时财务标签：亏损/高负债/盈余操纵/数字异常/市场异动
+        feats = getattr(ctx.financial, "features", {}) or {}
+        flag_map = {
+            "f2_loss_flag": "亏损",
+            "f2_high_debt_flag": "高负债",
+            "f2_beneish_m": "盈余操纵",
+            "f2_benford_flag": "数字异常",
+            "mkt_risk_warning_flag_30d": "风险警示",
+        }
+        for k, tag in flag_map.items():
+            if feats.get(k) in (1, 1.0, True):
+                labels.add(tag)
         return labels
 
     # ================= 通道1: 语义向量检索 =================

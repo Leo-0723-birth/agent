@@ -30,12 +30,37 @@ _FALLBACK_DIM = 1 << 16  # 65536 维哈希空间
 
 
 # ================= BGE 后端 =================
+def _bge_local_snapshot_dir():
+    """定位本地完整的 BGE snapshot 目录（含 config.json + 权重文件）。
+
+    HF 缓存元数据可能损坏（snapshot 被拆散/缺 refs），from_pretrained 的缓存解析
+    会失败并尝试联网（无外网时重试风暴卡死全流程）。直接指向快照目录可完全绕开。
+    """
+    base = Path(__file__).resolve().parent.parent / "models" / "embedding" \
+        / "hub" / "models--BAAI--bge-large-zh-v1.5" / "snapshots"
+    if not base.exists():
+        return None
+    for snap in sorted(base.iterdir()):
+        if not snap.is_dir() or not (snap / "config.json").exists():
+            continue
+        weights = list(snap.glob("*.safetensors")) + list(snap.glob("pytorch_model.bin"))
+        if weights:
+            return str(snap)
+    return None
+
+
 def _bge_load():
     if _BGE["model"] is None:
         from transformers import AutoModel, AutoTokenizer
-        print(f"[embedding] 加载 BGE 模型 {EMBEDDING_MODEL} ...（首次需下载权重）")
-        _BGE["tokenizer"] = AutoTokenizer.from_pretrained(EMBEDDING_MODEL)
-        _BGE["model"] = AutoModel.from_pretrained(EMBEDDING_MODEL)
+        local_dir = _bge_local_snapshot_dir()
+        if local_dir:
+            print(f"[embedding] 加载 BGE 模型（本地快照: {Path(local_dir).parent.name}）")
+            _BGE["tokenizer"] = AutoTokenizer.from_pretrained(local_dir, local_files_only=True)
+            _BGE["model"] = AutoModel.from_pretrained(local_dir, local_files_only=True)
+        else:
+            print(f"[embedding] 本地无 BGE 快照，尝试联网下载（HF_ENDPOINT={os.getenv('HF_ENDPOINT', '')}）")
+            _BGE["tokenizer"] = AutoTokenizer.from_pretrained(EMBEDDING_MODEL)
+            _BGE["model"] = AutoModel.from_pretrained(EMBEDDING_MODEL)
         _BGE["model"].eval()
     return _BGE["tokenizer"], _BGE["model"]
 

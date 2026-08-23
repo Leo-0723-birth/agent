@@ -62,6 +62,15 @@ def calc_total_assets(df):
 # 2. 七个特征族计算函数（从 pipeline 原样抽出）
 # ============================================================
 
+def _market_cap_quintile(df):
+    """市值五分位（1~5）：按 (report_period, industry) 组内 rank 分位。
+
+    与离线训练表的 f2_market_cap_quintile 对齐（离线为全局分位，组内样本不足时略有差异）。
+    """
+    pct = df.groupby(['report_period', 'industry'])['market_cap'].rank(pct=True)
+    return np.ceil(pct * 5).clip(lower=1, upper=5)
+
+
 def calc_a1_profitability_solvency(df):
     """A1: 盈利与偿债能力 15 维"""
     f = pd.DataFrame(index=df.index)
@@ -69,14 +78,14 @@ def calc_a1_profitability_solvency(df):
     # 直接取字段
     f['f2_roe'] = df['roe']                                          # 净资产收益率
     f['f2_roa'] = df['roa']                                          # 总资产收益率
-    f['f2_gross_margin'] = np.nan                                     # 毛利率(缺营业成本, 标记NaN)
     f['f2_net_margin'] = safe_div(df['net_profit'], df['total_revenue'])  # 净利率
     f['f2_debt_ratio'] = df['debt_to_assets_ratio']                  # 资产负债率
-    f['f2_current_ratio'] = np.nan                                    # 流动比率(缺数据, 标记NaN)
-    f['f2_interest_coverage'] = np.nan                                # 利息保障倍数(缺数据, 标记NaN)
     f['f2_pe'] = df['pe_ratio']                                      # 市盈率
     f['f2_pb'] = df['pb_ratio']                                      # 市净率
+    f['f2_neg_pe_flag'] = (df['pe_ratio'] < 0).astype(int)           # 负市盈率标志（与训练表对齐）
+    f['f2_neg_pb_flag'] = (df['pb_ratio'] < 0).astype(int)           # 负市净率标志（与训练表对齐）
     f['f2_log_market_cap'] = np.log(df['market_cap'].clip(lower=1))  # 对数市值
+    f['f2_market_cap_quintile'] = _market_cap_quintile(df)           # 市值五分位 1~5（与训练表对齐）
     f['f2_ocf_to_revenue'] = safe_div(df['operating_cash_flow'], df['total_revenue'])  # 经营现金流/营收
     f['f2_ocf_to_profit'] = safe_div(df['operating_cash_flow'], df['net_profit'])       # 经营现金流/净利润
     f['f2_roe_industry_rank'] = df.groupby(['report_period', 'industry'])['roe'].rank(pct=True)  # ROE行业百分位
@@ -363,10 +372,10 @@ REQUIRED_COLUMNS = [
 # 7 个特征族 -> 每个族包含的特征列名（顺序即输出顺序）
 FEATURE_FAMILIES = OrderedDict([
     ("A1_盈利偿债能力", [
-        'f2_roe', 'f2_roa', 'f2_gross_margin', 'f2_net_margin', 'f2_debt_ratio',
-        'f2_current_ratio', 'f2_interest_coverage', 'f2_pe', 'f2_pb', 'f2_log_market_cap',
-        'f2_ocf_to_revenue', 'f2_ocf_to_profit', 'f2_roe_industry_rank',
-        'f2_loss_flag', 'f2_high_debt_flag',
+        'f2_roe', 'f2_roa', 'f2_net_margin', 'f2_debt_ratio',
+        'f2_pe', 'f2_pb', 'f2_neg_pe_flag', 'f2_neg_pb_flag', 'f2_log_market_cap',
+        'f2_market_cap_quintile', 'f2_ocf_to_revenue', 'f2_ocf_to_profit',
+        'f2_roe_industry_rank', 'f2_loss_flag', 'f2_high_debt_flag',
     ]),
     ("A2_盈利质量", [
         'f2_accruals', 'f2_accruals_to_assets', 'f2_accruals_to_revenue', 'f2_ocf_to_assets',

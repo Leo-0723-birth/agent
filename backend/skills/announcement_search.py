@@ -290,7 +290,7 @@ class CninfoAnnouncementSource:
                 content = path.read_bytes()
                 status = "cached"
             else:
-                response = self.session.get(item["pdf_url"], timeout=45)
+                response = self.session.get(item["pdf_url"], timeout=20)
                 response.raise_for_status()
                 content = response.content
                 if len(content) > 50 * 1024 * 1024:
@@ -366,14 +366,20 @@ class CninfoAnnouncementSource:
             item["text_status"] = f"failed:{type(exc).__name__}:{str(exc)[:160]}"
         return item
 
-    def search(self, user_input, days=365, as_of=None):
+    def search(self, user_input, days=365, as_of=None, pdf_budget_seconds=180):
         cutoff = str(as_of or date.today().isoformat())[:10]
         company = self.resolve_company(user_input)
         announcements = self._list_metadata(company, cutoff, days)
         for item in announcements:
             apply_title_policy(item, mark_unfetched=True)
         eligible = [item for item in announcements if is_analysis_eligible(item)]
+        # PDF 下载/解析总预算：超过预算的公告标记为未获取并继续（不阻塞流水线；
+        # F6 问询特征只需公告元数据 title+date，不受影响）
+        deadline = time.time() + float(pdf_budget_seconds)
         for item in eligible[: self.max_documents]:
+            if time.time() > deadline:
+                item["text_status"] = "not_fetched_budget"
+                continue
             self._process_pdf(item)
         return company, announcements
 

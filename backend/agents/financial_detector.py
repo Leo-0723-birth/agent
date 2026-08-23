@@ -411,15 +411,43 @@ class FinancialDetectorAgent(AgentBase):
         except Exception as e:
             print(f"  [F3 抓取失败] {code}: {e}")
 
-        # 3.7 F4/F5/F6 特征（离线预处理表，队员 feature_loader 迁移；失败降级空）
+        # 3.7 F4/F5 特征（在线爬取优先 → 离线预处理表兜底，在线带超时保护）
+        #     在线：股吧舆情(F4)/股东治理(F5)，保证拿到近日最新数据；
+        #     超时/失败/公司不在线时回退离线预处理表（训练同源，取最新一期）。
+        #     F6 监管问询函特征：由【公告研读 Agent】从巨潮公告计算（见
+        #     backend/skills/inquiry_features.py），财务侧不输出 F6。
         f456_features = {}
         try:
+            from ..skills.crawl_sentiment import crawl_sentiment_features
+            from ..skills.crawl_governance import crawl_governance_features
+            online_crawlers = {
+                "F4": crawl_sentiment_features,
+                "F5": crawl_governance_features,
+            }
             from ..skills.feature_loader import load_latest_features
-            for fam in ("F4", "F5", "F6"):
-                feats = load_latest_features(code, fam)
-                f456_features.update({k: _safe_float(v) for k, v in feats.items()})
+            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutTimeout
+
+            def _run_with_timeout(fn, *args, timeout=30):
+                with ThreadPoolExecutor(max_workers=1) as ex:
+                    return ex.submit(fn, *args).result(timeout=timeout)
+
+            for fam, crawler in online_crawlers.items():
+                feats = None
+                try:
+                    feats = _run_with_timeout(crawler, code, timeout=30)   # 在线：近日最新数据
+                except FutTimeout:
+                    print(f"  [{fam} 在线抓取超时(30s)，回退离线表] {code}")
+                except Exception as e:
+                    print(f"  [{fam} 在线抓取失败，回退离线表] {code}: {e}")
+                if feats is None:
+                    try:
+                        feats = load_latest_features(code, fam)             # 离线表兜底
+                    except Exception as e:
+                        print(f"  [{fam} 离线表加载失败] {code}: {e}")
+                        feats = {}
+                f456_features.update({k: _safe_float(v) for k, v in (feats or {}).items()})
         except Exception as e:
-            print(f"  [F4/F5/F6 加载失败] {code}: {e}")
+            print(f"  [F4/F5 加载失败] {code}: {e}")
 
         # 4. 行业对标 Z-Score（可选）
         benchmarks = self.industry_benchmark(code, indicators)

@@ -102,22 +102,12 @@ class PredictorAgent(AgentBase):
             return None
         return sub.sort_values("_rp" if as_of_yyyymmdd else "report_period").iloc[-1]
 
-    # ================= 单窗口推理 =================
-    def _predict_one(self, horizon, row, manifest):
-        w = horizon.replace("d", "")
-        cfg = manifest["windows"].get(w)
-        if not cfg:
-            return None, None, []
-        feats = cfg["features"]
+    # ================= 模型推理（两条路径共享） =================
+    def _infer(self, X, feats, horizon):
+        """三模型集成推理 + SHAP。X: (1, n) float32；feats: 与 X 列对应。"""
         models = self._load_models(horizon)
         if not any(models.values()):
             return None, None, []
-
-        missing = [f for f in feats if f not in row.index]
-        if missing:
-            return None, None, []
-        X = np.asarray(row[feats].values, dtype=np.float32).reshape(1, -1)
-
         probs = []
         # 每个模型单独 try/except：单个模型推理失败（如环境缺依赖）不打断整窗口
         if models.get("rf") is not None:
@@ -142,11 +132,41 @@ class PredictorAgent(AgentBase):
         # SHAP：用 LightGBM pred_contrib 作集成贡献代理
         shap_features = []
         if models.get("lgb") is not None:
-            contrib = models["lgb"].predict(X, pred_contrib=True)[0][:-1]
-            order = np.argsort(-np.abs(contrib))[:self.top_shap]
-            shap_features = [(feats[i], round(float(contrib[i]), 5))
-                             for i in order if abs(contrib[i]) > 1e-6]
+            try:
+                contrib = models["lgb"].predict(X, pred_contrib=True)[0][:-1]
+                order = np.argsort(-np.abs(contrib))[:self.top_shap]
+                shap_features = [(feats[i], round(float(contrib[i]), 5))
+                                 for i in order if abs(contrib[i]) > 1e-6]
+            except Exception:
+                pass
         return p, round(max(p, 1.0 - p), 4), shap_features
+
+    # ================= 单窗口推理（查表路径） =================
+    def _predict_one(self, horizon, row, manifest):
+        w = horizon.replace("d", "")
+        cfg = manifest["windows"].get(w)
+        if not cfg:
+            return None, None, []
+        feats = cfg["features"]
+        missing = [f for f in feats if f not in row.index]
+        if missing:
+            return None, None, []
+        X = np.asarray(row[feats].values, dtype=np.float32).reshape(1, -1)
+        return self._infer(X, feats, horizon)
+
+    # ================= 单窗口推理（实时路径） =================
+    def _predict_realtime(self, horizon, ctx, manifest):
+        """实时路径：ctx 实时特征（公告 F1 标量 + 财务 F2-F6）→ manifest 对齐向量 → 集成推理。"""
+        from ..skills.feature_composer import compose_realtime_features, load_fill_dict
+        w = horizon.replace("d", "")
+        cfg = manifest["windows"].get(w)
+        if not cfg:
+            return None, None, []
+        feats = cfg["features"]
+        fill = load_fill_dict(w)
+        vec = compose_realtime_features(ctx, feats, fill)
+        X = np.asarray([vec[f] for f in feats], dtype=np.float32).reshape(1, -1)
+        return self._infer(X, feats, horizon)
 
     # ================= 主入口 =================
     def execute(self, company, ctx):
@@ -155,6 +175,46 @@ class PredictorAgent(AgentBase):
         ctx.company = code
 
         manifest = self._load_manifest()
+        # 有财务异常实时特征 → 走实时推理（F1 标量 + F2-F6 实时值，缺失列用训练集中位数兜底）；
+        # 否则 → 兜底查表（离线建模数据集）
+        realtime_ok = bool(getattr(getattr(ctx, "financial", None), "features", None))
+        if realtime_ok:
+            return self._execute_realtime(ctx, manifest)
+        return self._execute_lookup(ctx, manifest, code, as_of)
+
+    def _execute_realtime(self, ctx, manifest):
+        """实时推理主逻辑：以公告研读 F1 + 财务异常 F2-F6 为数据源，概率由实时数据驱动。"""
+        from ..skills.feature_composer import coverage_stats
+        pred = {"data_source": "realtime"}
+        p60, conf, shap = None, None, []
+        for h in self.horizons:
+            p, c, s = self._predict_realtime(h, ctx, manifest)
+            key = f"probability_{h}"
+            pred[key] = p
+            if h == "60d":
+                p60, conf, shap = p, c, s
+        if p60 is None:
+            # 主窗口不可用则取任一
+            for h in self.horizons:
+                if pred.get(f"probability_{h}") is not None:
+                    p60 = pred[f"probability_{h}"]
+                    conf = round(max(p60, 1 - p60), 4)
+                    break
+
+        pred["confidence"] = conf
+        pred["risk_level"] = "未预测" if p60 is None else (
+            "高" if p60 >= RISK_THRESHOLDS["high"] else
+            "中" if p60 >= RISK_THRESHOLDS["medium"] else "低")
+        pred["shap_features"] = shap
+        # 审计：特征锚点（财务最新报告期）+ 实时覆盖率
+        fp = getattr(ctx.financial, "indicators", {}) or {}
+        pred["feature_anchor"] = str(fp.get("report_period", ctx.as_of or ""))[:10]
+        pred["coverage"] = coverage_stats(getattr(ctx, "features_origin", {}))
+        ctx.prediction = pred
+        return ctx
+
+    def _execute_lookup(self, ctx, manifest, code, as_of):
+        """兜底：离线建模数据查表推理（公司无实时财务数据时）。"""
         row = self._lookup(code, as_of)
         if row is None:
             ctx.prediction = {"probability_30d": None, "probability_60d": None,
@@ -164,7 +224,7 @@ class PredictorAgent(AgentBase):
             return ctx
 
         anchor = str(row["report_period"])
-        pred = {"feature_anchor": anchor}
+        pred = {"feature_anchor": anchor, "data_source": "offline_lookup"}
         p60, conf, shap = None, None, []
         for h in self.horizons:
             p, c, s = self._predict_one(h, row, manifest)

@@ -509,6 +509,17 @@ class AnnouncementReaderAgent(AgentBase):
         ctx.semantic.f1_features = f1
         ctx.semantic.f1_vector = f1_vector
         ctx.semantic.f1_vector_backend = f1_vector_backend
+        # F6 监管问询函特征：由本 Agent 的公告列表（巨潮官方源）计算，
+        # 供预测建模使用（口径与离线 F6 表一致；窗口内无问询公告 → 全 0）
+        try:
+            from datetime import date as _date
+            from ..skills.inquiry_features import compute_f6_from_announcements
+            ctx.semantic.f6_features = compute_f6_from_announcements(
+                announcements, _date.fromisoformat(str(as_of)[:10])
+            )
+        except Exception as e:
+            print(f"  [F6 问询特征计算失败] {e}")
+            ctx.semantic.f6_features = {}
         ctx.semantic.channel_summary = {
             "rule": {
                 "status": "enabled" if self.use_rule else "disabled",

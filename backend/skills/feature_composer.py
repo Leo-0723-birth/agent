@@ -1,0 +1,114 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+Skill: feature_composer —— 实时特征组装器（供 PredictorAgent 实时推理）
+================================================================
+把流水线实时产出的特征（公告研读 F1 标量 + 财务异常 F2-F6）按
+models_manifest.json 的特征清单组装成模型输入向量；清单中实时拿不到的列
+（如离线预计算的 F1 语义特征 regulatory_inquiry_semantic_*、governance_year）
+用训练集(Train split)中位数填充——离线数据只做"初始建模/缺失兜底"，预测
+主体由实时数据驱动。
+
+数据流：
+  ctx.semantic.f1_features（公告研读实时） ─┐
+  ctx.financial.features（财务异常实时 F2-F6）─┼→ compose_realtime_features() → 模型向量
+  fill_median_{w}d.csv（训练集中位数，兜底） ──┘
+
+用法：
+    from backend.skills.feature_composer import compose_realtime_features, load_fill_dict
+    vec = compose_realtime_features(ctx, manifest_features, fill_dict)
+"""
+import math
+from pathlib import Path
+
+import pandas as pd
+
+FILL_DIR = Path(__file__).resolve().parent.parent / "data" / "modeling"
+
+_fill_cache = {}
+
+
+def load_fill_dict(window: str, fill_dir=FILL_DIR) -> dict:
+    """加载某窗口的填充字典（训练集中位数），懒加载 + 缓存。"""
+    if window not in _fill_cache:
+        p = Path(fill_dir) / f"fill_median_{window}d.csv"
+        if not p.exists():
+            _fill_cache[window] = {}
+        else:
+            ser = pd.read_csv(p, index_col=0, encoding="utf-8-sig").iloc[:, 0]
+            _fill_cache[window] = {str(k): v for k, v in ser.items()}
+    return _fill_cache[window]
+
+
+def _clean(v):
+    """把 numpy 标量/NaN/Inf 转成可入模型的值；无效返回 None。"""
+    if v is None:
+        return None
+    try:
+        if pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(f) or math.isinf(f):
+        return None
+    return f
+
+
+def compose_realtime_features(ctx, manifest_features, fill_dict=None) -> dict:
+    """按 manifest 特征清单组装实时向量。
+
+    优先级：实时值(财务 F2-F6 / 公告 F1 标量) → 训练集中位数 → 0.0。
+    返回 dict{feature: float}，键与 manifest_features 一一对应。
+
+    额外信息：ctx.features_real_time 写入 {feature: "realtime"|"filled"}，
+    供审计页展示实时覆盖率。
+    """
+    real: dict = {}
+    # ① 财务异常实时特征（F2/F3/F4/F5，列名已与训练表对齐；F6 由公告研读提供，见 ③）
+    if getattr(ctx, "financial", None) and getattr(ctx.financial, "features", None):
+        real.update(ctx.financial.features)
+    # ② 公告研读实时 F1 标量（仅当 manifest 恰好用到时生效）
+    if getattr(ctx, "semantic", None) and getattr(ctx.semantic, "f1_features", None):
+        scalars = ctx.semantic.f1_features.get("scalar_features", {}) or {}
+        for k, v in scalars.items():
+            if k in manifest_features:
+                real[k] = v
+    # ③ 公告研读实时 F6 监管问询函特征（12 维 f6_*，覆盖财务侧同名键）
+    if getattr(ctx, "semantic", None) and getattr(ctx.semantic, "f6_features", None):
+        for k, v in ctx.semantic.f6_features.items():
+            if k in manifest_features:
+                real[k] = v
+
+    fill = fill_dict or {}
+    vec, origin = {}, {}
+    for f in manifest_features:
+        v = _clean(real.get(f))
+        if v is None:
+            v = _clean(fill.get(f))
+            origin[f] = "filled"
+        else:
+            origin[f] = "realtime"
+        vec[f] = v if v is not None else 0.0
+
+    try:
+        ctx.features = dict(vec)                 # 实时数据文档：供建模/审计使用
+        ctx.features_origin = origin
+    except Exception:
+        pass
+    return vec
+
+
+def coverage_stats(origin: dict) -> dict:
+    """实时覆盖率统计：{realtime: n, filled: n, total: n, ratio: float}。"""
+    n_real = sum(1 for v in origin.values() if v == "realtime")
+    total = len(origin)
+    return {
+        "realtime": n_real,
+        "filled": total - n_real,
+        "total": total,
+        "ratio": round(n_real / total, 4) if total else 0.0,
+    }

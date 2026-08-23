@@ -33,34 +33,84 @@ class SweepState(TypedDict):
 
 # ================= 节点构造 =================
 
-def _node_factory(agent_factory):
-    """把「构造 agent 并 agent.run()」包装成 LangGraph 节点。
+def _run_with_deadline(agent_name, fn, state, timeout):
+    """节点级看门狗：daemon 线程 + join(timeout)。
+
+    - 超时：记录 trace 后立即返回（不打断图，流水线永不永久挂起）；
+    - 异常：向上抛出（供容错节点捕获）；
+    - daemon 线程保证进程退出不被挂起任务拖住。
+    """
+    import threading
+    box = {}
+
+    def worker():
+        try:
+            box["value"] = fn(state)
+        except Exception as e:  # noqa: BLE001
+            box["error"] = e
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        ctx = state["ctx"]
+        ctx.trace_log.append({
+            "agent": agent_name,
+            "status": "timeout",
+            "reason": f"节点执行超过 {timeout}s（网络异常），后续环节继续",
+            "trace_complete": True,
+        })
+        return {"ctx": ctx}
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
+
+
+def _node_factory(agent_factory, timeout=240, name="?"):
+    """把「构造 agent 并 agent.run()」包装成 LangGraph 节点（带看门狗）。
 
     agent_factory: 无参可调用，返回一个 AgentBase 实例。
+    timeout: 节点执行上限（秒），超时记录 trace 后继续。
+    name: 节点名（用于超时/错误 trace）。
     """
     def node(state: SweepState) -> dict:
-        ctx = state["ctx"]
+        return _run_with_deadline(name, _run_agent, state, timeout)
+
+    def _run_agent(state: SweepState) -> dict:
         agent = agent_factory()
-        agent.run(state["company"], ctx)
-        return {"ctx": ctx}
+        agent.run(state["company"], state["ctx"])
+        return {"ctx": state["ctx"]}
     return node
 
 
-def _tolerant_node(agent_factory):
-    """容错节点：异常时记录 skipped trace，不打断图（用于 predictor/chunk）。"""
+def _tolerant_node(agent_factory, timeout=120):
+    """容错节点：异常/超时时记录 skipped/timeout trace，不打断图（用于 predictor/chunk）。"""
     def node(state: SweepState) -> dict:
-        ctx = state["ctx"]
         agent = agent_factory()
         try:
-            agent.run(state["company"], ctx)
+            return _run_with_deadline(
+                getattr(agent, "name", "?"), _run_tolerant, state, timeout)
         except Exception as e:
-            ctx.trace_log.append({
+            state["ctx"].trace_log.append({
                 "agent": getattr(agent, "name", "?"),
                 "status": "skipped",
                 "reason": f"{type(e).__name__}: {e}",
                 "trace_complete": True,
             })
-        return {"ctx": ctx}
+            return {"ctx": state["ctx"]}
+
+    def _run_tolerant(state: SweepState) -> dict:
+        agent = agent_factory()
+        try:
+            agent.run(state["company"], state["ctx"])
+        except Exception as e:
+            state["ctx"].trace_log.append({
+                "agent": getattr(agent, "name", "?"),
+                "status": "skipped",
+                "reason": f"{type(e).__name__}: {e}",
+                "trace_complete": True,
+            })
+        return {"ctx": state["ctx"]}
     return node
 
 
@@ -91,15 +141,17 @@ def build_graph(use_llm=False, use_finbert=False, use_rule=True,
     g = StateGraph(SweepState)
 
     g.add_node("announcement", _node_factory(
-        lambda: AnnouncementReaderAgent(use_finbert=use_finbert, use_llm=use_llm, use_rule=use_rule)))
+        lambda: AnnouncementReaderAgent(use_finbert=use_finbert, use_llm=use_llm, use_rule=use_rule),
+        timeout=420, name="AnnouncementReader"))
     g.add_node("financial", _node_factory(
-        lambda: FinancialDetectorAgent(use_llm=False, rate_limit=rate_limit)))
-    g.add_node("predictor", _tolerant_node(PredictorAgent))
-    g.add_node("case", _node_factory(CaseRetrieverAgent))
-    g.add_node("chunk", _tolerant_node(ChunkRetrieverAgent))
+        lambda: FinancialDetectorAgent(use_llm=False, rate_limit=rate_limit),
+        timeout=240, name="FinancialDetector"))
+    g.add_node("predictor", _tolerant_node(PredictorAgent, timeout=120))
+    g.add_node("case", _node_factory(CaseRetrieverAgent, timeout=180, name="CaseRetriever"))
+    g.add_node("chunk", _tolerant_node(ChunkRetrieverAgent, timeout=60))
     g.add_node("attribution", _node_factory(
-        lambda: AttributorAgent(use_llm=use_llm)))
-    g.add_node("report", _node_factory(ReporterAgent))
+        lambda: AttributorAgent(use_llm=use_llm), timeout=60, name="Attributor"))
+    g.add_node("report", _node_factory(ReporterAgent, timeout=60, name="Reporter"))
 
     g.set_entry_point("announcement")
     g.add_edge("announcement", "financial")
