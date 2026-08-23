@@ -58,11 +58,20 @@ backend/data/modeling/
 | `output/` | 训练评估产物 | 每次训练后 | 队长 |
 | `backend/models/predictor/` | 模型权重 + manifest（不在本目录，见 backend/models/） | 重训后 | 队长 |
 
-## 已知缺口（需队员补充）
+## 训练管线（已自包含，可完整重建）
 
-1. **F2 离线表**：✅ 已于 2026-08-23 导入（`preprocessed/F2_financial_anomaly.csv` 67 维新列名 37222 行 + `raw/` 备份与构建脚本）；
-2. **F1 原始表**：❌ 待队员提供 `F1_semantic_features.parquet`（或 `F1_base_financial.csv`）——公告语义 50 维，导入 `raw/` 后即可重建 `processed_dataset.csv`；
-3. 重建管线：`build_modeling_dataset.py → train_models.py`（见 backend/scripts/），当前脚本读取的 RAW 目录在 `C:\Users\86130\Desktop\预测建模agent\01_原数据`，导入项目 raw/ 后需同步该脚本路径。
+```bash
+# 从项目内 raw/ 重建训练数据集（F1 Top-50 + F2-F6 + 标签）：
+python -m backend.scripts.build_modeling_dataset   # 输出 processed_dataset.csv (37222×204)
+# 重训三模型 × 三窗口 + SHAP：
+python -m backend.scripts.train_models
+# 重建预测兜底字典（fill/）：按 processed_dataset Train 中位数重算
+```
+> ✅ 已于 2026-08-23 用项目内 raw 数据完整重建验证（F1 300 维→Top-50、F2-F6 全家族、正样本率 30d 2.53% / 60d 5.79% / 90d 8.16%）。
+
+## 已知缺口
+
+- F1/F2/F3/F4/F5/F6 + inquiry_events **已全部导入**（见 `raw/README.md`）；训练/预测管线均可在项目内正常运行，无需依赖桌面外部目录。
 
 ## 预测为何"实时为主、离线兜底"
 

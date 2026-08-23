@@ -20,10 +20,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-OUT = Path(r"C:\Users\86130\Desktop\预测建模agent")
-RAW = OUT / "01_原数据"
-PROC = OUT / "05_模型输出"
-SEL = OUT / "03_F1特征选取"
+# 训练原料从项目内读取（backend/data/modeling/raw/），输出到建模数据根目录
+_MODELING = Path(__file__).resolve().parent.parent.parent / "backend" / "data" / "modeling"
+RAW = _MODELING / "raw"
+PROC = _MODELING
+SEL = RAW / "f1_selection"
 PROC.mkdir(parents=True, exist_ok=True)
 
 WINDOWS = [30, 60, 90]

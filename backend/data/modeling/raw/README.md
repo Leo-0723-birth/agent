@@ -7,12 +7,15 @@
 
 | 文件 | 内容 | 来源 | 状态 |
 |---|---|---|---|
-| `F1_base_financial.csv` / `F1_semantic_features.parquet` | 公告语义 F1 原始表（50 维） | 队友"预处理后数据"目录 | ❌ 待导入 |
+| `F1_semantic_features.parquet` | F1 公告语义特征（300 维全量，Top-50 由 f1_selection/ 选取） | 队友交付（2026-08-23 已收） | ✅ 已导入 |
 | `F2_financial_anomaly.csv` | F2 财务异常 67 维（新列名，37222 行） | 队友交付（2026-08-23 已收） | ✅ 已导入（含 build_f2_financial_anomaly.py） |
 | `F3_market_features.csv` | F3 市场特征 | 队友/队长（本地已有副本在 ../preprocessed/） | ✅ 已就位 |
 | `F4_sentiment_features.csv` | F4 舆情特征 | 队友 | ✅ 已就位 |
 | `F5_ownership_governance.csv` | F5 治理特征 | 队友 | ✅ 已就位 |
 | `F6_inquiry_history.csv` | F6 问询历史特征 | 队友 | ✅ 已就位 |
+| `inquiry_events.csv` | 10056 份问询回复函解析 | 队友 | ✅ 已导入 |
+| `f1_selection/` | F1 Top-50 选取说明 + 描述文档 + 脚本 | 队友 | ✅ 已导入 |
+| `build_f2_financial_anomaly.py` / `F2F6_特征选择与数据来源.xlsx` | F2 构建脚本 / 特征来源说明 | 队友 | ✅ 已导入 |
 | `监管问询JSONL/` | 官方问询函结构化数据（4785 案例库源头） | `D:\新建文件夹\02_监管问询` | ❌ 按需导入 |
 | `公告PDF/` | 巨潮公告 PDF（公告研读索引源头） | `D:\BaiduNetdiskDownload` | ❌ 按需导入 |
 
