@@ -72,6 +72,7 @@ class AnnouncementReaderAgent(AgentBase):
         source=None,
         rule_extractor=None,
         llm_callable=None,
+        progress_callback=None,
     ):
         super().__init__()
         self.data_root = data_root
@@ -83,6 +84,7 @@ class AnnouncementReaderAgent(AgentBase):
         self.rule_extractor = rule_extractor or RuleRiskExtractor()
         self.source = source or self._default_source()
         self.llm_callable = llm_callable or chat_json
+        self.progress_callback = progress_callback
         self.llm_configured = bool(llm_callable is not None or os.getenv("DEEPSEEK_API_KEY"))
         self.finbert = None
         self.finbert_error = ""
@@ -98,8 +100,19 @@ class AnnouncementReaderAgent(AgentBase):
         if ANNOUNCE_SOURCE == "local":
             return None
         from ..skills.announcement_search import CninfoAnnouncementSource
+        from ..skills.competition_history import CompetitionAwareAnnouncementSource
 
-        return CninfoAnnouncementSource(max_documents=ANNOUNCE_MAX_DOCUMENTS)
+        return CompetitionAwareAnnouncementSource(
+            CninfoAnnouncementSource(
+                max_documents=ANNOUNCE_MAX_DOCUMENTS,
+                progress_callback=self.progress_callback,
+            ),
+            progress_callback=self.progress_callback,
+        )
+
+    def _emit_progress(self, event, **payload):
+        if self.progress_callback is not None:
+            self.progress_callback({"event": event, **payload})
 
     def _load_announcements(self, company, as_of):
         if self.source is not None:
@@ -372,6 +385,8 @@ class AnnouncementReaderAgent(AgentBase):
     def execute(self, company, ctx):
         as_of = str(ctx.as_of or date.today().isoformat())[:10]
         identity, announcements = self._load_announcements(company, as_of)
+        historical_context = getattr(self.source, "last_history", {}) or {}
+        query_trace = getattr(self.source, "last_query_trace", []) or []
         ctx.company = identity["secucode"]
         ctx.name = identity["company_name"]
         for item in announcements:
@@ -380,6 +395,7 @@ class AnnouncementReaderAgent(AgentBase):
             item for item in announcements if is_analysis_eligible(item)
         ]
 
+        self._emit_progress("rule_analysis_started", document_count=len(eligible_announcements))
         if self.use_rule:
             rule_factors, per_announcement, suppressed = self._rule_extract(
                 eligible_announcements
@@ -390,7 +406,10 @@ class AnnouncementReaderAgent(AgentBase):
                 item["id"]: {"rule_factors": [], "suppressed_rule_hits": []}
                 for item in eligible_announcements
             }
+        self._emit_progress("rule_analysis_completed", factor_count=len(rule_factors), suppressed_count=suppressed)
+        self._emit_progress("finbert_started", enabled=bool(self.use_finbert))
         finbert_signals, finbert_status = self._finbert_classify(eligible_announcements)
+        self._emit_progress("finbert_completed", status=finbert_status, signal_count=len(finbert_signals))
         signal_map = {item["announcement_id"]: item for item in finbert_signals}
         rule_ids = {item["announcement_id"] for item in rule_factors}
         gate_active = bool(
@@ -405,6 +424,7 @@ class AnnouncementReaderAgent(AgentBase):
                 ]
             else:
                 llm_candidates = eligible_announcements
+            self._emit_progress("llm_started", document_count=len(llm_candidates))
             (
                 llm_factors,
                 llm_per_announcement,
@@ -419,6 +439,12 @@ class AnnouncementReaderAgent(AgentBase):
             llm_candidates, llm_factors, llm_per_announcement = [], [], {}
             rejected_llm, rejected_llm_context, failed_llm = 0, 0, 0
             llm_status = "disabled" if not self.use_llm else "not_configured"
+        self._emit_progress(
+            "llm_completed",
+            status=llm_status,
+            processed_count=len(llm_candidates),
+            factor_count=len(llm_factors),
+        )
 
         for announcement_id, payload in llm_per_announcement.items():
             per_announcement.setdefault(announcement_id, {}).update(payload)
@@ -440,6 +466,7 @@ class AnnouncementReaderAgent(AgentBase):
             factors.append(factor)
 
         f1 = self._build_f1(announcements, factors, as_of)
+        self._emit_progress("finalizing", risk_factor_count=len(factors))
         f1_vector = None
         f1_vector_backend = "not_generated: EMBEDDING_BACKEND is not bge"
         if EMBEDDING_BACKEND == "bge" and factors:
@@ -543,8 +570,12 @@ class AnnouncementReaderAgent(AgentBase):
                 "failed_document_count": failed_llm,
             },
         }
+        ctx.semantic.historical_context = historical_context
+        ctx.semantic.query_trace = query_trace
         ctx.semantic.source_policy = (
-            "当前事实仅来自截止日以前的巨潮在线公告和官方PDF；"
+            "查询先检查比赛历史库，再访问巨潮补充截止日以前的最新公告。"
+            "当前事实与近30/60/90天F1仅来自巨潮在线公告和官方PDF；"
+            "比赛库中的2020—2024历史旧规则命中只作候选证据，单独展示且不计入当前风险。"
             "规则或模型只生成待复核信号，不构成事实认定。"
             "制度类公告和规范性段落会保留审计记录但不计入风险。"
         )
@@ -573,6 +604,9 @@ class AnnouncementReaderAgent(AgentBase):
             "ocr_failed_pages": ocr_failed_pages,
             "ocr_skipped_pages": ocr_skipped_pages,
             "f1_vector_backend": f1_vector_backend,
+            "competition_history_available": historical_context.get("available", False),
+            "competition_history_match_status": historical_context.get("match_status", "not_configured"),
+            "competition_history_document_count": historical_context.get("document_count", 0),
         }
         ctx.semantic.stats = {
             "announcement_count": len(announcements),
@@ -588,4 +622,5 @@ class AnnouncementReaderAgent(AgentBase):
             "window_days": ANNOUNCE_WINDOW_DAYS,
             "as_of": as_of,
         }
+        self._emit_progress("analysis_completed", risk_factor_count=len(factors))
         return ctx
