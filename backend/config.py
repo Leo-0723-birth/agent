@@ -26,6 +26,20 @@ VECTOR_DB_DIR = DATA_DIR / "vector_db"  # 向量库持久化（案例库/证据�
 OUTPUT_DIR = DATA_DIR / "output"        # context 快照 / 报告 / trace.log
 MODEL_DIR = BASE_DIR / "backend" / "models"
 
+# 比赛历史库（2020—2024 历史研究数据；只作历史证据，不替代当前公告事实）
+COMPETITION_DATA_ROOT = Path(os.getenv(
+    "COMPETITION_DATA_ROOT",
+    r"D:\codex work\Announcement_NLP_Project_Final",
+))
+COMPETITION_RULE_RISKS = Path(os.getenv(
+    "COMPETITION_RULE_RISKS",
+    str(COMPETITION_DATA_ROOT / "02_风险标签抽取模块" / "规则风险结果" / "announcement_rule_risks.jsonl"),
+))
+COMPETITION_SEMANTIC_FEATURES = Path(os.getenv(
+    "COMPETITION_SEMANTIC_FEATURES",
+    str(COMPETITION_DATA_ROOT / "04_语义特征生成模块" / "核心Parquet" / "semantic_features.parquet"),
+))
+
 # ---------- LLM（backend/llm.py 使用） ----------
 LLM_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
 LLM_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")

@@ -25,6 +25,7 @@ from backend.dashboard_utils import (
 )
 from backend.skills.announcement_context_filter import FILTER_VERSION
 from backend.skills.announcement_search import CninfoAnnouncementSource
+from backend.skills.competition_history import CompetitionAwareAnnouncementSource
 
 
 st.set_page_config(
@@ -69,9 +70,11 @@ def analyze_company(
     filter_version: str,
 ) -> dict:
     """执行一次可复用的公告研读；结果按输入和开关缓存。"""
-    source = CninfoAnnouncementSource(
-        max_documents=max_documents,
-        ocr_enabled=use_ocr,
+    source = CompetitionAwareAnnouncementSource(
+        CninfoAnnouncementSource(
+            max_documents=max_documents,
+            ocr_enabled=use_ocr,
+        )
     )
     agent = AnnouncementReaderAgent(
         source=source,
@@ -91,8 +94,10 @@ def show_status_badges(channel_summary: dict, data_quality: dict) -> None:
     finbert_status = channel_summary.get("finbert", {}).get("status", "unknown")
     llm_status = channel_summary.get("llm", {}).get("status", "unknown")
     ocr_status = data_quality.get("ocr_status", "unknown")
+    history_status = data_quality.get("competition_history_match_status", "unknown")
     st.markdown(
         f":green-badge[巨潮官方主源] "
+        f":violet-badge[历史库 {history_status}] "
         f":blue-badge[规则 {rule_status}] "
         f":blue-badge[OCR {ocr_status}] "
         f":gray-badge[FinBERT {finbert_status}] "
@@ -187,8 +192,46 @@ def suppression_dataframe(per_announcement: dict, announcements: list[dict]) -> 
     return pd.DataFrame(rows)
 
 
+def historical_risk_dataframe(history: dict) -> pd.DataFrame:
+    """只展示历史旧规则候选，不转换成当前风险事件。"""
+    rows = []
+    for item in history.get("risk_candidates", []):
+        rows.append(
+            {
+                "历史日期": item.get("date", ""),
+                "公告标题": item.get("title", ""),
+                "旧规则标签": item.get("risk_label", ""),
+                "旧严重度": item.get("severity", ""),
+                "历史原文摘录": item.get("evidence", ""),
+                "页码": item.get("page"),
+                "文档 ID": item.get("doc_id", ""),
+                "数据层级": item.get("source_tier", ""),
+                "复核状态": item.get("verification_status", ""),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def show_query_flow(semantic: dict) -> None:
+    trace = semantic.get("query_trace", [])
+    history = semantic.get("historical_context", {})
+    with st.container(border=True):
+        st.subheader("本次数据查询过程")
+        for item in trace:
+            status = item.get("status", "")
+            icon = ":material/check_circle:" if status in {"hit", "success", "history_and_current"} else ":material/info:"
+            st.markdown(f"{icon} **步骤 {item.get('step')} · {item.get('source')}** — {item.get('detail', '')}")
+        if history.get("match_status") == "hit":
+            st.caption(
+                f"历史覆盖 {history.get('date_start') or '未知'} 至 {history.get('date_end') or '未知'}，"
+                f"共 {history.get('document_count', 0)} 份公告；历史候选与当前风险严格分层。"
+            )
+        elif history.get("match_status") == "unavailable":
+            st.warning(history.get("message", "比赛历史库不可用。"), icon=":material/database_off:")
+
+
 st.title("公告研读 Agent")
-st.caption("输入上市公司代码或准确名称，读取截止日以前近一年的巨潮官方公告并输出可核验证据。")
+st.caption("输入上市公司代码或准确名称：先查比赛历史库，再读取巨潮近一年官方公告，分层输出可核验证据。")
 
 with st.sidebar:
     st.subheader("运行设置")
@@ -221,7 +264,7 @@ with st.sidebar:
         value=False,
         help="需要 DEEPSEEK_API_KEY；证据无法在原文逐字找到时会被拒绝。",
     )
-    st.caption("公告事实主源：巨潮资讯网。规则/模型输出均为待复核风险信号。")
+    st.caption("查询顺序：比赛历史库 → 巨潮资讯网。当前事实主源仍是巨潮；历史旧规则信号单独展示。")
 
 with st.form("company_query_form", border=True):
     company_input = st.text_input(
@@ -241,8 +284,9 @@ if submitted:
         st.error("请输入公司代码或准确名称。", icon=":material/error:")
     else:
         try:
-            with st.status("正在查询巨潮公告并核验证据……", expanded=True) as status:
-                st.write("解析公司身份与近一年公告元数据")
+            with st.status("正在按历史库 → 巨潮顺序查询并核验证据……", expanded=True) as status:
+                st.write("步骤 1：检查比赛历史库是否包含该公司")
+                st.write("步骤 2：通过巨潮解析公司身份并读取近一年公告")
                 result = analyze_company(
                     normalized,
                     as_of_value.isoformat(),
@@ -252,7 +296,7 @@ if submitted:
                     use_llm,
                     FILTER_VERSION,
                 )
-                st.write("下载或读取 PDF 缓存，执行风险抽取")
+                st.write("步骤 3：下载或读取 PDF 缓存，分层合并历史上下文与当前 F1")
                 st.session_state["announcement_analysis"] = result
                 status.update(label="公告研读完成", state="complete", expanded=False)
         except Exception as exc:
@@ -274,6 +318,7 @@ if result:
     )
     show_status_badges(semantic.get("channel_summary", {}), quality)
     show_kpis(semantic)
+    show_query_flow(semantic)
 
     if quality.get("title_excluded_count", 0):
         st.info(
@@ -306,10 +351,11 @@ if result:
             icon=":material/document_scanner:",
         )
 
-    overview_tab, risk_tab, announcement_tab, audit_tab = st.tabs(
+    overview_tab, risk_tab, history_tab, announcement_tab, audit_tab = st.tabs(
         [
             ":material/analytics: 风险概览",
             ":material/warning: 风险证据",
+            ":material/history: 比赛历史库",
             ":material/article: 公告清单",
             ":material/fact_check: 审计信息",
         ]
@@ -440,6 +486,67 @@ if result:
                 },
             )
             st.caption("风险信号必须结合公告原文复核，不构成事实认定或投资建议。")
+
+    with history_tab:
+        history = semantic.get("historical_context", {})
+        if history.get("match_status") != "hit":
+            st.info(
+                history.get("message", "比赛历史库未命中该公司，本次仅分析巨潮最新公告。"),
+                icon=":material/search_off:",
+            )
+        else:
+            with st.container(horizontal=True):
+                st.metric("历史公告", history.get("document_count", 0), border=True)
+                st.metric("旧规则命中文档", history.get("risk_document_count", 0), border=True)
+                st.metric("旧规则候选片段", history.get("risk_candidate_count", 0), border=True)
+                semantic_feature = history.get("semantic_feature", {})
+                st.metric("历史语义维度", semantic_feature.get("feature_count", 0), border=True)
+            st.warning(history.get("warning", "历史候选不等于当前事实。"), icon=":material/warning:")
+            st.caption(
+                f"数据区间：{history.get('date_start')} 至 {history.get('date_end')} · "
+                f"旧词典版本：{', '.join(history.get('dictionary_versions', []))} · "
+                f"历史特征锚点：{semantic_feature.get('anchor_date') or '无'}"
+            )
+            historical_df = historical_risk_dataframe(history)
+            if historical_df.empty:
+                st.info("历史库包含该公司，但旧规则没有候选命中。", icon=":material/check_circle:")
+            else:
+                st.dataframe(
+                    historical_df,
+                    hide_index=True,
+                    column_config={"页码": st.column_config.NumberColumn("页码", format="%d")},
+                    key="historical_risk_candidates",
+                )
+                if history.get("risk_candidates_truncated"):
+                    st.caption("页面只展示最新 200 条历史候选；完整计数保留在下载 JSON 中。")
+            with st.expander("查看历史公告清单", icon=":material/article:"):
+                historical_announcements = pd.DataFrame(history.get("announcements", []))
+                if historical_announcements.empty:
+                    st.info("没有可展示的历史公告元数据。")
+                else:
+                    historical_announcements = historical_announcements.rename(
+                        columns={
+                            "date": "历史日期",
+                            "title": "公告标题",
+                            "doc_id": "文档 ID",
+                            "doc_type": "历史类型",
+                            "parse_status": "解析状态",
+                            "has_old_rule_candidate": "有旧规则候选",
+                            "old_rule_candidate_count": "候选数",
+                            "source_tier": "数据层级",
+                        }
+                    )
+                    st.dataframe(
+                        historical_announcements,
+                        hide_index=True,
+                        column_config={
+                            "有旧规则候选": st.column_config.CheckboxColumn("有旧规则候选"),
+                            "候选数": st.column_config.NumberColumn("候选数", format="%d"),
+                        },
+                        key="historical_announcements",
+                    )
+            with st.expander("历史语义特征说明", icon=":material/data_object:"):
+                st.json(semantic_feature, expanded=False)
 
     with announcement_tab:
         announcement_df = announcement_dataframe(semantic.get("announcements", []))

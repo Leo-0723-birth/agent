@@ -29,6 +29,8 @@ class Semantic:
     f1_vector_backend: str = "not_generated"               # bge / not_generated
     channel_summary: dict = field(default_factory=dict)     # 规则/FinBERT/LLM 状态
     data_quality: dict = field(default_factory=dict)        # 来源、覆盖率、缺失和限制
+    historical_context: dict = field(default_factory=dict)  # 比赛历史库命中与历史候选证据
+    query_trace: list = field(default_factory=list)          # 历史库→在线事实源查询轨迹
     source_policy: str = ""                                # 当前事实来源边界
     stats: dict = field(default_factory=dict)               # 统计（公告数/要素数/门控数）
 
