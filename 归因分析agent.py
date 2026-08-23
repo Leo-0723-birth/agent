@@ -64,7 +64,9 @@ def factors_dataframe(factors: list[dict]) -> pd.DataFrame:
                 "标签引用": f.get("label_ref", ""),
                 "来源": f.get("source", ""),
                 "降级归因": bool(f.get("is_fallback")),
-                "证据 ID": f.get("evidence_id") or "",
+                "证据 ID": f.get("evidence_id") or (
+                    "无直接证据" if f.get("no_evidence") else ""
+                ),
             }
         )
     return pd.DataFrame(rows)

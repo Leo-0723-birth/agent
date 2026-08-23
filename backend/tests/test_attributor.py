@@ -100,9 +100,9 @@ def test_execute_output_structure():
     for key in ("top_risk_factors", "evidence_citations", "case_links",
                 "narrative", "confidence", "validation"):
         assert key in att
-    # use_llm=False 时 narrative 为空 → 无引用 → evidence_citations 为空（白名单过滤）
+    # use_llm=False 时 narrative 为空，但 evidence_citations 仍含诱因绑定的证据（白名单过滤）
     assert att["narrative"] == ""
-    assert att["evidence_citations"] == []
+    assert len(att["evidence_citations"]) >= 1
     assert att["validation"]["narrative_validated"] is True
     # 案例链接保留
     assert len(att["case_links"]) >= 1
