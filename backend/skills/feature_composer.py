@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pandas as pd
 
-FILL_DIR = Path(__file__).resolve().parent.parent / "data" / "modeling"
+FILL_DIR = Path(__file__).resolve().parent.parent / "data" / "modeling" / "fill"
 
 _fill_cache = {}
 

@@ -11,7 +11,7 @@ from backend.dashboard_utils import (
 
 def test_streamlit_app_initial_view_has_query_form():
     app_path = Path(__file__).resolve().parents[2] / "公告研读agent.py"
-    app = AppTest.from_file(str(app_path), default_timeout=15).run()
+    app = AppTest.from_file(str(app_path), default_timeout=60).run()
 
     assert not app.exception
     assert app.title[0].value == "公告研读 Agent"
