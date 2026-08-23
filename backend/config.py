@@ -103,6 +103,8 @@ PREDICTOR_TOP_SHAP = 8                        # SHAP 输出 Top-K 特征
 # ---------- 财务异常 F4/F5/F6 离线特征表（feature_loader / crawl_* 使用） ----------
 PREPROCESSED_DIR = Path(BASE_DIR) / "backend" / "data" / "modeling" / "preprocessed"
 FEATURE_TABLE_CONFIG = {
+    "F2": {"files": [PREPROCESSED_DIR / "F2_financial_anomaly.csv"],
+           "key": "company_code", "period": "report_period"},
     "F3": {"files": [PREPROCESSED_DIR / "F3_market_features.csv"],
            "key": "company_code", "period": "report_period"},
     "F4": {"files": [PREPROCESSED_DIR / "F4_sentiment_features.csv"],

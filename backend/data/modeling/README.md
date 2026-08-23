@@ -60,11 +60,9 @@ backend/data/modeling/
 
 ## 已知缺口（需队员补充）
 
-1. **F2 离线表缺失**：`F2_financial_anomaly.csv`（67 维，新列名含 f2_neg_pe_flag 等）不在本地；
-   实时预测用的是在线现算 F2（列名已对齐），离线表仅训练需要——导入到 `raw/` 后重建 `processed_dataset.csv` 即可。
-2. **F1 原始表缺失**：`F1_base_financial.csv`（公告语义原始表）在队员"预处理后数据"目录；
-   本地仅有 Top-50 清单（F1_top50_features.csv）与建模表内的 50 维结果。
-3. 导入后重建管线：`build_modeling_dataset.py → train_models.py`（见 backend/scripts/）。
+1. **F2 离线表**：✅ 已于 2026-08-23 导入（`preprocessed/F2_financial_anomaly.csv` 67 维新列名 37222 行 + `raw/` 备份与构建脚本）；
+2. **F1 原始表**：❌ 待队员提供 `F1_semantic_features.parquet`（或 `F1_base_financial.csv`）——公告语义 50 维，导入 `raw/` 后即可重建 `processed_dataset.csv`；
+3. 重建管线：`build_modeling_dataset.py → train_models.py`（见 backend/scripts/），当前脚本读取的 RAW 目录在 `C:\Users\86130\Desktop\预测建模agent\01_原数据`，导入项目 raw/ 后需同步该脚本路径。
 
 ## 预测为何"实时为主、离线兜底"
 

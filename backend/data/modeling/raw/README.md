@@ -7,8 +7,8 @@
 
 | 文件 | 内容 | 来源 | 状态 |
 |---|---|---|---|
-| `F1_base_financial.csv` | 公告语义 F1 原始表 | 队友"预处理后数据"目录 | ❌ 待导入 |
-| `F2_financial_anomaly.csv` | F2 财务异常 67 维（新列名） | 队友"预处理后数据"目录 | ❌ 待导入 |
+| `F1_base_financial.csv` / `F1_semantic_features.parquet` | 公告语义 F1 原始表（50 维） | 队友"预处理后数据"目录 | ❌ 待导入 |
+| `F2_financial_anomaly.csv` | F2 财务异常 67 维（新列名，37222 行） | 队友交付（2026-08-23 已收） | ✅ 已导入（含 build_f2_financial_anomaly.py） |
 | `F3_market_features.csv` | F3 市场特征 | 队友/队长（本地已有副本在 ../preprocessed/） | ✅ 已就位 |
 | `F4_sentiment_features.csv` | F4 舆情特征 | 队友 | ✅ 已就位 |
 | `F5_ownership_governance.csv` | F5 治理特征 | 队友 | ✅ 已就位 |
