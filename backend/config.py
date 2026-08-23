@@ -107,3 +107,29 @@ CHUNK_VEC_PATH = VECTOR_DB_DIR / "chunk_vectors.npy"   # chunk 向量（BGE 1024
 CHUNK_TOP_K = 8                 # chunk 检索返回 Top-K
 CHUNK_INDEX_JSONL = Path(os.getenv("CHUNK_INDEX_JSONL",
     r"D:\新建文件夹\02_监管问询\03_向量索引与Chroma\inquiry_embedding_index.jsonl"))
+
+# ---------- 预测建模（PredictorAgent / train_models） ----------
+PREDICTOR_MODEL_DIR = Path(BASE_DIR) / "backend" / "models" / "predictor"   # 模型+清单
+MODELING_DATASET = Path(BASE_DIR) / "backend" / "data" / "modeling" / "processed_dataset.csv"  # 查表推理用
+PREDICTOR_HORIZONS = ("30d", "60d", "90d")   # 推理输出窗口
+PREDICTOR_TOP_SHAP = 8                        # SHAP 输出 Top-K 特征
+
+# ---------- 财务异常 F4/F5/F6 离线特征表（feature_loader / crawl_* 使用） ----------
+PREPROCESSED_DIR = Path(BASE_DIR) / "backend" / "data" / "modeling" / "preprocessed"
+FEATURE_TABLE_CONFIG = {
+    "F3": {"files": [PREPROCESSED_DIR / "F3_market_features.csv"],
+           "key": "company_code", "period": "report_period"},
+    "F4": {"files": [PREPROCESSED_DIR / "F4_sentiment_features.csv"],
+           "key": "company_code", "period": "report_period"},
+    "F5": {"files": [PREPROCESSED_DIR / "F5_ownership_governance.csv"],
+           "key": "company_code", "period": "report_period"},
+    "F6": {"files": [PREPROCESSED_DIR / "F6_inquiry_history.csv"],
+           "key": "company_code", "period": "report_period"},
+}
+META_COLS = {"company_code", "stock_code", "report_period", "T_date", "split",
+             "industry", "matched_stat_date", "governance_year", "audit_year"}
+# 在线爬虫用（F5 年报 PDF 目录 / F6 问询事件缓存）
+ANNUAL_REPORT_DIR = Path(os.getenv("ANNUAL_REPORT_DIR",
+    r"D:\BaiduNetdiskDownload\上市公司公告与定期报告数据集\上市公司公告与定期报告数据集"))
+INQUIRY_EVENTS_CSV = Path(os.getenv("INQUIRY_EVENTS_CSV",
+    r"D:\新建文件夹\02_监管问询\F2-F6\中间产物及特征来源\中间产物10,056份问询回复函的日期+类型解析结果(下次重跑免解析)\inquiry_events.csv"))

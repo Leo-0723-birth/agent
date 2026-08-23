@@ -45,16 +45,42 @@ from .base import AgentBase
 class SweepingOrchestrator(AgentBase):
     name = "SweepingOrchestrator"
 
-    def __init__(self, use_llm=True, use_finbert=True, use_rule=True, rate_limit=0.5):
+    def __init__(self, use_llm=True, use_finbert=True, use_rule=True, rate_limit=0.5,
+                 use_checkpointer=False):
         super().__init__()
         self.use_llm = use_llm          # 公告研读/归因的 LLM 开关
         self.use_finbert = use_finbert  # FinBERT 门控开关
         self.use_rule = use_rule        # 规则抽取通道（官方词典）
         self.rate_limit = rate_limit    # 财务爬虫限速
+        self.use_checkpointer = use_checkpointer
+        self._graph = None
+        try:
+            # LangGraph 编排（首选）：7 节点图，见 backend/agents/graph.py
+            from .graph import build_graph, memory_checkpointer
+            checkpointer = memory_checkpointer() if use_checkpointer else None
+            self._graph = build_graph(
+                use_llm=use_llm, use_finbert=use_finbert, use_rule=use_rule,
+                rate_limit=rate_limit, checkpointer=checkpointer,
+            )
+        except Exception as e:
+            self._graph = None
+            print(f"[orchestrator] LangGraph 不可用，回落确定性串行编排: "
+                  f"{type(e).__name__}: {e}")
 
     # ============ Plan：固定流水线（确定性 ReAct） ============
     def execute(self, company, ctx):
         """统一入口：对单家公司执行完整流水线（写回同一个 ctx）。"""
+        if self._graph is not None:
+            # LangGraph 编排（首选）：节点内部复用 AgentBase.run()，
+            # trace 仍追加进 ctx.trace_log，审计格式与旧版一致。
+            self._graph.invoke({
+                "ctx": ctx,
+                "company": company,
+                "window": ctx.window,
+                "as_of": ctx.as_of,
+            })
+            return ctx
+        # 兜底：确定性串行编排（langgraph 未安装/导入失败时）
         self._run_announcement(company, ctx)   # Phase 1
         self._run_financial(company, ctx)      # Phase 2
         self._run_predict(company, ctx)        # Phase 3（占位，待填充）

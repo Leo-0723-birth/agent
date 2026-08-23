@@ -9,10 +9,14 @@
     data = chat_json("你是提取器", "请抽取风险要素。", schema_hint="risk_factors")
 
 设计要点：
-- 模型：deepseek-v4-flash（OpenAI 兼容协议），可用环境变量 DEEPSEEK_MODEL 覆盖
-- 只依赖 requests（无 langchain），配置从项目根 .env 读取
+- 模型：deepseek（OpenAI 兼容协议），可用环境变量 DEEPSEEK_MODEL 覆盖
+- 双通道：
+    ① LangChain 通道（首选，langchain_deepseek.ChatDeepSeek，Pydantic 结构化输出
+      chat_structured 走 with_structured_output）
+    ② requests 直连通道（兜底：LangChain 未安装 / 调用异常时自动回落，
+      行为与历史版本完全一致）
 - 低温度（默认 0.1）+ JSON 输出约束（防幻觉 / 稳定，方案 5.4）
-- 全项目共享同一个客户端实例（get_client 单例），省连接、风格统一
+- 对外签名 chat/chat_json 保持不变 → 所有 Agent 调用方零改动
 
 使用前：在项目根 .env 填入 DEEPSEEK_API_KEY=sk-xxx
 """
@@ -28,7 +32,15 @@ DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_TEMPERATURE = 0.1
 DEFAULT_MAX_TOKENS = 2000
 
-_client = None  # 单例
+_client = None  # 单例（requests 兜底通道）
+_lc_base = None  # 单例（LangChain 基础模型）
+LANGCHAIN_AVAILABLE = False
+try:
+    from langchain_deepseek import ChatDeepSeek
+
+    LANGCHAIN_AVAILABLE = True
+except Exception:  # 未安装 langchain-deepseek 时静默降级
+    ChatDeepSeek = None
 
 
 def _load_env():
@@ -47,29 +59,109 @@ def _load_env():
 _load_env()
 
 
+def _require_key():
+    key = os.getenv("DEEPSEEK_API_KEY", "")
+    if not key:
+        raise RuntimeError("未配置 DEEPSEEK_API_KEY，请在项目根 .env 中填写")
+    return key
+
+
 def get_client():
-    """获取共享客户端（单例）。"""
+    """获取共享客户端（requests 兜底通道，单例）。"""
     global _client
     if _client is None:
         _client = _DeepSeekClient(
-            api_key=os.getenv("DEEPSEEK_API_KEY", ""),
+            api_key=_require_key(),
             base_url=os.getenv("DEEPSEEK_BASE_URL", DEFAULT_BASE_URL).rstrip("/"),
             model=os.getenv("DEEPSEEK_MODEL", DEFAULT_MODEL),
         )
     return _client
 
 
+def _get_lc_base():
+    """获取 LangChain 基础模型（单例，参数用 bind 按调用覆盖）。"""
+    global _lc_base
+    if _lc_base is None:
+        _lc_base = ChatDeepSeek(
+            model=os.getenv("DEEPSEEK_MODEL", DEFAULT_MODEL),
+            api_key=_require_key(),
+            base_url=os.getenv("DEEPSEEK_BASE_URL", DEFAULT_BASE_URL).rstrip("/"),
+            timeout=120,
+        )
+    return _lc_base
+
+
+def _langchain_chat(system: str, prompt: str, temperature: float,
+                    max_tokens: int, json_mode: bool) -> str:
+    """LangChain 通道：ChatDeepSeek.invoke。json_mode 时尝试 response_format 约束。"""
+    model = _get_lc_base().bind(temperature=temperature, max_tokens=max_tokens)
+    if json_mode:
+        try:
+            model = model.bind(response_format={"type": "json_object"})
+        except Exception:
+            pass  # 模型不支持该参数时退化为普通调用，由 _extract_json 兜底
+    messages = [
+        ("system", system or "你是严谨的金融风控分析助手。"),
+        ("human", prompt),
+    ]
+    resp = model.invoke(messages)
+    return str(resp.content)
+
+
 def chat(system: str = "", prompt: str = "", temperature: float = DEFAULT_TEMPERATURE,
          max_tokens: int = DEFAULT_MAX_TOKENS, json_mode: bool = False) -> str:
-    """统一 LLM 调用：返回文本。json_mode=True 时要求模型输出 JSON 对象。"""
+    """统一 LLM 调用：返回文本。json_mode=True 时要求模型输出 JSON 对象。
+
+    通道策略：LangChain 优先，异常自动回落 requests 直连（行为与历史一致）。
+    """
+    if LANGCHAIN_AVAILABLE:
+        try:
+            return _langchain_chat(system, prompt, temperature, max_tokens, json_mode)
+        except Exception as e:
+            print(f"[llm] LangChain 通道异常，回落 requests 直连: {type(e).__name__}: {e}")
     return get_client().chat(system, prompt, temperature, max_tokens, json_mode)
 
 
 def chat_json(system: str = "", prompt: str = "", temperature: float = DEFAULT_TEMPERATURE,
               max_tokens: int = DEFAULT_MAX_TOKENS, schema_hint: str = "") -> dict:
     """统一 LLM 调用：要求 JSON 输出并稳健解析，失败返回 {}。"""
-    text = get_client().chat(system, prompt, temperature, max_tokens, json_mode=True)
+    text = chat(system, prompt, temperature, max_tokens, json_mode=True)
     return _extract_json(text)
+
+
+def chat_structured(model_class, system: str = "", prompt: str = "",
+                    temperature: float = DEFAULT_TEMPERATURE, max_tokens: int = DEFAULT_MAX_TOKENS):
+    """Pydantic 结构化输出：JSON Schema 约束 + json_object 模式 + 强校验。
+
+    返回 model_class 实例；调用失败/解析失败返回 None（调用方自行降级）。
+
+    实现说明：DeepSeek v4 的 thinking 模式不支持 tool_choice（with_structured_output
+    默认走 tool calling 会被 API 拒绝），故采用「Schema 提示 + response_format
+    json_object + model_validate_json」的兼容路径。
+
+    用法：
+        from pydantic import BaseModel
+        class RiskFactor(BaseModel):
+            category: str
+            severity: int
+        f = chat_structured(RiskFactor, "抽取风险", "……")
+    """
+    if not LANGCHAIN_AVAILABLE:
+        print("[llm] LangChain 不可用，chat_structured 返回 None")
+        return None
+    try:
+        schema = model_class.model_json_schema()
+        json_prompt = (
+            f"{prompt}\n\n请输出一个合法的 JSON 对象（json 格式），"
+            f"严格匹配以下 JSON Schema：\n{schema}"
+        )
+        text = chat(system, json_prompt, temperature, max_tokens, json_mode=True)
+        if not text or not text.strip():
+            return None
+        return model_class.model_validate_json(text)
+    except Exception as e:
+        print(f"[llm] chat_structured 失败: {type(e).__name__}: {e}")
+        return None
 
 
 def _extract_json(text: str) -> dict:
@@ -91,7 +183,7 @@ def _extract_json(text: str) -> dict:
 
 
 class _DeepSeekClient:
-    """DeepSeek 客户端（OpenAI 兼容协议）。"""
+    """DeepSeek 客户端（OpenAI 兼容协议，requests 兜底通道）。"""
 
     def __init__(self, api_key: str, base_url: str, model: str):
         self.api_key = api_key
@@ -128,3 +220,4 @@ if __name__ == "__main__":
     print(f"模型: {os.getenv('DEEPSEEK_MODEL', DEFAULT_MODEL)}")
     print(f"Base URL: {os.getenv('DEEPSEEK_BASE_URL', DEFAULT_BASE_URL)}")
     print(f"API Key: {'已配置' if os.getenv('DEEPSEEK_API_KEY') else '未配置（请在 .env 填写）'}")
+    print(f"LangChain 通道: {'可用' if LANGCHAIN_AVAILABLE else '不可用（将使用 requests 直连）'}")

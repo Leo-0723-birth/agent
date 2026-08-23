@@ -47,6 +47,7 @@ class Financial:
     skip: bool = False                                      # 是否跳过财务分析（特殊行业等）
     skip_reason: str = ""                                   # 跳过原因
     llm_analysis: str = ""                                  # LLM 财务解读（可选）
+    risk_factors: dict = field(default_factory=dict)        # 规则引擎风险因素 JSON（队友版，输出②）
 
 
 @dataclass

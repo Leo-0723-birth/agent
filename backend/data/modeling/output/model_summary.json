@@ -1,0 +1,121 @@
+{
+  "generated_at": "2026-08-22T12:07:34.967816",
+  "models": [
+    "RandomForest",
+    "LightGBM",
+    "XGBoost"
+  ],
+  "ensemble_weights": {
+    "rf": 0.3,
+    "lgb": 0.35,
+    "xgb": 0.35
+  },
+  "n_features": 198,
+  "windows": {
+    "30": {
+      "rf": {
+        "AUC": 0.8033,
+        "AP": 0.1081,
+        "F1": 0.1126,
+        "Precision": 0.0606,
+        "Recall": 0.795,
+        "Top10%Recall": 0.39
+      },
+      "lgb": {
+        "AUC": 0.7852,
+        "AP": 0.1035,
+        "F1": 0.0279,
+        "Precision": 0.2,
+        "Recall": 0.015,
+        "Top10%Recall": 0.36
+      },
+      "xgb": {
+        "AUC": 0.7869,
+        "AP": 0.1135,
+        "F1": 0.0928,
+        "Precision": 0.2973,
+        "Recall": 0.055,
+        "Top10%Recall": 0.355
+      },
+      "Ensemble": {
+        "AUC": 0.805,
+        "AP": 0.1236,
+        "F1": 0.1748,
+        "Precision": 0.1698,
+        "Recall": 0.18,
+        "Top10%Recall": 0.38,
+        "threshold": 0.2019
+      }
+    },
+    "60": {
+      "rf": {
+        "AUC": 0.8231,
+        "AP": 0.2452,
+        "F1": 0.2506,
+        "Precision": 0.1506,
+        "Recall": 0.7461,
+        "Top10%Recall": 0.4388
+      },
+      "lgb": {
+        "AUC": 0.8302,
+        "AP": 0.2924,
+        "F1": 0.2749,
+        "Precision": 0.4728,
+        "Recall": 0.1938,
+        "Top10%Recall": 0.4633
+      },
+      "xgb": {
+        "AUC": 0.8289,
+        "AP": 0.2858,
+        "F1": 0.2722,
+        "Precision": 0.4053,
+        "Recall": 0.2049,
+        "Top10%Recall": 0.441
+      },
+      "Ensemble": {
+        "AUC": 0.8335,
+        "AP": 0.2966,
+        "F1": 0.3386,
+        "Precision": 0.3409,
+        "Recall": 0.3363,
+        "Top10%Recall": 0.461,
+        "threshold": 0.3022
+      }
+    },
+    "90": {
+      "rf": {
+        "AUC": 0.8187,
+        "AP": 0.293,
+        "F1": 0.2982,
+        "Precision": 0.1851,
+        "Recall": 0.7667,
+        "Top10%Recall": 0.4046
+      },
+      "lgb": {
+        "AUC": 0.8224,
+        "AP": 0.3416,
+        "F1": 0.2967,
+        "Precision": 0.4545,
+        "Recall": 0.2202,
+        "Top10%Recall": 0.4209
+      },
+      "xgb": {
+        "AUC": 0.8271,
+        "AP": 0.3495,
+        "F1": 0.3312,
+        "Precision": 0.4687,
+        "Recall": 0.2561,
+        "Top10%Recall": 0.4372
+      },
+      "Ensemble": {
+        "AUC": 0.8299,
+        "AP": 0.3509,
+        "F1": 0.3715,
+        "Precision": 0.3927,
+        "Recall": 0.3524,
+        "Top10%Recall": 0.4323,
+        "threshold": 0.3549
+      }
+    }
+  }
+}
