@@ -94,8 +94,16 @@ def test_history_is_visible_but_not_merged_into_current_f1(tmp_path):
     risk_path = tmp_path / "risks.jsonl"
     _write_history(risk_path)
     store = CompetitionHistoryStore(risk_path, tmp_path / "missing.parquet")
-    source = CompetitionAwareAnnouncementSource(_OnlineSource(), store)
-    agent = AnnouncementReaderAgent(source=source, use_finbert=False, use_llm=False)
+    progress_events = []
+    source = CompetitionAwareAnnouncementSource(
+        _OnlineSource(), store, progress_callback=progress_events.append
+    )
+    agent = AnnouncementReaderAgent(
+        source=source,
+        use_finbert=False,
+        use_llm=False,
+        progress_callback=progress_events.append,
+    )
 
     context = agent.execute("ST国华", Context(as_of="2026-08-20"))
 
@@ -105,6 +113,11 @@ def test_history_is_visible_but_not_merged_into_current_f1(tmp_path):
     assert context.semantic.f1_features["scalar_features"]["risk_event_count_30d"] == 1
     assert {item["announcement_id"] for item in context.semantic.risk_factors} == {"current-1"}
     assert all(item.get("source_tier") != "competition_historical_derived" for item in context.semantic.risk_factors)
+    event_names = [item["event"] for item in progress_events]
+    assert event_names[0] == "history_check_started"
+    assert "history_check_completed" in event_names
+    assert "source_merge_completed" in event_names
+    assert event_names[-1] == "analysis_completed"
 
 
 def test_missing_history_store_fails_open_for_online_query(tmp_path):

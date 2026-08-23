@@ -118,12 +118,19 @@ class CninfoAnnouncementSource:
         max_documents=ANNOUNCE_MAX_DOCUMENTS,
         ocr_enabled=OCR_ENABLED,
         ocr_engine=None,
+        progress_callback=None,
     ):
         self.session = session or _build_http_session()
         self.cache_dir = Path(cache_dir or ANNOUNCE_PDF_CACHE)
-        self.max_documents = int(max_documents)
+        self.max_documents = None if max_documents is None else int(max_documents)
         self.ocr_enabled = bool(ocr_enabled)
         self.ocr_engine = ocr_engine or RapidOCRPageEngine()
+        self.progress_callback = progress_callback
+
+    def _emit_progress(self, event, **payload):
+        callback = getattr(self, "progress_callback", None)
+        if callback is not None:
+            callback({"event": event, **payload})
 
     def resolve_company(self, user_input):
         raw = str(user_input or "").strip()
@@ -368,13 +375,37 @@ class CninfoAnnouncementSource:
 
     def search(self, user_input, days=365, as_of=None):
         cutoff = str(as_of or date.today().isoformat())[:10]
+        self._emit_progress("online_company_started", query=str(user_input))
         company = self.resolve_company(user_input)
+        self._emit_progress(
+            "online_company_completed",
+            company_name=company.get("company_name", ""),
+            secucode=company.get("secucode", ""),
+        )
+        self._emit_progress("online_metadata_started", days=int(days), as_of=cutoff)
         announcements = self._list_metadata(company, cutoff, days)
         for item in announcements:
             apply_title_policy(item, mark_unfetched=True)
         eligible = [item for item in announcements if is_analysis_eligible(item)]
-        for item in eligible[: self.max_documents]:
+        selected = eligible if self.max_documents is None else eligible[: self.max_documents]
+        self._emit_progress(
+            "online_metadata_completed",
+            announcement_count=len(announcements),
+            eligible_count=len(eligible),
+            pdf_count=len(selected),
+        )
+        for position, item in enumerate(selected, 1):
+            self._emit_progress(
+                "pdf_processing",
+                current=position,
+                total=len(selected),
+                title=item.get("title", ""),
+            )
             self._process_pdf(item)
+        self._emit_progress(
+            "pdf_processing_completed",
+            total=len(selected),
+        )
         return company, announcements
 
 if sys.platform == "win32":

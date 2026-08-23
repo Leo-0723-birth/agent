@@ -20,8 +20,10 @@ if str(PROJECT_ROOT) not in sys.path:
 from backend.agents.announcement_reader import AnnouncementReaderAgent
 from backend.context import Context
 from backend.dashboard_utils import (
+    risk_interval_comparison_rows,
+    risk_monthly_severity_rows,
     risk_theme_distribution_rows,
-    risk_window_comparison_rows,
+    risk_theme_heatmap_rows,
 )
 from backend.skills.announcement_context_filter import FILTER_VERSION
 from backend.skills.announcement_search import CninfoAnnouncementSource
@@ -59,27 +61,29 @@ FILTER_REASON_LABELS = {
 }
 
 
-@st.cache_data(ttl="6h", max_entries=20, show_spinner=False)
 def analyze_company(
     company: str,
     as_of: str,
-    max_documents: int,
     use_ocr: bool,
     use_finbert: bool,
     use_llm: bool,
     filter_version: str,
+    progress_callback=None,
 ) -> dict:
-    """执行一次可复用的公告研读；结果按输入和开关缓存。"""
+    """执行公告研读；PDF/解析文件仍使用磁盘缓存，进度按真实阶段回传。"""
     source = CompetitionAwareAnnouncementSource(
         CninfoAnnouncementSource(
-            max_documents=max_documents,
+            max_documents=None,
             ocr_enabled=use_ocr,
-        )
+            progress_callback=progress_callback,
+        ),
+        progress_callback=progress_callback,
     )
     agent = AnnouncementReaderAgent(
         source=source,
         use_finbert=use_finbert,
         use_llm=use_llm,
+        progress_callback=progress_callback,
     )
     context = Context(company=company, as_of=as_of)
     result, trace = agent.run(company, context)
@@ -87,6 +91,150 @@ def analyze_company(
     payload["announcement_filter_version"] = filter_version
     payload["run_trace"] = trace
     return payload
+
+
+def build_progress_handler(
+    status,
+    history_line,
+    online_line,
+    merge_line,
+    analysis_line,
+    progress_bar,
+):
+    """把后端真实事件转换成三阶段可见进度，不使用虚假计时。"""
+    current_company = {"name": "", "code": ""}
+
+    def update(event: dict) -> None:
+        event_name = event.get("event", "")
+        if event_name == "history_check_started":
+            status.update(label="步骤 1/3 · 正在检查比赛历史库……")
+            history_line.markdown(
+                ":material/hourglass_top: **步骤 1 · 比赛历史库** — 正在按本次输入检索"
+            )
+            progress_bar.progress(0.04, text="正在检查历史数据")
+        elif event_name == "history_check_completed":
+            match_status = event.get("status")
+            if match_status == "hit":
+                history_line.markdown(
+                    f":material/check_circle: **步骤 1 · 比赛历史库** — 命中 {event.get('document_count', 0)} 份历史公告，"
+                    f"覆盖 {event.get('date_start') or '未知'} 至 {event.get('date_end') or '未知'}"
+                )
+            elif match_status == "unavailable":
+                history_line.markdown(
+                    ":material/database_off: **步骤 1 · 比赛历史库** — 本机未配置数据目录，将继续查询巨潮"
+                )
+            else:
+                history_line.markdown(
+                    ":material/info: **步骤 1 · 比赛历史库** — 输入暂未直接命中，解析公司身份后再按代码复查"
+                )
+            progress_bar.progress(0.12, text="历史库初次检索完成")
+        elif event_name == "history_identity_recheck_started":
+            history_line.markdown(
+                f":material/manage_search: **步骤 1 · 比赛历史库** — 正在按解析后的代码 {event.get('secucode', '')} 复查"
+            )
+        elif event_name == "online_company_started":
+            status.update(label="步骤 2/3 · 正在查询巨潮近一年公告……")
+            online_line.markdown(
+                ":material/hourglass_top: **步骤 2 · 巨潮资讯网** — 正在解析公司代码与名称"
+            )
+            progress_bar.progress(0.16, text="正在解析公司身份")
+        elif event_name == "online_company_completed":
+            current_company["name"] = str(event.get("company_name") or "")
+            current_company["code"] = str(event.get("secucode") or "")
+            online_line.markdown(
+                f":material/check_circle: **步骤 2 · 巨潮资讯网** — 已解析为 "
+                f"{current_company['name']}（{current_company['code']}），正在查询近一年公告"
+            )
+            progress_bar.progress(0.22, text="公司身份解析完成")
+        elif event_name == "online_metadata_started":
+            online_line.markdown(
+                f":material/cloud_download: **步骤 2 · 巨潮资讯网** — 已解析为 "
+                f"{current_company['name']}（{current_company['code']}），正在分页获取近一年公告"
+            )
+            progress_bar.progress(0.27, text="正在获取公告元数据")
+        elif event_name == "online_metadata_completed":
+            online_line.markdown(
+                f":material/check_circle: **步骤 2 · 巨潮资讯网** — 解析为 "
+                f"{current_company['name']}（{current_company['code']}），取得 "
+                f"{event.get('announcement_count', 0)} 份近一年公告元数据；"
+                f"{event.get('eligible_count', 0)} 份可研读，准备处理 {event.get('pdf_count', 0)} 份 PDF"
+            )
+            progress_bar.progress(0.36, text="公告元数据获取完成")
+        elif event_name == "pdf_processing":
+            current = int(event.get("current") or 0)
+            total = max(1, int(event.get("total") or 1))
+            title = str(event.get("title") or "")
+            online_line.markdown(
+                f":material/picture_as_pdf: **步骤 2 · 巨潮资讯网** — 正在读取 PDF "
+                f"{current}/{total} · {title[:48]}"
+            )
+            progress_bar.progress(
+                min(0.70, 0.36 + 0.34 * current / total),
+                text=f"正在处理 PDF {current}/{total}",
+            )
+        elif event_name == "pdf_processing_completed":
+            online_line.markdown(
+                f":material/check_circle: **步骤 2 · 巨潮资讯网** — "
+                f"{current_company['name']}（{current_company['code']}）近一年公告读取完成，"
+                f"已处理 {event.get('total', 0)} 份 PDF"
+            )
+            progress_bar.progress(0.70, text="最新公告读取完成")
+        elif event_name == "source_merge_completed":
+            if event.get("history_status") == "hit":
+                history_line.markdown(
+                    f":material/check_circle: **步骤 1 · 比赛历史库** — 命中 "
+                    f"{event.get('historical_document_count', 0)} 份历史公告"
+                )
+            elif event.get("history_status") == "unavailable":
+                history_line.markdown(
+                    ":material/database_off: **步骤 1 · 比赛历史库** — 不可用，本次仅使用巨潮最新公告"
+                )
+            else:
+                history_line.markdown(
+                    ":material/search_off: **步骤 1 · 比赛历史库** — 未收录该公司"
+                )
+            merge_line.markdown(
+                f":material/layers: **步骤 3 · 分层合并** — 历史公告 "
+                f"{event.get('historical_document_count', 0)} 份、巨潮近一年公告 "
+                f"{event.get('current_announcement_count', 0)} 份；历史候选单独展示，"
+                "当前 F1 与 30/60/90 天统计只使用巨潮近一年公告"
+            )
+        elif event_name == "rule_analysis_started":
+            status.update(label="步骤 3/3 · 正在执行风险证据抽取……")
+            analysis_line.markdown(
+                f":material/rule: **规则通道**：正在分析 {event.get('document_count', 0)} 份公告"
+            )
+            progress_bar.progress(0.74, text="正在执行规则通道")
+        elif event_name == "rule_analysis_completed":
+            analysis_line.markdown(
+                f":material/check_circle: **规则通道完成**：保留 {event.get('factor_count', 0)} 条候选，"
+                f"过滤 {event.get('suppressed_count', 0)} 条否定或非事实语境"
+            )
+            progress_bar.progress(0.80, text="规则通道完成")
+        elif event_name == "finbert_started" and event.get("enabled"):
+            analysis_line.markdown(":material/model_training: **FinBERT 通道**：正在生成实验性文本信号")
+        elif event_name == "finbert_completed":
+            progress_bar.progress(0.85, text=f"FinBERT：{event.get('status', '')}")
+        elif event_name == "llm_started":
+            analysis_line.markdown(
+                f":material/psychology: **LLM 精细通道**：正在核验 {event.get('document_count', 0)} 份公告原文"
+            )
+        elif event_name == "llm_completed":
+            analysis_line.markdown(
+                f":material/check_circle: **模型通道完成**：LLM {event.get('status', '')}，"
+                f"接受 {event.get('factor_count', 0)} 条逐字证据"
+            )
+            progress_bar.progress(0.94, text="模型通道完成")
+        elif event_name == "finalizing":
+            analysis_line.markdown(":material/analytics: **正在汇总**：生成 30/60/90 天 F1 与审计信息")
+            progress_bar.progress(0.97, text="正在生成最终结果")
+        elif event_name == "analysis_completed":
+            analysis_line.markdown(
+                f":material/check_circle: **研读完成**：当前公告形成 {event.get('risk_factor_count', 0)} 条待复核风险事件"
+            )
+            progress_bar.progress(1.0, text="历史数据与最新公告已完成分层合并")
+
+    return update
 
 
 def show_status_badges(channel_summary: dict, data_quality: dict) -> None:
@@ -212,24 +360,6 @@ def historical_risk_dataframe(history: dict) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def show_query_flow(semantic: dict) -> None:
-    trace = semantic.get("query_trace", [])
-    history = semantic.get("historical_context", {})
-    with st.container(border=True):
-        st.subheader("本次数据查询过程")
-        for item in trace:
-            status = item.get("status", "")
-            icon = ":material/check_circle:" if status in {"hit", "success", "history_and_current"} else ":material/info:"
-            st.markdown(f"{icon} **步骤 {item.get('step')} · {item.get('source')}** — {item.get('detail', '')}")
-        if history.get("match_status") == "hit":
-            st.caption(
-                f"历史覆盖 {history.get('date_start') or '未知'} 至 {history.get('date_end') or '未知'}，"
-                f"共 {history.get('document_count', 0)} 份公告；历史候选与当前风险严格分层。"
-            )
-        elif history.get("match_status") == "unavailable":
-            st.warning(history.get("message", "比赛历史库不可用。"), icon=":material/database_off:")
-
-
 st.title("公告研读 Agent")
 st.caption("输入上市公司代码或准确名称：先查比赛历史库，再读取巨潮近一年官方公告，分层输出可核验证据。")
 
@@ -240,14 +370,6 @@ with st.sidebar:
         value=date.today(),
         max_value=date.today(),
         help="系统不会读取该日期之后的公告。",
-    )
-    max_documents = st.slider(
-        "最多解析 PDF 数量",
-        min_value=5,
-        max_value=120,
-        value=30,
-        step=5,
-        help="公告元数据仍覆盖近一年；为控制等待时间，只解析最新的指定数量 PDF。",
     )
     use_finbert = st.toggle(
         "启用 FinBERT",
@@ -283,23 +405,36 @@ if submitted:
     if not normalized:
         st.error("请输入公司代码或准确名称。", icon=":material/error:")
     else:
+        progress_slot = st.empty()
         try:
-            with st.status("正在按历史库 → 巨潮顺序查询并核验证据……", expanded=True) as status:
-                st.write("步骤 1：检查比赛历史库是否包含该公司")
-                st.write("步骤 2：通过巨潮解析公司身份并读取近一年公告")
-                result = analyze_company(
-                    normalized,
-                    as_of_value.isoformat(),
-                    max_documents,
-                    use_ocr,
-                    use_finbert,
-                    use_llm,
-                    FILTER_VERSION,
-                )
-                st.write("步骤 3：下载或读取 PDF 缓存，分层合并历史上下文与当前 F1")
-                st.session_state["announcement_analysis"] = result
-                status.update(label="公告研读完成", state="complete", expanded=False)
+            with progress_slot.container():
+                with st.status("准备开始分层查询……", expanded=True) as status:
+                    history_line = st.empty()
+                    online_line = st.empty()
+                    merge_line = st.empty()
+                    analysis_line = st.empty()
+                    progress_bar = st.progress(0.0, text="正在初始化公告研读")
+                    progress_callback = build_progress_handler(
+                        status,
+                        history_line,
+                        online_line,
+                        merge_line,
+                        analysis_line,
+                        progress_bar,
+                    )
+                    result = analyze_company(
+                        normalized,
+                        as_of_value.isoformat(),
+                        use_ocr,
+                        use_finbert,
+                        use_llm,
+                        FILTER_VERSION,
+                        progress_callback,
+                    )
+                    st.session_state["announcement_analysis"] = result
+            progress_slot.empty()
         except Exception as exc:
+            progress_slot.empty()
             st.session_state.pop("announcement_analysis", None)
             st.error(
                 f"研读失败：{type(exc).__name__}: {exc}",
@@ -318,7 +453,6 @@ if result:
     )
     show_status_badges(semantic.get("channel_summary", {}), quality)
     show_kpis(semantic)
-    show_query_flow(semantic)
 
     if quality.get("title_excluded_count", 0):
         st.info(
@@ -363,109 +497,202 @@ if result:
 
     with overview_tab:
         scalar = features.get("scalar_features", {})
-        comparison_data = pd.DataFrame(risk_window_comparison_rows(scalar))
+        current_factors = semantic.get("risk_factors", [])
+        current_announcements = semantic.get("announcements", [])
+
+        monthly_data = pd.DataFrame(
+            risk_monthly_severity_rows(current_factors, result.get("as_of", ""))
+        )
         with st.container(border=True):
-            st.subheader("30/60/90 天风险数量对比")
+            st.subheader("近一年风险事件时间轴")
             st.caption(
-                "同时展示公告覆盖量、风险事件和其中的高风险事件；"
-                "一份公告可能对应多个风险事件，因此该图是数量对比，不是风险概率。"
+                "按最近 12 个自然月统计当前巨潮公告中的去重风险事件；"
+                "颜色表示规则或模型给出的待复核严重度，不是风险概率。"
             )
-            st.bar_chart(
-                comparison_data,
-                x="时间窗口",
-                y=["公告总数", "风险事件", "高风险事件"],
-                y_label="数量",
-                color=["gray", "orange", "red"],
-                stack=False,
-                sort=False,
-                height=330,
-            )
-            with st.expander(
-                "查看三个窗口的精确数据",
-                icon=":material/table_chart:",
-            ):
-                st.dataframe(
-                    comparison_data,
-                    hide_index=True,
-                    column_config={
-                        "公告总数": st.column_config.NumberColumn(format="%d"),
-                        "风险事件": st.column_config.NumberColumn(format="%d"),
-                        "高风险事件": st.column_config.NumberColumn(format="%d"),
-                        "每份公告风险事件": st.column_config.NumberColumn(
-                            "风险事件/公告",
-                            format="%.2f",
-                            help="风险事件数除以公告数，仅表示信号密度，不是概率。",
-                        ),
-                    },
+            if monthly_data.empty or not monthly_data["事件总数"].sum():
+                st.info("近一年没有可绘制的风险事件。", icon=":material/info:")
+            else:
+                st.bar_chart(
+                    monthly_data,
+                    x="月份",
+                    y=["高风险", "中风险", "低风险"],
+                    y_label="风险事件数",
+                    color=["#C2410C", "#F59E0B", "#60A5FA"],
+                    stack=True,
+                    sort=False,
+                    height=350,
                 )
+                with st.expander("查看月度精确计数", icon=":material/table_chart:"):
+                    st.dataframe(
+                        monthly_data,
+                        hide_index=True,
+                        column_config={
+                            column: st.column_config.NumberColumn(column, format="%d")
+                            for column in ("高风险", "中风险", "低风险", "事件总数")
+                        },
+                        key="monthly_risk_counts",
+                    )
+
+        interval_data = pd.DataFrame(
+            risk_interval_comparison_rows(
+                current_announcements,
+                current_factors,
+                result.get("as_of", ""),
+            )
+        )
+        with st.container(border=True):
+            st.subheader("最近 90 天风险节奏")
+            st.caption(
+                "三个区间互不重叠，分别统计最近 1–30 天、此前 31–60 天和此前 61–90 天；"
+                "堆叠柱总高度等于该区间风险事件总数。"
+            )
+            if interval_data.empty:
+                st.info("没有可用的日期数据。", icon=":material/info:")
+            else:
+                st.bar_chart(
+                    interval_data,
+                    x="时间区间",
+                    y=["高风险事件", "中低风险事件"],
+                    y_label="风险事件数",
+                    color=["#C2410C", "#FDBA74"],
+                    stack=True,
+                    sort=False,
+                    height=320,
+                )
+                with st.expander("查看区间精确数据", icon=":material/table_chart:"):
+                    st.dataframe(
+                        interval_data[
+                            [
+                                "时间区间",
+                                "公告总数",
+                                "风险事件",
+                                "高风险事件",
+                                "中低风险事件",
+                                "风险事件/公告",
+                            ]
+                        ],
+                        hide_index=True,
+                        column_config={
+                            "公告总数": st.column_config.NumberColumn(format="%d"),
+                            "风险事件": st.column_config.NumberColumn(format="%d"),
+                            "高风险事件": st.column_config.NumberColumn(format="%d"),
+                            "中低风险事件": st.column_config.NumberColumn(format="%d"),
+                            "风险事件/公告": st.column_config.NumberColumn(
+                                format="%.2f",
+                                help="风险事件数除以同一非重叠区间的公告总数；仅为信号密度。",
+                            ),
+                        },
+                        key="interval_risk_counts",
+                    )
 
         category_counts = features.get("category_event_counts", {})
         with st.container(border=True):
-            window_label = st.segmented_control(
-                "统计窗口",
-                ["最近 30 天", "最近 60 天", "最近 90 天"],
-                default="最近 90 天",
-                key="risk_theme_window",
+            st.subheader("风险主题分析")
+            theme_view = st.segmented_control(
+                "主题视图",
+                ["月份热力图", "主题排名"],
+                default="月份热力图",
+                key="risk_theme_view",
             )
-            window_days = {
-                "最近 30 天": 30,
-                "最近 60 天": 60,
-                "最近 90 天": 90,
-            }[window_label or "最近 90 天"]
-            rows = risk_theme_distribution_rows(category_counts, window_days)
-            chart_data = pd.DataFrame(rows)
-            st.subheader(f"{window_label or '最近 90 天'}风险主题分布")
-            st.caption("按累计时间窗口统计；同一公告、同一风险主题的重复命中已去重。")
-            with st.container(horizontal=True):
-                st.metric(
-                    "风险事件",
-                    scalar.get(f"risk_event_count_{window_days}d", 0),
-                    border=True,
+            if theme_view == "主题排名":
+                window_label = st.segmented_control(
+                    "统计窗口",
+                    ["最近 30 天", "最近 60 天", "最近 90 天"],
+                    default="最近 90 天",
+                    key="risk_theme_window",
                 )
-                st.metric(
-                    "高风险事件",
-                    scalar.get(f"high_risk_event_count_{window_days}d", 0),
-                    border=True,
-                )
-                st.metric("涉及主题", len(rows), border=True)
-
-            if chart_data.empty:
-                st.info(
-                    f"{window_label or '最近 90 天'}内没有识别到风险事件。",
-                    icon=":material/info:",
-                )
+                window_days = {
+                    "最近 30 天": 30,
+                    "最近 60 天": 60,
+                    "最近 90 天": 90,
+                }[window_label or "最近 90 天"]
+                rows = risk_theme_distribution_rows(category_counts, window_days)
+                chart_data = pd.DataFrame(rows)
+                st.caption("累计窗口统计；同一公告、同一风险主题的重复命中已去重。")
+                if chart_data.empty:
+                    st.info("所选窗口内没有风险主题。", icon=":material/info:")
+                else:
+                    st.bar_chart(
+                        chart_data,
+                        x="图表标签",
+                        y="事件数",
+                        x_label="风险主题",
+                        y_label="事件数",
+                        horizontal=True,
+                        sort="-事件数",
+                        color="primary",
+                        height=max(260, len(chart_data) * 48),
+                    )
+                    with st.expander("查看精确计数与占比", icon=":material/table_chart:"):
+                        st.dataframe(
+                            chart_data[["主题代码", "风险主题", "事件数", "占比"]],
+                            hide_index=True,
+                            column_config={
+                                "事件数": st.column_config.NumberColumn(format="%d"),
+                                "占比": st.column_config.ProgressColumn(
+                                    "主题计数占比",
+                                    format="percent",
+                                    min_value=0,
+                                    max_value=1,
+                                ),
+                            },
+                            key="theme_ranking_counts",
+                        )
             else:
-                st.bar_chart(
-                    chart_data,
-                    x="图表标签",
-                    y="事件数",
-                    x_label="风险主题",
-                    y_label="事件数",
-                    horizontal=True,
-                    sort="-事件数",
-                    color="primary",
-                    height=max(260, len(chart_data) * 48),
+                heatmap_rows = risk_theme_heatmap_rows(
+                    current_factors,
+                    result.get("as_of", ""),
+                    max_themes=8,
                 )
-                with st.expander(
-                    "查看精确计数与占比",
-                    icon=":material/table_chart:",
-                ):
-                    st.dataframe(
-                        chart_data[["主题代码", "风险主题", "事件数", "占比"]],
-                        hide_index=True,
-                        column_config={
-                            "事件数": st.column_config.NumberColumn("事件数", format="%d"),
-                            "占比": st.column_config.ProgressColumn(
-                                "主题计数占比",
-                                format="percent",
-                                min_value=0,
-                                max_value=1,
-                            ),
+                heatmap_data = pd.DataFrame(heatmap_rows)
+                st.caption(
+                    "最近 12 个自然月 Top 8 风险主题；颜色越深表示当月该主题的去重事件越多，"
+                    "空白格表示 0。"
+                )
+                if heatmap_data.empty:
+                    st.info("近一年没有可绘制的风险主题。", icon=":material/info:")
+                else:
+                    month_order = list(dict.fromkeys(heatmap_data["月份"].tolist()))
+                    theme_order = list(dict.fromkeys(heatmap_data["风险主题"].tolist()))
+                    st.vega_lite_chart(
+                        heatmap_data,
+                        {
+                            "mark": {"type": "rect", "cornerRadius": 2},
+                            "encoding": {
+                                "x": {
+                                    "field": "月份",
+                                    "type": "ordinal",
+                                    "sort": month_order,
+                                    "axis": {"labelAngle": -35, "title": "月份"},
+                                },
+                                "y": {
+                                    "field": "风险主题",
+                                    "type": "nominal",
+                                    "sort": theme_order,
+                                    "axis": {"title": "风险主题", "labelLimit": 300},
+                                },
+                                "color": {
+                                    "field": "事件数",
+                                    "type": "quantitative",
+                                    "scale": {"range": ["#FFF7ED", "#C2410C"]},
+                                    "legend": {"title": "事件数"},
+                                },
+                                "tooltip": [
+                                    {"field": "月份", "type": "ordinal"},
+                                    {"field": "风险主题", "type": "nominal"},
+                                    {"field": "事件数", "type": "quantitative"},
+                                    {"field": "主题全年合计", "type": "quantitative"},
+                                ],
+                            },
+                            "height": max(260, len(theme_order) * 42),
                         },
+                        key="risk_theme_heatmap",
                     )
         with st.container(border=True):
             st.markdown("**口径说明**")
-            st.write(features.get("window_semantics", ""))
+            st.write(
+                "时间轴和热力图使用最近 12 个自然月；90 天节奏图使用三个互不重叠的 30 天区间。"
+            )
             st.caption(features.get("probability_status", "F1 是文本特征，不是风险概率。"))
 
     with risk_tab:

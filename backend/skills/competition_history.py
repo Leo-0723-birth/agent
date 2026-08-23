@@ -239,14 +239,30 @@ class CompetitionHistoryStore:
 class CompetitionAwareAnnouncementSource:
     """保持巨潮为事实主源，同时把历史库检索轨迹暴露给 Agent。"""
 
-    def __init__(self, online_source, history_store=None):
+    def __init__(self, online_source, history_store=None, progress_callback=None):
         self.online_source = online_source
         self.history_store = history_store or CompetitionHistoryStore()
+        self.progress_callback = progress_callback
+        if hasattr(self.online_source, "progress_callback"):
+            self.online_source.progress_callback = progress_callback
         self.last_history = {}
         self.last_query_trace = []
 
+    def _emit_progress(self, event, **payload):
+        if self.progress_callback is not None:
+            self.progress_callback({"event": event, **payload})
+
     def search(self, user_input, days=365, as_of=None):
+        self._emit_progress("history_check_started", query=str(user_input))
         initial = self.history_store.lookup(user_input, include_semantic=False)
+        self._emit_progress(
+            "history_check_completed",
+            status=initial.get("match_status", "miss"),
+            document_count=initial.get("document_count", 0),
+            date_start=initial.get("date_start", ""),
+            date_end=initial.get("date_end", ""),
+            message=initial.get("message", ""),
+        )
         self.last_query_trace = [
             {
                 "step": 1,
@@ -267,6 +283,7 @@ class CompetitionAwareAnnouncementSource:
         identity_code = _six_digit(identity.get("secucode"))
         initial_code = _six_digit(initial.get("stock_code"))
         if initial.get("match_status") != "hit" or identity_code != initial_code:
+            self._emit_progress("history_identity_recheck_started", secucode=identity.get("secucode", ""))
             self.last_history = self.history_store.lookup(identity.get("secucode"), include_semantic=True)
         else:
             self.last_history = self.history_store.lookup(initial.get("stock_code"), include_semantic=True)
@@ -277,5 +294,11 @@ class CompetitionAwareAnnouncementSource:
                 "status": "history_and_current" if self.last_history.get("match_status") == "hit" else "current_only",
                 "detail": "历史候选单独展示；当前 F1 与 30/60/90 天统计只使用巨潮近一年公告。",
             }
+        )
+        self._emit_progress(
+            "source_merge_completed",
+            history_status=self.last_history.get("match_status", "miss"),
+            historical_document_count=self.last_history.get("document_count", 0),
+            current_announcement_count=len(announcements),
         )
         return identity, announcements

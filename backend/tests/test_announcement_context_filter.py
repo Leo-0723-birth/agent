@@ -60,6 +60,22 @@ def test_title_exclusion_does_not_consume_pdf_download_limit():
     assert announcements[0]["text_status"] == "skipped_title_policy"
 
 
+def test_unlimited_pdf_mode_processes_all_eligible_announcements():
+    source = CninfoAnnouncementSource.__new__(CninfoAnnouncementSource)
+    source.max_documents = None
+    source.resolve_company = lambda value: {"code": "000001"}
+    source._list_metadata = lambda *args: [
+        {"id": "risk-1", "title": "关于收到立案告知书的公告"},
+        {"id": "risk-2", "title": "重大诉讼公告"},
+    ]
+    processed = []
+    source._process_pdf = lambda item: processed.append(item["id"])
+
+    source.search("000001", as_of="2026-08-23")
+
+    assert processed == ["risk-1", "risk-2"]
+
+
 def test_governance_eligibility_clause_does_not_become_investigation_risk():
     text = (
         "独立董事候选人不得存在下列情形：（二）因涉嫌证券期货违法犯罪，"

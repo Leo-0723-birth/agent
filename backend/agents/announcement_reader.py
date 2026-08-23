@@ -72,6 +72,7 @@ class AnnouncementReaderAgent(AgentBase):
         source=None,
         rule_extractor=None,
         llm_callable=None,
+        progress_callback=None,
     ):
         super().__init__()
         self.data_root = data_root
@@ -83,6 +84,7 @@ class AnnouncementReaderAgent(AgentBase):
         self.rule_extractor = rule_extractor or RuleRiskExtractor()
         self.source = source or self._default_source()
         self.llm_callable = llm_callable or chat_json
+        self.progress_callback = progress_callback
         self.llm_configured = bool(llm_callable is not None or os.getenv("DEEPSEEK_API_KEY"))
         self.finbert = None
         self.finbert_error = ""
@@ -101,8 +103,16 @@ class AnnouncementReaderAgent(AgentBase):
         from ..skills.competition_history import CompetitionAwareAnnouncementSource
 
         return CompetitionAwareAnnouncementSource(
-            CninfoAnnouncementSource(max_documents=ANNOUNCE_MAX_DOCUMENTS)
+            CninfoAnnouncementSource(
+                max_documents=ANNOUNCE_MAX_DOCUMENTS,
+                progress_callback=self.progress_callback,
+            ),
+            progress_callback=self.progress_callback,
         )
+
+    def _emit_progress(self, event, **payload):
+        if self.progress_callback is not None:
+            self.progress_callback({"event": event, **payload})
 
     def _load_announcements(self, company, as_of):
         if self.source is not None:
@@ -385,6 +395,7 @@ class AnnouncementReaderAgent(AgentBase):
             item for item in announcements if is_analysis_eligible(item)
         ]
 
+        self._emit_progress("rule_analysis_started", document_count=len(eligible_announcements))
         if self.use_rule:
             rule_factors, per_announcement, suppressed = self._rule_extract(
                 eligible_announcements
@@ -395,7 +406,10 @@ class AnnouncementReaderAgent(AgentBase):
                 item["id"]: {"rule_factors": [], "suppressed_rule_hits": []}
                 for item in eligible_announcements
             }
+        self._emit_progress("rule_analysis_completed", factor_count=len(rule_factors), suppressed_count=suppressed)
+        self._emit_progress("finbert_started", enabled=bool(self.use_finbert))
         finbert_signals, finbert_status = self._finbert_classify(eligible_announcements)
+        self._emit_progress("finbert_completed", status=finbert_status, signal_count=len(finbert_signals))
         signal_map = {item["announcement_id"]: item for item in finbert_signals}
         rule_ids = {item["announcement_id"] for item in rule_factors}
         gate_active = bool(
@@ -410,6 +424,7 @@ class AnnouncementReaderAgent(AgentBase):
                 ]
             else:
                 llm_candidates = eligible_announcements
+            self._emit_progress("llm_started", document_count=len(llm_candidates))
             (
                 llm_factors,
                 llm_per_announcement,
@@ -424,6 +439,12 @@ class AnnouncementReaderAgent(AgentBase):
             llm_candidates, llm_factors, llm_per_announcement = [], [], {}
             rejected_llm, rejected_llm_context, failed_llm = 0, 0, 0
             llm_status = "disabled" if not self.use_llm else "not_configured"
+        self._emit_progress(
+            "llm_completed",
+            status=llm_status,
+            processed_count=len(llm_candidates),
+            factor_count=len(llm_factors),
+        )
 
         for announcement_id, payload in llm_per_announcement.items():
             per_announcement.setdefault(announcement_id, {}).update(payload)
@@ -445,6 +466,7 @@ class AnnouncementReaderAgent(AgentBase):
             factors.append(factor)
 
         f1 = self._build_f1(announcements, factors, as_of)
+        self._emit_progress("finalizing", risk_factor_count=len(factors))
         f1_vector = None
         f1_vector_backend = "not_generated: EMBEDDING_BACKEND is not bge"
         if EMBEDDING_BACKEND == "bge" and factors:
@@ -589,4 +611,5 @@ class AnnouncementReaderAgent(AgentBase):
             "window_days": ANNOUNCE_WINDOW_DAYS,
             "as_of": as_of,
         }
+        self._emit_progress("analysis_completed", risk_factor_count=len(factors))
         return ctx

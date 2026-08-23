@@ -3,7 +3,10 @@ from pathlib import Path
 from streamlit.testing.v1 import AppTest
 
 from backend.dashboard_utils import (
+    risk_interval_comparison_rows,
+    risk_monthly_severity_rows,
     risk_theme_distribution_rows,
+    risk_theme_heatmap_rows,
     risk_theme_name,
     risk_window_comparison_rows,
 )
@@ -63,7 +66,24 @@ def test_streamlit_result_view_renders_selected_window_chart():
                 "rule": {"suppressed_count": 1},
                 "llm": {"rejected_nonfactual_context": 1},
             },
-            "risk_factors": [],
+            "risk_factors": [
+                {
+                    "event_key": "event-1",
+                    "risk_id": "risk-1",
+                    "announcement_date": "2026-08-20",
+                    "severity": 5,
+                    "taxonomy_l2": "A03",
+                    "evidence_valid": True,
+                },
+                {
+                    "event_key": "event-2",
+                    "risk_id": "risk-2",
+                    "announcement_date": "2026-07-10",
+                    "severity": 3,
+                    "taxonomy_l2": "C-CANDIDATE",
+                    "evidence_valid": True,
+                },
+            ],
             "announcements": [
                 {
                     "id": "policy",
@@ -111,10 +131,11 @@ def test_streamlit_result_view_renders_selected_window_chart():
     app.run()
 
     assert not app.exception
-    assert app.segmented_control[0].value == "最近 90 天"
-    assert any(item.value == "最近 90 天风险主题分布" for item in app.subheader)
-    assert any(item.value == "30/60/90 天风险数量对比" for item in app.subheader)
-    assert len(app.get("vega_lite_chart")) == 2
+    assert app.segmented_control[0].value == "月份热力图"
+    assert any(item.value == "近一年风险事件时间轴" for item in app.subheader)
+    assert any(item.value == "最近 90 天风险节奏" for item in app.subheader)
+    assert any(item.value == "风险主题分析" for item in app.subheader)
+    assert len(app.get("vega_lite_chart")) == 3
     assert any(item.label == "标题过滤公告" for item in app.metric)
     assert any(item.label == "规则语境过滤" for item in app.metric)
 
@@ -142,3 +163,50 @@ def test_risk_window_comparison_keeps_all_three_windows_and_real_denominator():
     assert rows[0]["公告总数"] == 4
     assert rows[0]["风险事件"] == 2
     assert rows[0]["每份公告风险事件"] == 0.5
+
+
+def test_non_overlapping_intervals_do_not_double_count_windows():
+    announcements = [
+        {"date": "2026-08-20"},
+        {"date": "2026-07-20"},
+        {"date": "2026-06-20"},
+    ]
+    factors = [
+        {"event_key": "a", "announcement_date": "2026-08-20", "severity": 5},
+        {"event_key": "b", "announcement_date": "2026-07-20", "severity": 3},
+        {"event_key": "c", "announcement_date": "2026-06-20", "severity": 2},
+    ]
+
+    rows = risk_interval_comparison_rows(announcements, factors, "2026-08-23")
+
+    assert [row["风险事件"] for row in rows] == [1, 1, 1]
+    assert [row["高风险事件"] for row in rows] == [1, 0, 0]
+    assert sum(row["风险事件"] for row in rows) == 3
+
+
+def test_monthly_timeline_has_twelve_months_and_deduplicates_events():
+    factors = [
+        {"event_key": "same", "announcement_date": "2026-08-20", "severity": 5},
+        {"event_key": "same", "announcement_date": "2026-08-20", "severity": 5},
+        {"event_key": "other", "announcement_date": "2026-07-10", "severity": 3},
+    ]
+
+    rows = risk_monthly_severity_rows(factors, "2026-08-23")
+
+    assert len(rows) == 12
+    assert rows[-1]["月份"] == "2026-08"
+    assert rows[-1]["高风险"] == 1
+    assert rows[-2]["中风险"] == 1
+
+
+def test_theme_heatmap_fills_zero_months_for_top_themes():
+    factors = [
+        {"event_key": "a", "announcement_date": "2026-08-20", "taxonomy_l2": "A03"},
+        {"event_key": "b", "announcement_date": "2026-07-10", "taxonomy_l2": "G07"},
+    ]
+
+    rows = risk_theme_heatmap_rows(factors, "2026-08-23", max_themes=8)
+
+    assert len(rows) == 24
+    assert {row["主题代码"] for row in rows} == {"A03", "G07"}
+    assert sum(row["事件数"] for row in rows) == 2
