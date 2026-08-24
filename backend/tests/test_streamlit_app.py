@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
@@ -18,8 +19,27 @@ def test_streamlit_app_initial_view_has_query_form():
 
     assert not app.exception
     assert app.title[0].value == "公告研读 Agent"
-    assert app.text_input[0].value == "000001"
+    assert app.text_input[0].value == "000004SZ"
     assert app.button[0].label == "开始研读"
+
+
+def test_bundled_000004_snapshot_loads_as_audited_offline_result():
+    app_path = Path(__file__).resolve().parents[2] / "公告研读agent.py"
+    app = AppTest.from_file(str(app_path), default_timeout=15).run()
+    app.text_input[0].set_value("000004SZ")
+    app.date_input[0].set_value(date(2026, 8, 24))
+    app.button[0].click()
+
+    app.run()
+
+    assert not app.exception
+    result = app.session_state["announcement_analysis"]
+    quality = result["semantic"]["data_quality"]
+    assert result["company"] == "000004.SZ"
+    assert quality["offline_snapshot_used"] is True
+    assert quality["snapshot_as_of"] == "2026-08-24"
+    assert result["semantic"]["stats"]["announcement_count"] == 137
+    assert any("离线快照" in item.value for item in app.info)
 
 
 def test_risk_theme_distribution_uses_selected_window_and_readable_names():

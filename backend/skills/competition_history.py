@@ -280,12 +280,17 @@ class CompetitionAwareAnnouncementSource:
             }
         ]
         identity, announcements = self.online_source.search(user_input, days=days, as_of=as_of)
+        offline_snapshot = identity.get("retrieval_mode") == "offline_official_snapshot"
         self.last_query_trace.append(
             {
                 "step": 2,
-                "source": "巨潮资讯网",
+                "source": "巨潮官方公告离线快照" if offline_snapshot else "巨潮资讯网",
                 "status": "success",
-                "detail": f"解析为 {identity.get('company_name')}（{identity.get('secucode')}），取得 {len(announcements)} 份近一年公告元数据",
+                "detail": (
+                    f"命中锚点 {identity.get('snapshot_as_of')} 的仓库快照，读取 {len(announcements)} 份官方公告"
+                    if offline_snapshot
+                    else f"解析为 {identity.get('company_name')}（{identity.get('secucode')}），取得 {len(announcements)} 份近一年公告元数据"
+                ),
             }
         )
         identity_code = _six_digit(identity.get("secucode"))

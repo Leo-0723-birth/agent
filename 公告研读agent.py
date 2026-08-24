@@ -28,6 +28,7 @@ from backend.dashboard_utils import (
 from backend.skills.announcement_context_filter import FILTER_VERSION
 from backend.skills.announcement_search import CninfoAnnouncementSource
 from backend.skills.competition_history import CompetitionAwareAnnouncementSource
+from backend.skills.offline_announcement_snapshot import OfflineAnalysisSnapshotStore
 
 
 st.set_page_config(
@@ -71,6 +72,18 @@ def analyze_company(
     progress_callback=None,
 ) -> dict:
     """执行公告研读；PDF/解析文件仍使用磁盘缓存，进度按真实阶段回传。"""
+    cached = OfflineAnalysisSnapshotStore().lookup(
+        company,
+        as_of,
+        use_ocr,
+        use_finbert,
+        use_llm,
+        filter_version,
+    )
+    if cached.get("status") == "hit":
+        if progress_callback is not None:
+            progress_callback({"event": "offline_analysis_completed", **cached})
+        return cached["result"]
     source = CompetitionAwareAnnouncementSource(
         CninfoAnnouncementSource(
             max_documents=None,
@@ -112,6 +125,48 @@ def build_progress_handler(
                 ":material/hourglass_top: **步骤 1 · 比赛历史库** — 正在按本次输入检索"
             )
             progress_bar.progress(0.04, text="正在检查历史数据")
+        elif event_name == "offline_analysis_completed":
+            result = event.get("result") or {}
+            semantic = result.get("semantic") or {}
+            quality = semantic.get("data_quality") or {}
+            stats = semantic.get("stats") or {}
+            status.update(label="已命中 000004.SZ 离线分析快照")
+            history_line.markdown(
+                f":material/check_circle: **步骤 1 · 比赛历史库** — 已加载快照中的历史候选"
+            )
+            online_line.markdown(
+                f":material/offline_bolt: **步骤 2 · 巨潮官方公告离线快照** — 数据锚点 "
+                f"{quality.get('snapshot_as_of') or result.get('as_of')}，读取 "
+                f"{stats.get('announcement_count', 0)} 份官方公告"
+            )
+            merge_line.markdown(
+                ":material/layers: **步骤 3 · 分层结果** — 直接加载已核验的规则分析结果；"
+                "历史候选与当前公告仍保持分层"
+            )
+            analysis_line.markdown(
+                f":material/check_circle: **快速研读完成** — "
+                f"{stats.get('risk_factor_count', 0)} 条待复核风险事件"
+            )
+            progress_bar.progress(1.0, text="离线快照加载完成")
+        elif event_name == "offline_snapshot_started":
+            status.update(label="步骤 2/3 · 正在检查 000004.SZ 离线公告快照……")
+            online_line.markdown(
+                ":material/offline_bolt: **步骤 2 · 本地快照** — 正在匹配公司、截止日和回看窗口"
+            )
+            progress_bar.progress(0.16, text="正在检查离线公告快照")
+        elif event_name == "offline_snapshot_completed":
+            current_company["name"] = str(event.get("company_name") or "")
+            current_company["code"] = str(event.get("secucode") or "")
+            online_line.markdown(
+                f":material/check_circle: **步骤 2 · 巨潮官方公告离线快照** — 命中 "
+                f"{current_company['name']}（{current_company['code']}），数据锚点 "
+                f"{event.get('snapshot_as_of')}，读取 {event.get('announcement_count', 0)} 份公告"
+            )
+            progress_bar.progress(0.70, text="离线官方公告读取完成")
+        elif event_name == "offline_snapshot_missed":
+            online_line.markdown(
+                ":material/cloud_sync: **步骤 2 · 本地快照** — 未覆盖本次公司或截止日，转为查询巨潮"
+            )
         elif event_name == "history_check_completed":
             match_status = event.get("status")
             if match_status == "hit":
@@ -391,8 +446,9 @@ with st.sidebar:
 with st.form("company_query_form", border=True):
     company_input = st.text_input(
         "公司代码或准确名称",
-        value="000001",
-        placeholder="例如：000001、平安银行",
+        value="000004SZ",
+        placeholder="例如：000004SZ、国华退",
+        help="000004SZ 内置截至 2026-08-24 的可核验离线快照，可用于快速演示。",
     )
     submitted = st.form_submit_button(
         "开始研读",
@@ -453,6 +509,14 @@ if result:
     )
     show_status_badges(semantic.get("channel_summary", {}), quality)
     show_kpis(semantic)
+
+    if quality.get("offline_snapshot_used"):
+        st.info(
+            f"本次使用仓库内巨潮官方公告离线快照，数据锚点为 "
+            f"{quality.get('snapshot_as_of') or result.get('as_of')}。公告详情链接、官方 PDF 链接、"
+            "正文 SHA-256 与 OCR 审计信息均保留；该快照不是锚点日期之后的实时数据。",
+            icon=":material/offline_bolt:",
+        )
 
     if quality.get("title_excluded_count", 0):
         st.info(

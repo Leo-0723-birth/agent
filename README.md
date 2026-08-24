@@ -99,6 +99,12 @@ COMPETITION_DATA_ROOT=D:\your-path\Announcement_NLP_Project_Final
 也可用 `COMPETITION_RULE_RISKS` 和 `COMPETITION_SEMANTIC_FEATURES` 分别覆盖单个
 文件。详见 `公告解析/README.md`。
 
+为便于团队快速演示，`backend/data/offline_announcements/` 还内置了
+`000004.SZ` 的巨潮官方公告全文快照和默认规则分析结果。查询 `000004`、
+`000004SZ`、`000004.SZ` 或快照内公司简称，且截止日/运行开关与快照一致时，
+页面会直接加载预计算结果；更改截止日、FinBERT/LLM 开关或快照覆盖范围后自动
+重新计算或回退巨潮联网。页面始终显示快照锚点，不把离线数据称为实时数据。
+
 ## 数据产物（非官方源文件，已内置）
 
 | 数据 | 位置 | 说明 |

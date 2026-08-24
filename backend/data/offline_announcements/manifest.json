@@ -1,0 +1,21 @@
+{
+  "schema_version": "offline_announcement_manifest_v1",
+  "created_at": "2026-08-24T15:40:05+08:00",
+  "company": "000004.SZ",
+  "source": "巨潮资讯网官方公告及PDF正文缓存",
+  "snapshot_as_of": "2026-08-24",
+  "lookback_days": 365,
+  "files": [
+    {
+      "path": "000004_SZ_announcements_2026-08-24.json.gz",
+      "bytes": 801775,
+      "sha256": "07202aa2ac43457ab48c90d59bdc6d2388406cdb1b9a0b8a33cc156884db6120"
+    },
+    {
+      "path": "000004_SZ_analysis_2026-08-24.json.gz",
+      "bytes": 80801,
+      "sha256": "c3978bf3d4578004439b3bfd5059621cf4643765d93253138f3239eff33ddffe"
+    }
+  ],
+  "warning": "离线快照只代表锚点日期；锚点之后的公告必须联网刷新。"
+}

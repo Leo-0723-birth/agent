@@ -561,15 +561,32 @@ class AnnouncementReaderAgent(AgentBase):
         }
         ctx.semantic.historical_context = historical_context
         ctx.semantic.query_trace = query_trace
+        retrieval_mode = identity.get("retrieval_mode", "online")
+        offline_snapshot = retrieval_mode == "offline_official_snapshot"
+        current_source_policy = (
+            f"本次命中仓库内巨潮官方公告离线快照，数据锚点为{identity.get('snapshot_as_of')}；"
+            if offline_snapshot
+            else "本次联网访问巨潮并读取截止日以前的最新公告；"
+        )
         ctx.semantic.source_policy = (
-            "查询先检查比赛历史库，再访问巨潮补充截止日以前的最新公告。"
-            "当前事实与近30/60/90天F1仅来自巨潮在线公告和官方PDF；"
+            "查询先检查比赛历史库，再读取巨潮官方公告。"
+            + current_source_policy
+            + "当前事实与近30/60/90天F1仅来自巨潮官方公告和官方PDF正文；"
             "比赛库中的2020—2024历史旧规则命中只作候选证据，单独展示且不计入当前风险。"
             "规则或模型只生成待复核信号，不构成事实认定。"
             "制度类公告和规范性段落会保留审计记录但不计入风险。"
         )
         ctx.semantic.data_quality = {
-            "source": "巨潮资讯网" if self.source is not None else "本地官方公告副本",
+            "source": (
+                "巨潮官方公告（仓库离线快照）"
+                if offline_snapshot
+                else ("巨潮资讯网" if self.source is not None else "本地官方公告副本")
+            ),
+            "retrieval_mode": retrieval_mode,
+            "offline_snapshot_used": offline_snapshot,
+            "snapshot_id": identity.get("snapshot_id", ""),
+            "snapshot_as_of": identity.get("snapshot_as_of", ""),
+            "snapshot_created_at": identity.get("snapshot_created_at", ""),
             "as_of": as_of,
             "lookback_days": ANNOUNCE_WINDOW_DAYS,
             "announcement_count": len(announcements),
