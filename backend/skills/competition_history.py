@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import gzip
 import json
 import re
 import unicodedata
@@ -46,6 +47,13 @@ def _aliases_from_title(title: object) -> set[str]:
     return aliases
 
 
+def _open_jsonl(path: Path):
+    """打开普通或 gzip 压缩 JSONL，保持逐行读取且不落地临时副本。"""
+    if path.suffix.lower() == ".gz":
+        return gzip.open(path, mode="rt", encoding="utf-8")
+    return path.open("r", encoding="utf-8")
+
+
 @lru_cache(maxsize=4)
 def _build_index(path_text: str, mtime_ns: int) -> dict:
     """把 42MB JSONL 压缩为公司级索引；mtime 变化时自动失效。"""
@@ -53,7 +61,7 @@ def _build_index(path_text: str, mtime_ns: int) -> dict:
     companies: dict[str, dict] = {}
     alias_codes: dict[str, set[str]] = defaultdict(set)
     path = Path(path_text)
-    with path.open("r", encoding="utf-8") as handle:
+    with _open_jsonl(path) as handle:
         for line_no, line in enumerate(handle, 1):
             try:
                 row = json.loads(line)

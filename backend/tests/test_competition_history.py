@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+import gzip
 import json
 
 from backend.agents.announcement_reader import AnnouncementReaderAgent
@@ -62,6 +63,21 @@ def test_history_store_supports_code_and_unique_alias(tmp_path):
     assert by_code["risk_candidate_count"] == 1
     assert by_code["risk_candidates"][0]["evidence"] == "一、股票交易异常波动的情况"
     assert by_code["risk_candidates"][0]["source_tier"] == "competition_historical_derived"
+
+
+def test_history_store_supports_repository_gzip_package(tmp_path):
+    plain_path = tmp_path / "risks.jsonl"
+    gzip_path = tmp_path / "risks.jsonl.gz"
+    _write_history(plain_path)
+    with plain_path.open("rb") as source, gzip.open(gzip_path, "wb") as target:
+        target.write(source.read())
+
+    store = CompetitionHistoryStore(gzip_path, tmp_path / "missing.parquet")
+    result = store.lookup("000004", include_semantic=False)
+
+    assert result["match_status"] == "hit"
+    assert result["document_count"] == 2
+    assert result["risk_candidates"][0]["source_artifact"].endswith("risks.jsonl.gz")
 
 
 class _OnlineSource:
