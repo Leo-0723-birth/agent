@@ -15,6 +15,9 @@ backend/models/embedding/
 backend/data/cache/
 data/cache/
 
+# 大体积向量库（chunk 段落向量 ~160MB(fp32)/80MB(fp16)，可从源 JSONL 重建；不入库）
+backend/data/vector_db/chunk_vectors.npy
+
 # 临时/历史遗留
 无关文件夹/
 *.log
