@@ -30,7 +30,7 @@ st.set_page_config(
 @st.cache_data(ttl="6h", max_entries=20, show_spinner=False)
 def analyze_company(company: str, as_of: str, window: int) -> dict:
     """查表推理：建模数据集最新一行特征 → RF/LGB/XGB 三模型集成 → 概率 + SHAP。"""
-    agent = PredictorAgent(horizons=[30, 60, 90])
+    agent = PredictorAgent(horizons=["30d", "60d", "90d"])
     ctx = Context(company=company, as_of=as_of, window=window)
     agent.run(company, ctx)
     payload = asdict(ctx)
