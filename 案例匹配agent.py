@@ -58,7 +58,7 @@ def cases_dataframe(cases: list[dict]) -> pd.DataFrame:
                 "公司": c.get("company", ""),
                 "问询类型": c.get("inquiry_type", ""),
                 "发布日期": c.get("publish_date", ""),
-                "相似度": c.get("similarity"),
+                "RRF融合得分": c.get("rrf_score"),
                 "关注点": "；".join(str(t)[:40] for t in (c.get("topics") or [])[:3]),
             }
         )
@@ -114,17 +114,25 @@ if result:
     semantic = result.get("semantic", {})
     financial = result.get("financial", {})
     trace = result.get("trace_log", [])
+    # 案例库规模动态读取（backend/data/vector_db/case_meta.json）
+    try:
+        import json as _json
+        from backend.config import CASE_META_PATH
+        _meta = _json.loads(__import__("pathlib").Path(CASE_META_PATH).read_text(encoding="utf-8"))
+        library_size = int(_meta.get("n_cases", 0))
+    except Exception:
+        library_size = len(cases)
     with st.container(horizontal=True):
         st.metric("相似案例", len(cases), border=True)
         st.metric("公告风险要素", len(semantic.get("risk_factors", [])), border=True)
         st.metric("财务异常", len(financial.get("anomaly_list", [])), border=True)
-        st.metric("案例库规模", 4785, border=True)
+        st.metric("案例库规模", library_size, border=True)
 
-    st.subheader("相似历史问询案例（Top 相似度）")
+    st.subheader("相似历史问询案例（Top 综合匹配）")
     if cases:
         st.dataframe(cases_dataframe(cases), hide_index=True)
         for c in cases:
-            with st.expander(f"**{c.get('company')}**｜{c.get('inquiry_type')}｜{c.get('publish_date')}｜相似度 {c.get('similarity')}"):
+            with st.expander(f"**{c.get('company')}**｜{c.get('inquiry_type')}｜{c.get('publish_date')}｜RRF融合得分 {c.get('rrf_score')}"):
                 st.json(c, expanded=False)
     else:
         st.info("未检索到相似案例（画像为空或向量维度不匹配时语义通道被守卫拦截）。")
@@ -134,5 +142,5 @@ if result:
 else:
     with st.container(border=True):
         st.subheader("页面会展示什么")
-        st.write("目标公司风险画像（公告 + 财务）→ RRF 融合检索 → Top 相似历史问询函（公司/类型/日期/相似度/关注点）。")
+        st.write("目标公司风险画像（公告 + 财务）→ RRF 融合检索 → Top 相似历史问询函（公司/类型/日期/RRF融合得分/关注点）。")
         st.caption("先使用默认示例 000004.SZ，点击“开始匹配”即可。首次运行需下载公告 PDF，可能等待数分钟（已缓存后秒级）。")
