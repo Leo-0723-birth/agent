@@ -31,11 +31,24 @@ nvidia-smi 2>/dev/null | head -4 || echo "（无 nvidia-smi，将走 CPU，仍�
 python --version
 
 echo "========== 1/5 准备项目代码 =========="
-if [ ! -d agent ]; then
-    git clone https://github.com/Leo-0723-birth/agent.git
+# 若已手动上传代码到当前目录的 agent/（或就在当前目录），跳过 git clone（云机可能连不上 GitHub）
+if [ -f backend/config.py ]; then
+    echo "检测到已在仓库目录内，跳过 clone"
+    cd "$(pwd)"
+elif [ -d agent ]; then
+    echo "检测到已上传的 agent/ 目录，跳过 clone"
+    cd agent
+else
+    echo "[提示] 尝试 git clone（云机连不上 GitHub 时可改用镜像或手动上传）..."
+    if ! git clone https://github.com/Leo-0723-birth/agent.git 2>/dev/null; then
+        echo "[错误] git clone 失败（云机无法访问 GitHub）。"
+        echo "  请改为：在 JupyterLab 文件面板把仓库代码上传为 agent/ 目录后重跑本脚本；"
+        echo "  或使用镜像：git clone https://gitclone.com/github.com/Leo-0723-birth/agent.git"
+        exit 1
+    fi
+    cd agent
 fi
-cd agent
-git pull --ff-only || true
+git pull --ff-only 2>/dev/null || echo "（跳过 git pull：云机可能无法访问 GitHub，使用已上传代码）"
 
 echo "========== 2/5 安装依赖 =========="
 pip install -q -r requirements.txt
