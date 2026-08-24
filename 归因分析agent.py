@@ -20,8 +20,10 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from backend.agents.announcement_reader import AnnouncementReaderAgent
 from backend.agents.attributor import AttributorAgent
+from backend.agents.case_retriever import CaseRetrieverAgent
 from backend.agents.financial_detector import FinancialDetectorAgent
 from backend.agents.predictor import PredictorAgent
+from backend.config import ANNOUNCE_SOURCE
 from backend.context import Context
 from backend.skills.announcement_search import CninfoAnnouncementSource
 
@@ -44,11 +46,15 @@ def analyze_company(
     shap_threshold: float,
 ) -> dict:
     """公告研读 → 财务检测 → 预测建模(SHAP) → 归因解释（SHAP + 证据白名单 + validate_narrative 防幻觉）。"""
-    source = CninfoAnnouncementSource(max_documents=max_documents, ocr_enabled=use_ocr)
+    # 离线（ANNOUNCE_SOURCE=local）时不传 source，AnnouncementReaderAgent 自动走本地 PDF 扫描
+    source = None
+    if ANNOUNCE_SOURCE != "local":
+        source = CninfoAnnouncementSource(max_documents=max_documents, ocr_enabled=use_ocr)
     ctx = Context(company=company, as_of=as_of)
     AnnouncementReaderAgent(source=source, use_finbert=use_finbert, use_llm=use_llm).run(company, ctx)
     FinancialDetectorAgent(use_llm=False).run(company, ctx)
     PredictorAgent().run(company, ctx)
+    CaseRetrieverAgent().run(company, ctx)
     AttributorAgent(top_k=top_k, shap_threshold=shap_threshold, use_llm=use_llm).run(company, ctx)
     return asdict(ctx)
 
@@ -64,7 +70,9 @@ def factors_dataframe(factors: list[dict]) -> pd.DataFrame:
                 "标签引用": f.get("label_ref", ""),
                 "来源": f.get("source", ""),
                 "降级归因": bool(f.get("is_fallback")),
-                "证据 ID": f.get("evidence_id") or "",
+                "证据 ID": f.get("evidence_id") or (
+                    "无直接证据" if f.get("no_evidence") else ""
+                ),
             }
         )
     return pd.DataFrame(rows)
@@ -122,10 +130,12 @@ if result:
     trace = result.get("trace_log", [])
     factors = att.get("top_risk_factors", [])
     citations = att.get("evidence_citations", [])
+    case_links = att.get("case_links", [])
 
     with st.container(horizontal=True):
         st.metric("诱因数", len(factors), border=True)
         st.metric("证据引用", len(citations), border=True)
+        st.metric("相似案例", len(case_links), border=True)
         st.metric("60 天概率", f"{pred.get('probability_60d'):.4f}" if pred.get("probability_60d") is not None else "—", border=True)
         st.metric("风险等级", pred.get("risk_level") or "—", border=True)
 
@@ -142,6 +152,15 @@ if result:
     with st.expander("📎 证据池（原文证据白名单）"):
         for e in citations:
             st.markdown(f"- `{e.get('evidence_id')}` [{e.get('source')}] {e.get('snippet', '')[:200]}")
+
+    st.subheader("相似历史案例")
+    if case_links:
+        for c in case_links:
+            with st.container(border=True):
+                st.markdown(f"**{c.get('company', '')}** · {c.get('inquiry_type', '')} · 相似度 {c.get('similarity')}")
+                st.caption("关注点：" + "、".join(c.get("topics", [])[:3]))
+    else:
+        st.info("无高度重合的相似案例。")
 
     with st.expander("🔍 审计追踪（上游 + 本 Agent）"):
         st.json(trace, expanded=False)

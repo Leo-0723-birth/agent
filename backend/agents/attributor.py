@@ -59,9 +59,9 @@ except Exception:  # pragma: no cover - 仅当 risk_labels 不可用时兜底
 # 证据编号正则：只识别 fin_000 / sem_000 这类统一编号（防幻觉校验用）
 EVIDENCE_ID_RE = re.compile(r"\b(?:fin|sem)_\d{3}\b")
 
-# 特征 → 可读风险因素映射表（种子；build_concern_dict.py 产物可扩充）
+# 特征 → 可读风险因素映射表（覆盖 models_manifest.json 的全部 135 个建模特征）
 FEATURE_MAP = {
-    # —— 基础指标（financial_detector 原始指标）——
+    # —— 基础指标（financial_detector 原始指标，实时路径用）——
     "cf_income_ratio":      {"desc": "经营现金流/净利润（盈利质量）", "label_ref": "盈利质量", "source": "financial"},
     "debt_to_assets_ratio": {"desc": "资产负债率",                   "label_ref": "偿债能力", "source": "financial"},
     "roe":                  {"desc": "净资产收益率",                 "label_ref": "盈利能力", "source": "financial"},
@@ -70,14 +70,18 @@ FEATURE_MAP = {
     "net_profit_yoy_growth":{"desc": "净利润同比增速",               "label_ref": "盈利能力", "source": "financial"},
     "anomaly_count":        {"desc": "财务异常信号数量",             "label_ref": "综合",     "source": "financial"},
     "max_severity":         {"desc": "最高异常严重度",               "label_ref": "综合",     "source": "financial"},
-    # —— F2 特征（f2_calc 产出）——
+    # —— F2 财务异常特征（f2_calc 产出）——
     "f2_roe":               {"desc": "净资产收益率",                 "label_ref": "盈利能力", "source": "financial"},
     "f2_roa":               {"desc": "总资产收益率",                 "label_ref": "盈利能力", "source": "financial"},
     "f2_net_margin":        {"desc": "净利率",                       "label_ref": "盈利能力", "source": "financial"},
     "f2_debt_ratio":        {"desc": "资产负债率",                   "label_ref": "偿债能力", "source": "financial"},
     "f2_loss_flag":         {"desc": "亏损标志",                     "label_ref": "盈利能力", "source": "financial"},
     "f2_high_debt_flag":    {"desc": "高负债标志（>70%）",           "label_ref": "偿债能力", "source": "financial"},
+    "f2_neg_pe_flag":       {"desc": "负市盈率标志",                 "label_ref": "盈利能力", "source": "financial"},
+    "f2_neg_pb_flag":       {"desc": "负市净率标志",                 "label_ref": "市场估值", "source": "financial"},
+    "f2_neg_accruals_flag": {"desc": "负应计项标志",                 "label_ref": "盈利质量", "source": "financial"},
     "f2_ocf_to_profit":     {"desc": "经营现金流/净利润",            "label_ref": "盈利质量", "source": "financial"},
+    "f2_ocf_to_profit_extreme": {"desc": "现金流/利润极端值标志",    "label_ref": "盈利质量", "source": "financial"},
     "f2_roe_industry_rank": {"desc": "ROE 行业百分位",               "label_ref": "行业对标", "source": "financial"},
     "f2_beneish_m":         {"desc": "Beneish M-Score（盈余操纵）",  "label_ref": "盈利能力", "source": "financial"},
     "f2_benford_flag":      {"desc": "Benford 数字分布异常标志",     "label_ref": "财务异常", "source": "financial"},
@@ -86,21 +90,98 @@ FEATURE_MAP = {
     "f2_accrual_quality_zscore": {"desc": "应计质量 Z-Score",        "label_ref": "盈利质量", "source": "financial"},
     "f2_profit_ocf_diverge":{"desc": "利润-现金流背离标志",          "label_ref": "盈利质量", "source": "financial"},
     "f2_industry_outlier_count": {"desc": "行业离群指标计数（|Z|>1.96）", "label_ref": "行业对标", "source": "financial"},
+    "f2_p_roa":             {"desc": "ROA 异常分位（F-Score）",      "label_ref": "盈利能力", "source": "financial"},
+    "f2_p_cfo":             {"desc": "现金流异常分位（F-Score）",    "label_ref": "盈利质量", "source": "financial"},
     "f2_z_roe":             {"desc": "ROE 行业 Z-Score",             "label_ref": "行业对标", "source": "financial"},
     "f2_z_debt_ratio":      {"desc": "负债率行业 Z-Score",           "label_ref": "行业对标", "source": "financial"},
-    # —— F3 市场特征（market_fetch 产出）——
-    "mkt_excess_return_20d":   {"desc": "20日超额收益",              "label_ref": "市场异动", "source": "financial"},
-    "mkt_return_20d":          {"desc": "20日收益率",                "label_ref": "市场异动", "source": "financial"},
-    "mkt_volatility_20d":      {"desc": "20日波动率",                "label_ref": "市场异动", "source": "financial"},
-    "mkt_max_drawdown_60d":    {"desc": "60日最大回撤",              "label_ref": "市场异动", "source": "financial"},
-    "mkt_extreme_down_days_20d":{"desc": "20日暴跌（<-5%）天数",      "label_ref": "市场异动", "source": "financial"},
-    "mkt_volume_ratio_20d":    {"desc": "20日量比（当日/前19日均量）","label_ref": "市场异动", "source": "financial"},
-    "mkt_abnormal_volume_days_20d": {"desc": "异常放量天数",          "label_ref": "市场异动", "source": "financial"},
-    "mkt_amihud_illiquidity_20d":  {"desc": "Amihud 非流动性",       "label_ref": "市场异动", "source": "financial"},
-    # 语义侧（公告风险标签 one-hot 后的特征名，前缀 label_）
-    # "label_收入确认":      {"desc": "公告中收入确认类风险信号",      "label_ref": "收入确认", "source": "semantic"},
-    # "label_商誉减值":      {"desc": "公告中商誉减值类风险信号",      "label_ref": "商誉减值", "source": "semantic"},
+    # —— F6 问询历史特征 ——
+    "f6_inquiry_count_12m": {"desc": "近12个月被问询次数",           "label_ref": "历史问询", "source": "financial"},
+    "f6_inquiry_count_24m": {"desc": "近24个月被问询次数",           "label_ref": "历史问询", "source": "financial"},
+    "f6_inquiry_count_60m": {"desc": "近60个月被问询次数",           "label_ref": "历史问询", "source": "financial"},
+    "f6_annual_report_inquiry_count": {"desc": "年报问询函次数",     "label_ref": "历史问询", "source": "financial"},
+    "f6_attention_letter_count": {"desc": "关注函数量",              "label_ref": "历史问询", "source": "financial"},
+    "f6_restructuring_inquiry_count": {"desc": "重组问询次数",       "label_ref": "历史问询", "source": "financial"},
+    "f6_first_inquiry_interval_days": {"desc": "距首次问询天数",     "label_ref": "历史问询", "source": "financial"},
+    "f6_last_inquiry_interval_days": {"desc": "距最近问询天数",      "label_ref": "历史问询", "source": "financial"},
+    "f6_avg_inquiry_interval_days": {"desc": "平均问询间隔天数",     "label_ref": "历史问询", "source": "financial"},
+    "f6_inquiry_interval_cv": {"desc": "问询间隔变异系数",           "label_ref": "历史问询", "source": "financial"},
+    "f6_unreplied_count":   {"desc": "未回复问询次数",               "label_ref": "信息披露", "source": "financial"},
+    # —— F5 公司治理特征 ——
+    "gov_audit_firm_change": {"desc": "审计机构变更",               "label_ref": "审计质量", "source": "financial"},
+    "gov_auditor_change":    {"desc": "签字会计师变更",             "label_ref": "审计质量", "source": "financial"},
+    "gov_big4_auditor":      {"desc": "是否四大会计师事务所审计",   "label_ref": "审计质量", "source": "financial"},
+    "gov_nonstandard_audit_opinion": {"desc": "非标准审计意见",      "label_ref": "审计质量", "source": "financial"},
+    "gov_board_size":        {"desc": "董事会规模",                 "label_ref": "公司治理", "source": "financial"},
+    "gov_independent_director_count": {"desc": "独立董事人数",      "label_ref": "公司治理", "source": "financial"},
+    "gov_independent_director_ratio": {"desc": "独立董事占比",      "label_ref": "公司治理", "source": "financial"},
+    "gov_top1_holder_ratio": {"desc": "第一大股东持股比例",         "label_ref": "股权结构", "source": "financial"},
+    "gov_top10_holder_ratio": {"desc": "前十大股东持股比例",        "label_ref": "股权结构", "source": "financial"},
+    "gov_top10_holder_count": {"desc": "前十大股东户数",            "label_ref": "股权结构", "source": "financial"},
+    "gov_top1_top10_ratio":  {"desc": "第一大/前十大持股比",        "label_ref": "股权结构", "source": "financial"},
+    "gov_top1_top2_gap":     {"desc": "第一二大股东持股差距",       "label_ref": "股权结构", "source": "financial"},
+    "governance_year":       {"desc": "治理数据年份",               "label_ref": "公司治理", "source": "financial"},
+    # —— F3 市场特征 ——
+    "mkt_market_cap":        {"desc": "总市值",                     "label_ref": "市场估值", "source": "financial"},
+    "mkt_log_market_cap":    {"desc": "对数市值",                   "label_ref": "市场估值", "source": "financial"},
+    "mkt_pe_ratio":          {"desc": "市盈率（TTM）",              "label_ref": "市场估值", "source": "financial"},
+    "mkt_pb_ratio":          {"desc": "市净率",                     "label_ref": "市场估值", "source": "financial"},
+    "mkt_market_cap_qoq":    {"desc": "市值环比变化",               "label_ref": "市场异动", "source": "financial"},
+    "mkt_pe_change_qoq":     {"desc": "市盈率环比变化",             "label_ref": "市场估值", "source": "financial"},
+    "mkt_pb_change_qoq":     {"desc": "市净率环比变化",             "label_ref": "市场估值", "source": "financial"},
+    "mkt_cap_industry_zscore": {"desc": "市值行业 Z-Score",         "label_ref": "行业对标", "source": "financial"},
+    "mkt_pb_industry_zscore": {"desc": "市净率行业 Z-Score",        "label_ref": "行业对标", "source": "financial"},
+    "mkt_return_5d":         {"desc": "5日收益率",                  "label_ref": "市场异动", "source": "financial"},
+    "mkt_return_20d":        {"desc": "20日收益率",                 "label_ref": "市场异动", "source": "financial"},
+    "mkt_return_60d":        {"desc": "60日收益率",                 "label_ref": "市场异动", "source": "financial"},
+    "mkt_excess_return_20d": {"desc": "20日超额收益",               "label_ref": "市场异动", "source": "financial"},
+    "mkt_volatility_20d":    {"desc": "20日波动率",                 "label_ref": "市场异动", "source": "financial"},
+    "mkt_volatility_60d":    {"desc": "60日波动率",                 "label_ref": "市场异动", "source": "financial"},
+    "mkt_max_drawdown_60d":  {"desc": "60日最大回撤",               "label_ref": "市场异动", "source": "financial"},
+    "mkt_extreme_down_days_20d": {"desc": "20日暴跌天数",           "label_ref": "市场异动", "source": "financial"},
+    "mkt_volume_ratio_20d":  {"desc": "20日量比",                   "label_ref": "市场异动", "source": "financial"},
+    "mkt_volume_cv_20d":     {"desc": "20日成交量变异系数",         "label_ref": "市场异动", "source": "financial"},
+    "mkt_abnormal_volume_days_20d": {"desc": "异常放量天数",        "label_ref": "市场异动", "source": "financial"},
+    "mkt_amihud_illiquidity_20d": {"desc": "Amihud 非流动性",       "label_ref": "市场异动", "source": "financial"},
+    "mkt_financing_balance": {"desc": "融资余额",                   "label_ref": "杠杆资金", "source": "financial"},
+    "mkt_securities_balance": {"desc": "融券余额",                  "label_ref": "杠杆资金", "source": "financial"},
+    "mkt_financing_balance_change": {"desc": "融资余额变化",        "label_ref": "杠杆资金", "source": "financial"},
+    "mkt_institutional_holding_ratio": {"desc": "机构持股比例",      "label_ref": "机构行为", "source": "financial"},
+    "mkt_institutional_holding_change": {"desc": "机构持股变化",     "label_ref": "机构行为", "source": "financial"},
+    "mkt_institutional_holder_count": {"desc": "机构持仓家数",       "label_ref": "机构行为", "source": "financial"},
+    "mkt_risk_warning_count_30d": {"desc": "近30日风险警示次数",    "label_ref": "风险警示", "source": "financial"},
+    "mkt_risk_warning_count_90d": {"desc": "近90日风险警示次数",    "label_ref": "风险警示", "source": "financial"},
+    "mkt_days_since_last_risk_warning": {"desc": "距上次风险警示天数", "label_ref": "风险警示", "source": "financial"},
+    # —— F4 情绪特征 ——
+    "sent_news_count_5d":    {"desc": "近5日新闻数量",              "label_ref": "市场情绪", "source": "financial"},
+    "sent_news_count_10d":   {"desc": "近10日新闻数量",             "label_ref": "市场情绪", "source": "financial"},
+    "sent_news_count_30d":   {"desc": "近30日新闻数量",             "label_ref": "市场情绪", "source": "financial"},
+    "sent_news_title_count_30d": {"desc": "近30日新闻标题数",       "label_ref": "市场情绪", "source": "financial"},
+    "sent_news_daily_peak_30d": {"desc": "近30日新闻日峰值",        "label_ref": "市场情绪", "source": "financial"},
+    "sent_negative_news_count_30d": {"desc": "近30日负面新闻数",    "label_ref": "市场情绪", "source": "financial"},
+    "sent_negative_ratio_30d": {"desc": "近30日负面新闻占比",       "label_ref": "市场情绪", "source": "financial"},
+    "sent_sentiment_mean_30d": {"desc": "近30日情绪均值",           "label_ref": "市场情绪", "source": "financial"},
+    "sent_sentiment_volatility_30d": {"desc": "近30日情绪波动",     "label_ref": "市场情绪", "source": "financial"},
+    "sent_negative_peak_30d": {"desc": "近30日负面情绪峰值",        "label_ref": "市场情绪", "source": "financial"},
+    "sent_post_count_5d":    {"desc": "近5日股吧帖子数",            "label_ref": "市场情绪", "source": "financial"},
+    "sent_post_count_30d":   {"desc": "近30日股吧帖子数",           "label_ref": "市场情绪", "source": "financial"},
+    "sent_post_daily_peak_30d": {"desc": "近30日帖子日峰值",        "label_ref": "市场情绪", "source": "financial"},
+    "sent_comment_count_30d": {"desc": "近30日评论数",              "label_ref": "市场情绪", "source": "financial"},
+    "sent_read_count_30d":   {"desc": "近30日阅读量",               "label_ref": "市场情绪", "source": "financial"},
+    "sent_guba_sentiment_mean_30d": {"desc": "近30日股吧情绪均值",  "label_ref": "市场情绪", "source": "financial"},
+    "sent_guba_sentiment_volatility_30d": {"desc": "近30日股吧情绪波动", "label_ref": "市场情绪", "source": "financial"},
+    "sent_guba_positive_ratio_30d": {"desc": "近30日股吧正面占比",  "label_ref": "市场情绪", "source": "financial"},
+    "sent_guba_negative_ratio_30d": {"desc": "近30日股吧负面占比",  "label_ref": "市场情绪", "source": "financial"},
 }
+
+# 前缀降级映射：未命中 FEATURE_MAP 的特征按前缀归类为可读组（尤其 50 个语义嵌入维度）
+PREFIX_MAP = [
+    ("regulatory_inquiry_semantic", "问询函语义特征（文本嵌入维度）", "语义信号", "semantic"),
+    ("f2_", "财务异常特征", "财务异常", "financial"),
+    ("f6_", "问询历史特征", "历史问询", "financial"),
+    ("gov_", "公司治理特征", "公司治理", "financial"),
+    ("mkt_", "市场特征", "市场异动", "financial"),
+    ("sent_", "情绪特征", "市场情绪", "financial"),
+]
 
 
 class AttributorAgent(AgentBase):
@@ -162,6 +243,18 @@ class AttributorAgent(AgentBase):
         return factors
 
     # ============ Step 2: 特征 → 可读风险因素映射 ============
+    @staticmethod
+    def _resolve_feature(name):
+        """特征名 → {desc, label_ref, source}：先精确匹配 FEATURE_MAP，
+        未命中再按前缀归类（覆盖 50 个语义嵌入维度等无法逐条命名的情况），
+        最后才退回未知。"""
+        if name in FEATURE_MAP:
+            return FEATURE_MAP[name]
+        for prefix, desc, label, source in PREFIX_MAP:
+            if name.startswith(prefix):
+                return {"desc": f"{desc}（{name}）", "label_ref": label, "source": source}
+        return {"desc": name, "label_ref": "其他", "source": "unknown"}
+
     def map_factors(self, top_features):
         """黑盒特征名 → 统一 factor 结构 {feature, shap, description, label_ref, source}。
 
@@ -169,9 +262,7 @@ class AttributorAgent(AgentBase):
         """
         mapped = []
         for n, v in top_features:
-            m = FEATURE_MAP.get(
-                n, {"desc": n, "label_ref": "其他", "source": "unknown"}
-            )
+            m = self._resolve_feature(n)
             mapped.append({
                 "feature": n,
                 "shap": v,
@@ -205,8 +296,11 @@ class AttributorAgent(AgentBase):
         return pool
 
     def evidence_locate(self, factors, pool):
-        """按 label_ref / indicator 把因素绑定到证据池中的 evidence_id。"""
-        located = []
+        """按 label_ref / indicator 把因素绑定到证据池中的 evidence_id。
+
+        找不到证据的因素不剔除，而是标记 no_evidence=True（降级为"模型侧信号"，
+        保留完整 top-K 供前端展示），只有全部无证据时才由 execute 走降级路径。
+        """
         for f in factors:
             ev = None
             if f.get("source") == "financial":
@@ -215,8 +309,11 @@ class AttributorAgent(AgentBase):
                 ev = next((e for e in pool if e.get("label_ref") == f.get("label_ref")), None)
             if ev:
                 f["evidence_id"] = ev["evidence_id"]
-                located.append(f)      # 有证据的因素才进归因（无证据剔除）
-        return located
+                f["no_evidence"] = False
+            else:
+                f["evidence_id"] = None
+                f["no_evidence"] = True
+        return factors
 
     # ============ Step 4: 案例链接 ============
     def case_link(self, factors, cases):
@@ -232,6 +329,19 @@ class AttributorAgent(AgentBase):
         scored.sort(key=lambda x: (-x[1], -x[0].get("similarity", 0)))
         return [c for c, _ in scored[:3]]
 
+    @staticmethod
+    def _factor_tag(f):
+        """因素展示标签：来源（SHAP/规则降级）+ 证据状态（有证据/模型侧信号）。"""
+        if f.get("is_fallback"):
+            src = "规则降级"
+        elif f.get("shap") is not None:
+            src = f"SHAP={f.get('shap')}"
+        else:
+            src = "模型信号"
+        if f.get("evidence_id"):
+            return f"{src}，证据={f['evidence_id']}"
+        return f"{src}，模型侧信号（无直接证据）"
+
     # ============ Step 5: LLM 归因叙事（证据白名单防幻觉） ============
     def narrative_generate(self, company, ctx, factors, pool, links, reject_ids=None):
         """生成自然语言归因。只允许引用证据池中的 evidence_id，禁止编造。
@@ -240,8 +350,7 @@ class AttributorAgent(AgentBase):
         """
         factor_text = "\n".join(
             [f"- {f.get('description', f.get('feature'))}"
-             f"（{'规则降级' if f.get('is_fallback') else 'SHAP=' + str(f.get('shap'))}"
-             f"，证据={f.get('evidence_id')}）"
+             f"（{self._factor_tag(f)}）"
              for f in factors])
         pool_text = "\n".join(
             [f"[{e['evidence_id']}] {e['snippet']}" for e in pool if e.get("snippet")])
@@ -311,8 +420,9 @@ class AttributorAgent(AgentBase):
                 _cited, invalid = self.validate_narrative(narrative, pool)
                 hallucination_refs = sorted(invalid)
 
-        # Step 6: 聚合输出（evidence_citations 只保留被叙事实际引用的证据）
-        cited_ids = set(EVIDENCE_ID_RE.findall(narrative or "")) if narrative else set()
+        # Step 6: 聚合输出（evidence_citations = 诱因绑定的证据 + 叙事额外引用的证据，白名单过滤）
+        cited_ids = {f.get("evidence_id") for f in factors if f.get("evidence_id")}
+        cited_ids |= set(EVIDENCE_ID_RE.findall(narrative or ""))
         evidence_citations = [
             {k: e.get(k) for k in ("evidence_id", "source", "label_ref", "snippet") if e.get(k)}
             for e in pool
