@@ -66,7 +66,7 @@ def cases_dataframe(cases: list[dict]) -> pd.DataFrame:
 
 
 st.title("案例匹配 Agent")
-st.caption("基于 4785 份历史监管问询函案例库，对目标公司风险画像做 RRF 融合检索（语义向量 + 标签重合），带时间穿越控制与防泄漏过滤。")
+st.caption("基于 1483 份历史监管问询函案例库，对目标公司风险画像做 RRF 融合检索（语义向量 + 标签重合），带时间穿越控制与防泄漏过滤。")
 
 with st.sidebar:
     st.subheader("运行设置")
@@ -118,7 +118,7 @@ if result:
         st.metric("相似案例", len(cases), border=True)
         st.metric("公告风险要素", len(semantic.get("risk_factors", [])), border=True)
         st.metric("财务异常", len(financial.get("anomaly_list", [])), border=True)
-        st.metric("案例库规模", 4785, border=True)
+        st.metric("案例库规模", 1483, border=True)
 
     st.subheader("相似历史问询案例（Top 综合匹配）")
     if cases:

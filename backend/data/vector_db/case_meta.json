@@ -1,6 +1,6 @@
-{
+﻿{
   "embedding_backend": "bge",
   "embedding_dim": 1024,
   "embedding_model": "BAAI/bge-large-zh-v1.5",
-  "n_cases": 4785
+  "n_cases": 1483
 }
