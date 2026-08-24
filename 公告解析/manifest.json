@@ -1,0 +1,27 @@
+{
+  "package_name": "公告解析可移植运行包",
+  "generated_at": "2026-08-24",
+  "source_root": "Announcement_NLP_Project_Final",
+  "source_scope": "2020-2024 historical research artifacts",
+  "files": [
+    {
+      "path": "02_风险标签抽取模块/规则风险结果/announcement_rule_risks.jsonl.gz",
+      "bytes": 3444814,
+      "sha256": "5df3dc2c9479e0317dc70723051f7769b8b5751bbe6c39787f137198f9798ecc",
+      "source_name": "announcement_rule_risks.jsonl",
+      "source_bytes": 42298399,
+      "source_sha256": "04814517457f15ba7f9d3b4cf53236a8cef3e8830448f8b6cdbc20bc42b51d5d",
+      "transformation": "lossless gzip"
+    },
+    {
+      "path": "04_语义特征生成模块/核心Parquet/semantic_features.parquet",
+      "bytes": 32711460,
+      "sha256": "58f337fe4b368ca506019ae0d038cb0b766af33579a60a93a8031de8466dbdc7",
+      "source_name": "semantic_features.parquet",
+      "source_bytes": 32711460,
+      "source_sha256": "58f337fe4b368ca506019ae0d038cb0b766af33579a60a93a8031de8466dbdc7",
+      "transformation": "copied byte-for-byte"
+    }
+  ],
+  "usage_note": "Historical candidates only; current facts and 30/60/90-day counts still use CNInfo announcements."
+}

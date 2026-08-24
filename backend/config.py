@@ -27,18 +27,32 @@ OUTPUT_DIR = DATA_DIR / "output"        # context 快照 / 报告 / trace.log
 MODEL_DIR = BASE_DIR / "backend" / "models"
 
 # 比赛历史库（2020—2024 历史研究数据；只作历史证据，不替代当前公告事实）
+# 默认使用仓库内可移植数据包；需要完整外部交付物时可用环境变量覆盖。
 COMPETITION_DATA_ROOT = Path(os.getenv(
     "COMPETITION_DATA_ROOT",
-    r"D:\codex work\Announcement_NLP_Project_Final",
-))
+    str(BASE_DIR / "公告解析"),
+)).expanduser()
+
+_COMPETITION_RULE_RISKS_JSONL = (
+    COMPETITION_DATA_ROOT
+    / "02_风险标签抽取模块"
+    / "规则风险结果"
+    / "announcement_rule_risks.jsonl"
+)
+_COMPETITION_RULE_RISKS_GZIP = _COMPETITION_RULE_RISKS_JSONL.with_suffix(".jsonl.gz")
+_DEFAULT_COMPETITION_RULE_RISKS = (
+    _COMPETITION_RULE_RISKS_JSONL
+    if _COMPETITION_RULE_RISKS_JSONL.is_file()
+    else _COMPETITION_RULE_RISKS_GZIP
+)
 COMPETITION_RULE_RISKS = Path(os.getenv(
     "COMPETITION_RULE_RISKS",
-    str(COMPETITION_DATA_ROOT / "02_风险标签抽取模块" / "规则风险结果" / "announcement_rule_risks.jsonl"),
-))
+    str(_DEFAULT_COMPETITION_RULE_RISKS),
+)).expanduser()
 COMPETITION_SEMANTIC_FEATURES = Path(os.getenv(
     "COMPETITION_SEMANTIC_FEATURES",
     str(COMPETITION_DATA_ROOT / "04_语义特征生成模块" / "核心Parquet" / "semantic_features.parquet"),
-))
+)).expanduser()
 
 # ---------- LLM（backend/llm.py 使用） ----------
 LLM_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")

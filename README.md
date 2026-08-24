@@ -88,9 +88,18 @@ streamlit run 报告生成agent.py --server.port 8507
 
 公告研读查询顺序固定为：①检查比赛历史库；②访问巨潮获取近一年最新公告；
 ③分层展示。历史库命中时会显示 2020—2024 年公告、旧规则候选证据及历史
-BGE+PCA 特征锚点；这些历史候选不会混入当前 30/60/90 天 F1。其他机器可通过
-`.env` 的 `COMPETITION_DATA_ROOT` 指向 `Announcement_NLP_Project_Final`，未配置时
-系统会明确显示“历史库不可用”并继续执行巨潮在线查询。
+BGE+PCA 特征锚点；这些历史候选不会混入当前 30/60/90 天 F1。
+
+仓库已内置 `公告解析/` 可移植运行包（规则风险 JSONL 的无损 gzip 版 + 语义特征
+Parquet），其他人克隆分支后无需配置本机 D 盘路径即可使用。若要改用完整的
+`Announcement_NLP_Project_Final` 交付目录，可在 `.env` 中设置：
+
+```dotenv
+COMPETITION_DATA_ROOT=D:\your-path\Announcement_NLP_Project_Final
+```
+
+也可用 `COMPETITION_RULE_RISKS` 和 `COMPETITION_SEMANTIC_FEATURES` 分别覆盖单个
+文件。详见 `公告解析/README.md`。
 
 ## 数据产物（非官方源文件，已内置）
 
