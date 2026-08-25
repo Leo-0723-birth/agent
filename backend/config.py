@@ -74,6 +74,15 @@ ANNOUNCE_MAX_DOCUMENTS = int(os.getenv("ANNOUNCE_MAX_DOCUMENTS", "120"))
 ANNOUNCE_PDF_CACHE = Path(
     os.getenv("ANNOUNCE_PDF_CACHE", str(DATA_DIR / "cache" / "pdfs"))
 )
+ANNOUNCE_OFFLINE_SNAPSHOT_DIR = Path(
+    os.getenv(
+        "ANNOUNCE_OFFLINE_SNAPSHOT_DIR",
+        str(DATA_DIR / "offline_announcements"),
+    )
+)
+ANNOUNCE_OFFLINE_ENABLED = os.getenv("ANNOUNCE_OFFLINE_ENABLED", "true").lower() in {
+    "1", "true", "yes", "on"
+}
 ANNOUNCE_SOURCE = os.getenv("ANNOUNCE_SOURCE", "cninfo").lower()
 OCR_ENABLED = os.getenv("OCR_ENABLED", "true").lower() in {
     "1", "true", "yes", "on"

@@ -29,6 +29,8 @@ from urllib3.util.retry import Retry
 
 from ..config import (
     ANNOUNCE_MAX_DOCUMENTS,
+    ANNOUNCE_OFFLINE_ENABLED,
+    ANNOUNCE_OFFLINE_SNAPSHOT_DIR,
     ANNOUNCE_PDF_CACHE,
     OCR_DPI,
     OCR_ENABLED,
@@ -37,6 +39,7 @@ from ..config import (
     OCR_MIN_PAGE_CHARS,
 )
 from .announcement_context_filter import apply_title_policy, is_analysis_eligible
+from .offline_announcement_snapshot import OfflineAnnouncementSnapshotStore
 from .ocr_extract import OCR_PIPELINE_VERSION, RapidOCRPageEngine, extract_pdf_text
 
 
@@ -119,6 +122,8 @@ class CninfoAnnouncementSource:
         ocr_enabled=OCR_ENABLED,
         ocr_engine=None,
         progress_callback=None,
+        offline_snapshot_dir=ANNOUNCE_OFFLINE_SNAPSHOT_DIR,
+        prefer_offline=ANNOUNCE_OFFLINE_ENABLED,
     ):
         self.session = session or _build_http_session()
         self.cache_dir = Path(cache_dir or ANNOUNCE_PDF_CACHE)
@@ -126,6 +131,12 @@ class CninfoAnnouncementSource:
         self.ocr_enabled = bool(ocr_enabled)
         self.ocr_engine = ocr_engine or RapidOCRPageEngine()
         self.progress_callback = progress_callback
+        self.offline_store = (
+            OfflineAnnouncementSnapshotStore(offline_snapshot_dir)
+            if prefer_offline
+            else None
+        )
+        self.last_snapshot_info = {}
 
     def _emit_progress(self, event, **payload):
         callback = getattr(self, "progress_callback", None)
@@ -375,6 +386,24 @@ class CninfoAnnouncementSource:
 
     def search(self, user_input, days=365, as_of=None, pdf_budget_seconds=180):
         cutoff = str(as_of or date.today().isoformat())[:10]
+        offline_store = getattr(self, "offline_store", None)
+        if offline_store is not None and bool(getattr(self, "ocr_enabled", True)):
+            self._emit_progress("offline_snapshot_started", query=str(user_input), as_of=cutoff)
+            cached = offline_store.lookup(user_input, days=days, as_of=cutoff)
+            self.last_snapshot_info = cached
+            if cached.get("status") == "hit":
+                self._emit_progress(
+                    "offline_snapshot_completed",
+                    company_name=cached["company"].get("company_name", ""),
+                    secucode=cached["company"].get("secucode", ""),
+                    announcement_count=len(cached.get("announcements") or []),
+                    snapshot_as_of=cached.get("snapshot_as_of", ""),
+                )
+                return cached["company"], cached["announcements"]
+            self._emit_progress(
+                "offline_snapshot_missed",
+                reason=cached.get("reason", "snapshot_miss"),
+            )
         self._emit_progress("online_company_started", query=str(user_input))
         company = self.resolve_company(user_input)
         self._emit_progress(
