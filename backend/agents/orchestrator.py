@@ -90,10 +90,14 @@ class SweepingOrchestrator(AgentBase):
         self._run_report(company, ctx)         # Phase 6
         return ctx
 
-    def sweep_one(self, company, window=60, as_of=None):
-        """单公司扫雷：新建 Context 并跑完整流水线。返回 ctx。"""
+    def sweep_one(self, company, window=60, as_of=None, use_llm_summary=False):
+        """单公司扫雷：新建 Context 并跑完整流水线。返回 ctx。
+
+        use_llm_summary：报告执行摘要是否用 DeepSeek 生成（默认关，演示时勾选）。
+        """
         ctx = Context(company=company, window=window,
                       as_of=as_of or str(date.today()))
+        ctx.use_llm_summary = bool(use_llm_summary)
         return self.execute(company, ctx)
 
     def sweep_batch(self, companies, window=60):

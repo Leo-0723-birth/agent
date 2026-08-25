@@ -59,6 +59,7 @@ class Context:
     name: str = ""                   # 公司名称
     window: int = 60                 # 预测窗口（天）
     as_of: str = ""                  # 预测时点 T（Y-m-d，特征锚定时刻）
+    use_llm_summary: bool = False    # 报告执行摘要是否用 LLM（deepseek-v4-flash）生成
 
     semantic: Semantic = field(default_factory=Semantic)    # 公告研读
     financial: Financial = field(default_factory=Financial)  # 财务检测

@@ -82,9 +82,9 @@ class AnnouncementReaderAgent(AgentBase):
         self.max_text_chars = int(max_text_chars)
         self.gate_threshold = float(gate_threshold)
         self.rule_extractor = rule_extractor or RuleRiskExtractor()
+        self.progress_callback = progress_callback   # 需在 _default_source() 之前赋值
         self.source = source or self._default_source()
         self.llm_callable = llm_callable or chat_json
-        self.progress_callback = progress_callback
         self.llm_configured = bool(llm_callable is not None or os.getenv("DEEPSEEK_API_KEY"))
         self.finbert = None
         self.finbert_error = ""
