@@ -5,7 +5,7 @@ Skill: feature_composer —— 实时特征组装器（供 PredictorAgent 实时
 ================================================================
 把流水线实时产出的特征（公告研读 F1 标量 + 财务异常 F2-F6）按
 models_manifest.json 的特征清单组装成模型输入向量；清单中实时拿不到的列
-（如离线预计算的 F1 语义特征 regulatory_inquiry_semantic_*、governance_year）
+（如离线预计算的 F1 语义特征 announcement_semantic_*、governance_year）
 用训练集(Train split)中位数填充——离线数据只做"初始建模/缺失兜底"，预测
 主体由实时数据驱动。
 

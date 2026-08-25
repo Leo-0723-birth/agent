@@ -4,21 +4,22 @@
 数据处理：构建建模数据集（F1 前50语义 + F2-F6 + 30/60/90d 标签）
 =================================================================
 流程：
-  1. 加载 F1 语义特征 parquet（300 维 PCA 主成分）
-  2. 按"训练集 Spearman |corr| 与 target_60d"筛选 Top-50（见 03_F1特征选取）
+  1. 加载 F1 语义特征 parquet（300 维 PCA 主成分，announcement_semantic_*）
+  2. 按"训练集 Spearman |corr| 与 target_60d"筛选 Top-50
   3. 加载 F2/F3/F4/F5/F6（键：company_code + report_period）
   4. 由 inquiry_events.csv（kind=='letter'）构建 30/60/90 天未来问询标签
   5. 合并保存 processed_dataset.csv + F1_top50_features.csv
 
-输出：05_模型输出/processed_dataset.csv
+输出：backend/data/modeling/processed_dataset.csv
+说明：与上游版本相比仅更换 F1 数据源（问询函语义 → 官方公告语义，
+      20% 年报解析；全量数据替换 raw/F1_announcement_semantic_features.parquet 后重跑即可）。
+      标签口径、F2 骨架、合并逻辑保持不变。
 """
-import json
-import re
-import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.stats import spearmanr
 
 # 训练原料从项目内读取（backend/data/modeling/raw/），输出到建模数据根目录
 _MODELING = Path(__file__).resolve().parent.parent.parent / "backend" / "data" / "modeling"
@@ -26,42 +27,73 @@ RAW = _MODELING / "raw"
 PROC = _MODELING
 SEL = RAW / "f1_selection"
 PROC.mkdir(parents=True, exist_ok=True)
+SEL.mkdir(parents=True, exist_ok=True)
 
 WINDOWS = [30, 60, 90]
 N_KEEP = 50
 
 # ============================================================
-# 1) F1 语义特征 Top-50 选取（依据 semantic_feature_descriptions 的 Spearman 排序）
+# 1) F1 语义特征 Top-50 选取（训练集 Spearman |corr| vs target_60d）
+#    数据源：官方公告语义特征（announcement_semantic_*，20% 年报解析）
 # ============================================================
-def select_f1_top50(descriptions_md):
-    """从描述文档解析 Top-50 特征名（按文档顺序 = Spearman |corr| 降序）。"""
-    names = []
-    for line in descriptions_md.splitlines():
-        m = re.match(r"\|\s*\d+\s*\|\s*(semantic_\d{3})\s*\|", line)
-        if m:
-            names.append(m.group(1))
-    return names[:N_KEEP]
+f1 = pd.read_parquet(RAW / "F1_announcement_semantic_features.parquet")
+f1 = f1.rename(columns={"stock_code": "company_code", "T_date": "report_period"})
+f1["company_code"] = f1["company_code"].astype(str)
+f1["report_period"] = pd.to_datetime(f1["report_period"], errors="coerce").dt.strftime("%Y%m%d")
+semantic_cols = [c for c in f1.columns if c.startswith("announcement_semantic_")]
+print(f"F1 公告语义特征: {len(semantic_cols)} 维（announcement_semantic_*）")
+
+# 选取用骨架：公司级 split（F2）+ 每个 (公司, 报告期) 的 target_60d
+_f2_sel = pd.read_csv(RAW / "F2_financial_anomaly.csv", encoding="utf-8-sig")
+_f2_sel["company_code"] = _f2_sel["company_code"].astype(str)
+_f2_sel["report_period"] = _f2_sel["report_period"].astype(str).str.replace(".0", "", regex=False)
+_events = pd.read_csv(RAW / "inquiry_events.csv", encoding="utf-8-sig")
+_events = _events[_events["kind"] == "letter"].copy()
+_events["secucode"] = _events["secucode"].astype(str)
+_events["date"] = pd.to_datetime(_events["date"], errors="coerce")
+_emap = {c: sorted(g["date"].dropna().tolist()) for c, g in _events.groupby("secucode")}
 
 
-desc_md = (SEL / "semantic_feature_descriptions_原版.md").read_text(encoding="utf-8")
-top50_short = select_f1_top50(desc_md)
-if len(top50_short) < N_KEEP:
-    print(f"[警告] 描述文档仅解析到 {len(top50_short)} 个特征，不足 50；回退用 Spearman 计算补充")
-top50 = [f"regulatory_inquiry_{s}" for s in top50_short]
-print(f"F1 Top-{len(top50)} 特征已确定（示例: {top50[:3]} ... {top50[-2:]}）")
+def _build_target(code, t, days):
+    for d in _emap.get(code, []):
+        if t < d <= t + pd.Timedelta(days=days):
+            return 1
+    return 0
+
+
+_sel = _f2_sel[["company_code", "report_period", "split"]].copy()
+_t0 = pd.to_datetime(_sel["report_period"], format="%Y%m%d", errors="coerce")
+_sel["target_60d"] = [_build_target(c, t, 60) for c, t in zip(_sel["company_code"], _t0)]
+f1_sel = f1[["company_code", "report_period"] + semantic_cols].merge(
+    _sel[["company_code", "report_period", "split", "target_60d"]],
+    on=["company_code", "report_period"], how="inner")
+_tr = (f1_sel["split"] == "Train") & (f1_sel["target_60d"] >= 0)
+_y = f1_sel.loc[_tr, "target_60d"]
+
+corr_scores = {}
+for c in semantic_cols:
+    col = f1_sel.loc[_tr, c]
+    if col.nunique() > 1:
+        try:
+            r, _ = spearmanr(col, _y)
+            corr_scores[c] = abs(r) if not np.isnan(r) else 0.0
+        except Exception:
+            corr_scores[c] = 0.0
+    else:
+        corr_scores[c] = 0.0
+
+top50 = [c for c, _ in sorted(corr_scores.items(), key=lambda x: x[1], reverse=True)[:N_KEEP]]
+print(f"F1 Top-{len(top50)} 特征已确定（|corr| 区间 "
+      f"{corr_scores[top50[0]]:.4f} ~ {corr_scores[top50[-1]]:.4f}）")
 pd.DataFrame({"rank": range(1, len(top50) + 1), "feature": top50}).to_csv(
     SEL / "F1_top50_features.csv", index=False, encoding="utf-8-sig")
 
 # ============================================================
 # 2) 加载 F1 并归一化键
 # ============================================================
-f1 = pd.read_parquet(RAW / "F1_semantic_features.parquet")
-f1 = f1.rename(columns={"stock_code": "company_code", "T_date": "report_period"})
-f1["company_code"] = f1["company_code"].astype(str)
-f1["report_period"] = pd.to_datetime(f1["report_period"], errors="coerce").dt.strftime("%Y%m%d")
 keep_f1 = ["company_code", "report_period"] + [c for c in top50 if c in f1.columns]
 f1 = f1[keep_f1]
-print(f"F1: {f1.shape}（Top-50 语义特征）")
+print(f"F1: {f1.shape}（Top-50 公告语义特征）")
 
 # ============================================================
 # 3) 加载 F2-F6
@@ -123,9 +155,18 @@ def build_target(row_date, days):
             return 1
     return 0
 
+
+def count_future(row_date, days):
+    """未来 days 天窗口内问询函数量（sample_weight 用，非模型特征）。"""
+    code = row_date[0]
+    t = row_date[1]
+    return sum(1 for d in event_map.get(code, []) if t < d <= t + pd.Timedelta(days=days))
+
 t0 = pd.to_datetime(df["report_period"], format="%Y%m%d", errors="coerce")
 for w in WINDOWS:
     df[f"target_{w}d"] = [build_target((c, t), w) for c, t in zip(df["company_code"], t0)]
+# 60 天窗口问询函数量（仅训练加权用；train_models.py 特征筛选已排除 n_inq_* 前缀防泄漏）
+df["n_inq_60d"] = [count_future((c, t), 60) for c, t in zip(df["company_code"], t0)]
 
 # ============================================================
 # 6) 保存
