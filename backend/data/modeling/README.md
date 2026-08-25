@@ -33,7 +33,7 @@ backend/data/modeling/
   源头数据(队员预处理后数据/官方数据)
     → raw/（导入，含 F1-F6 表）
     → preprocessed/（F3-F6 已就位；F2 表待导入）→ 合并 → processed_dataset.csv
-    → backend/scripts/build_modeling_dataset.py → train_models.py
+    → backend/scripts/build_modeling_dataset.py（F1 自动 Spearman 选 Top-50）→ train_models.py（仓库内自包含：模型/manifest/fill 一并产出）
     → backend/models/predictor/（9 模型 + models_manifest.json + feature_importance）
     → output/（SHAP/预测/风险排序，评估用）
 
@@ -52,6 +52,7 @@ backend/data/modeling/
 | 目录/文件 | 职责 | 何时更新 | 谁负责 |
 |---|---|---|---|
 | `raw/` | 源头数据（训练输入） | 队友交付新表时导入 | 队长/队友 |
+| `raw/F1_announcement_semantic_features.parquet` | **F1 公告语义特征（官方 20% 年报解析，300 维 → 自动选 Top-50）**；全量数据到货后替换此文件重跑 `build_modeling_dataset.py` 即可 | 官方全量数据提供后 | 队长 |
 | `preprocessed/` | 离线特征表 F3-F6（训练同源） | 重新批处理特征时 | 队友（Wind/CNRDS 源） |
 | `processed_dataset.csv` | 训练/验证/测试数据集 | 重新建模时由脚本重建 | 队长 |
 | `fill/` | 预测兜底字典（Train 中位数） | 模型重训后重建 | 队长 |
