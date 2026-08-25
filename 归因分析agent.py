@@ -68,6 +68,7 @@ def factors_dataframe(factors: list[dict]) -> pd.DataFrame:
                 "SHAP 贡献": f.get("shap"),
                 "说明": f.get("desc") or f.get("description", ""),
                 "标签引用": f.get("label_ref", ""),
+                "风险主题": f"{f.get('taxonomy_l2', '')} {f.get('theme_name', '')}".strip(),
                 "来源": f.get("source", ""),
                 "降级归因": bool(f.get("is_fallback")),
                 "证据 ID": f.get("evidence_id") or (

@@ -32,10 +32,20 @@ TODO（后续优化）：
     - 上游依赖：PredictorAgent 需产出 ctx.prediction.shap_features（当前为占位
       NotImplementedError，归因只能走降级路径）
 """
+import csv
 import re
+from pathlib import Path
 
 from ..llm import chat
 from .base import AgentBase
+
+# 特征 → 官方 taxonomy（案例库风险因素体系）映射表（feature_taxonomy_map.csv）
+_TAXO_MAP = {}
+_taxo_path = Path(__file__).resolve().parent.parent / "data" / "labels" / "feature_taxonomy_map.csv"
+if _taxo_path.exists():
+    with open(_taxo_path, encoding="utf-8-sig") as _f:
+        for _row in csv.DictReader(_f):
+            _TAXO_MAP[_row["feature"]] = _row
 
 # 标签 → 关键词：官方标签体系（任务1交付包）；缺失时退回 case_retriever 内置版
 try:
@@ -175,7 +185,8 @@ FEATURE_MAP = {
 
 # 前缀降级映射：未命中 FEATURE_MAP 的特征按前缀归类为可读组（尤其 50 个语义嵌入维度）
 PREFIX_MAP = [
-    ("regulatory_inquiry_semantic", "问询函语义特征（文本嵌入维度）", "语义信号", "semantic"),
+    ("announcement_semantic", "公告语义特征（文本嵌入维度）", "语义信号", "semantic"),
+    ("f6_inquiry_semantic", "问询函语义特征（文本嵌入维度）", "语义信号", "semantic"),
     ("f2_", "财务异常特征", "财务异常", "financial"),
     ("f6_", "问询历史特征", "历史问询", "financial"),
     ("gov_", "公司治理特征", "公司治理", "financial"),
@@ -256,19 +267,33 @@ class AttributorAgent(AgentBase):
         return {"desc": name, "label_ref": "其他", "source": "unknown"}
 
     def map_factors(self, top_features):
-        """黑盒特征名 → 统一 factor 结构 {feature, shap, description, label_ref, source}。
+        """黑盒特征名 → 统一 factor 结构 {feature, shap, description, label_ref, source, taxonomy_l1/l2}。
 
-        FEATURE_MAP 中的 "desc" 统一归一为 "description"，与降级路径字段对齐。
+        FEATURE_MAP 中的 "desc" 统一归一为 "description"，与降级路径字段对齐；
+        taxonomy_l1/l2 来自 feature_taxonomy_map.csv（与案例库风险因素体系对齐），
+        未命中则取 label_ref 前缀推断，仍无则 HIST（历史问询）。
         """
         mapped = []
         for n, v in top_features:
             m = self._resolve_feature(n)
+            t = _TAXO_MAP.get(n)
+            if t:
+                taxo_l1, taxo_l2, theme = t.get("taxonomy_l1", "HIST"), t.get("taxonomy_l2", "HIST"), t.get("theme_name", "")
+            elif n.startswith(("f6_", "f6_inquiry_semantic")):
+                taxo_l1, taxo_l2, theme = "HIST", "HIST", "历史问询"
+            elif n.startswith("announcement_semantic"):
+                taxo_l1, taxo_l2, theme = "SEM", "SEM", "公告语义信号"
+            else:
+                taxo_l1, taxo_l2, theme = "HIST", "HIST", "其他"
             mapped.append({
                 "feature": n,
                 "shap": v,
                 "description": m.get("desc", n),
                 "label_ref": m.get("label_ref", "其他"),
                 "source": m.get("source", "unknown"),
+                "taxonomy_l1": taxo_l1,
+                "taxonomy_l2": taxo_l2,
+                "theme_name": theme,
                 "evidence_id": None,
                 "is_fallback": False,
             })

@@ -22,7 +22,8 @@ import numpy as np
 import pandas as pd
 
 from ..config import (MODELING_DATASET, PREDICTOR_HORIZONS, PREDICTOR_MODEL_DIR,
-                      PREDICTOR_TOP_SHAP, RISK_THRESHOLDS)
+                      PREDICTOR_SURVIVAL_BASELINE, PREDICTOR_SURVIVAL_FEATURES,
+                      PREDICTOR_SURVIVAL_XGB, PREDICTOR_TOP_SHAP, RISK_THRESHOLDS)
 from .base import AgentBase
 
 
@@ -37,6 +38,7 @@ class PredictorAgent(AgentBase):
         self._manifest = None
         self._df = None
         self._models = {}   # horizon -> {"rf","lgb","xgb"}
+        self._survival = None   # 可选：XGBoost-Cox 生存模型 {"booster","baseline","features"}
 
     # ================= 懒加载 =================
     def _load_manifest(self):
@@ -55,6 +57,60 @@ class PredictorAgent(AgentBase):
             else:
                 self._df = pd.DataFrame()
         return self._df
+
+    # ================= XGBoost-Cox 生存模型接口（可选，预留） =================
+    def _load_survival(self):
+        """加载 XGBoost-Cox 生存模型（单模型产出 30/60/90d 概率）。
+
+        需要三个文件（训练后放置，见 config.PREDICTOR_SURVIVAL_*）：
+          - model_survival_xgb.json      Booster（objective=survival:cox）
+          - survival_baseline_hazard.json Breslow 累积基线风险 {"30": H0(30), "60": H0(60), "90": H0(90)}
+          - survival_features.json       训练特征清单（与 manifest 对齐）
+        缺失任一 → 返回 None，调用方回退三模型集成（现有路径）。
+        """
+        if self._survival is not None:
+            return self._survival or None
+        if not (PREDICTOR_SURVIVAL_XGB.exists() and PREDICTOR_SURVIVAL_BASELINE.exists()
+                and PREDICTOR_SURVIVAL_FEATURES.exists()):
+            self._survival = {}
+            return None
+        try:
+            import json
+            import xgboost as xgb
+            booster = xgb.Booster(model_file=str(PREDICTOR_SURVIVAL_XGB))
+            baseline = json.loads(PREDICTOR_SURVIVAL_BASELINE.read_text(encoding="utf-8"))
+            feats = json.loads(PREDICTOR_SURVIVAL_FEATURES.read_text(encoding="utf-8"))
+            self._survival = {"booster": booster, "baseline": baseline, "features": feats}
+            return self._survival
+        except Exception:
+            self._survival = {}
+            return None
+
+    def _infer_survival(self, X, feats, horizon):
+        """生存模型推理：P(未来 w 天内被问询) = 1 - S(w) = 1 - exp(-H0(w)·exp(risk))。
+
+        返回 (p, conf, shap_features) 与 _infer 同构。X 列顺序须与 survival_features.json 一致。
+        """
+        surv = self._load_survival()
+        if surv is None:
+            return None, None, []
+        w = horizon.replace("d", "")
+        h0 = surv["baseline"].get(w)
+        if h0 is None:
+            return None, None, []
+        try:
+            import xgboost as xgb
+            dm = xgb.DMatrix(X, feature_names=feats)
+            risk = float(surv["booster"].predict(dm)[0])       # log 风险比
+            p = 1.0 - float(__import__("math").exp(-h0 * __import__("math").exp(risk)))
+            p = max(0.0, min(1.0, p))
+            contrib = surv["booster"].predict(dm, pred_contribs=True)[0][:-1]
+            order = np.argsort(-np.abs(contrib))[:self.top_shap]
+            shap_features = [(feats[i], round(float(contrib[i]), 5))
+                             for i in order if abs(contrib[i]) > 1e-6]
+            return p, round(max(p, 1.0 - p), 4), shap_features
+        except Exception:
+            return None, None, []
 
     def _load_models(self, horizon):
         if horizon in self._models:
@@ -175,12 +231,65 @@ class PredictorAgent(AgentBase):
         ctx.company = code
 
         manifest = self._load_manifest()
+        # 可选：XGBoost-Cox 生存模型已部署 → 单模型产出 30/60/90d（输出契约不变）
+        if self._load_survival():
+            return self._execute_survival(ctx, code, as_of)
         # 有财务异常实时特征 → 走实时推理（F1 标量 + F2-F6 实时值，缺失列用训练集中位数兜底）；
         # 否则 → 兜底查表（离线建模数据集）
         realtime_ok = bool(getattr(getattr(ctx, "financial", None), "features", None))
         if realtime_ok:
             return self._execute_realtime(ctx, manifest)
         return self._execute_lookup(ctx, manifest, code, as_of)
+
+    def _execute_survival(self, ctx, code, as_of):
+        """生存模型主逻辑：单模型按生存函数推 30/60/90d 概率，输出契约与集成路径一致。
+
+        特征来源：有实时财务特征 → feature_composer 组装（缺失列用 fill 兜底）；
+        否则 → 离线查表 + fill 兜底。
+        """
+        from ..skills.feature_composer import compose_realtime_features, load_fill_dict
+        surv = self._load_survival()
+        feats = list(surv["features"])
+        fill = load_fill_dict("60")
+        realtime_ok = bool(getattr(getattr(ctx, "financial", None), "features", None))
+        if realtime_ok:
+            vec = compose_realtime_features(ctx, feats, fill)
+            missing = [f for f in feats if vec.get(f) is None]
+        else:
+            row = self._lookup(code, as_of)
+            if row is None:
+                ctx.prediction = {"probability_30d": None, "probability_60d": None,
+                                  "probability_90d": None, "risk_level": "未预测",
+                                  "confidence": None, "shap_features": [],
+                                  "reason": "未找到该股票特征（不在建模数据集内）"}
+                return ctx
+            vec = {f: row[f] for f in feats if f in row.index}
+            missing = [f for f in feats if f not in vec]
+        for f in missing:
+            vec[f] = fill.get(f, 0.0)
+        X = np.asarray([vec[f] for f in feats], dtype=np.float32).reshape(1, -1)
+
+        pred = {"data_source": "survival_cox"}
+        p60, conf, shap = None, None, []
+        for h in self.horizons:
+            p, c, s = self._infer_survival(X, feats, h)
+            pred[f"probability_{h}"] = p
+            if h == "60d":
+                p60, conf, shap = p, c, s
+        if p60 is None:
+            for h in self.horizons:
+                if pred.get(f"probability_{h}") is not None:
+                    p60 = pred[f"probability_{h}"]
+                    conf = round(max(p60, 1 - p60), 4)
+                    break
+        pred["confidence"] = conf
+        pred["risk_level"] = "未预测" if p60 is None else (
+            "高" if p60 >= RISK_THRESHOLDS["high"] else
+            "中" if p60 >= RISK_THRESHOLDS["medium"] else "低")
+        pred["shap_features"] = shap
+        pred["feature_anchor"] = str(getattr(ctx, "as_of", "") or "")[:10]
+        ctx.prediction = pred
+        return ctx
 
     def _execute_realtime(self, ctx, manifest):
         """实时推理主逻辑：以公告研读 F1 + 财务异常 F2-F6 为数据源，概率由实时数据驱动。"""

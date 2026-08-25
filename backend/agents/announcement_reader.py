@@ -15,6 +15,7 @@ from ..config import (
     ANNOUNCE_WINDOW_DAYS,
     EMBEDDING_BACKEND,
     EMBEDDING_MODEL,
+    F1_DECAY_HALF_LIFE_DAYS,
     FINBERT_GATE,
     FINBERT_ENABLED,
     FINBERT_GATE_ENABLED,
@@ -54,6 +55,16 @@ def _risk_id(event_key, method, evidence_start):
 def _within(value, cutoff, days):
     delta = (cutoff - date.fromisoformat(str(value)[:10])).days
     return 0 <= delta < days
+
+
+def _age_days(value, cutoff):
+    """事件距 as_of 的天数（越小越新）。"""
+    return (cutoff - date.fromisoformat(str(value)[:10])).days
+
+
+def _decay_weight(age_days, half_life=F1_DECAY_HALF_LIFE_DAYS):
+    """时间衰减权重：age=0 → 1.0；age=half_life → 0.5；指数衰减 2^(-age/half_life)。"""
+    return 2.0 ** (-max(age_days, 0) / max(half_life, 1))
 
 
 class AnnouncementReaderAgent(AgentBase):
@@ -370,6 +381,41 @@ class AnnouncementReaderAgent(AgentBase):
         ) if factors else 1.0
         for label, count in Counter(item["taxonomy_l2"] for item in recent).items():
             scalar[f"label_{label}_count_90d"] = count
+
+        # ---- 近一年时间衰减特征（Q2：时间权重） ----
+        year_factors = [item for item in valid
+                        if _within(item["announcement_date"], cutoff, ANNOUNCE_WINDOW_DAYS)]
+        if year_factors:
+            # 加权事件计数（指数衰减，半衰期 F1_DECAY_HALF_LIFE_DAYS）
+            scalar["weighted_risk_event_count_365d"] = round(
+                sum(_decay_weight(_age_days(f["announcement_date"], cutoff))
+                    for f in year_factors), 4)
+            scalar["weighted_high_risk_event_count_365d"] = round(
+                sum(_decay_weight(_age_days(f["announcement_date"], cutoff))
+                    for f in year_factors if f["severity"] >= 4), 4)
+            # 加权 L2 计数
+            _l2w = Counter()
+            for f in year_factors:
+                _l2w[f["taxonomy_l2"]] += _decay_weight(
+                    _age_days(f["announcement_date"], cutoff))
+            for label, wcount in _l2w.items():
+                scalar[f"weighted_label_{label}_count_365d"] = round(wcount, 4)
+            # 分桶离散计数（近一年 3 桶）
+            for bname, (lo, hi) in {
+                "0_90": (0, 90), "91_180": (91, 180), "181_365": (181, ANNOUNCE_WINDOW_DAYS)
+            }.items():
+                scalar[f"risk_event_count_{bname}d"] = sum(
+                    1 for f in year_factors
+                    if lo <= _age_days(f["announcement_date"], cutoff) < hi)
+            # recency
+            scalar["days_since_last_risk_event_365d"] = min(
+                _age_days(f["announcement_date"], cutoff) for f in year_factors)
+        else:
+            for k in ("weighted_risk_event_count_365d",
+                      "weighted_high_risk_event_count_365d",
+                      "risk_event_count_0_90d", "risk_event_count_91_180d",
+                      "risk_event_count_181_365d", "days_since_last_risk_event_365d"):
+                scalar[k] = 0.0
         return {
             "feature_version": "f1_announcement_evidence_v2",
             "as_of": cutoff.isoformat(),

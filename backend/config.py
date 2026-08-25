@@ -70,6 +70,7 @@ RISK_THRESHOLDS = {"high": 0.6, "medium": 0.3}   # 风险等级阈值
 
 # ---------- 公告研读 ----------
 ANNOUNCE_WINDOW_DAYS = 365    # 公告检索窗口（天）
+F1_DECAY_HALF_LIFE_DAYS = int(os.getenv("F1_DECAY_HALF_LIFE_DAYS", "180"))  # F1 时间衰减半衰期（天）：age=180d → 权重0.5
 ANNOUNCE_MAX_DOCUMENTS = int(os.getenv("ANNOUNCE_MAX_DOCUMENTS", "120"))
 ANNOUNCE_PDF_CACHE = Path(
     os.getenv("ANNOUNCE_PDF_CACHE", str(DATA_DIR / "cache" / "pdfs"))
@@ -136,6 +137,15 @@ PREDICTOR_MODEL_DIR = Path(BASE_DIR) / "backend" / "models" / "predictor"   # �
 MODELING_DATASET = Path(BASE_DIR) / "backend" / "data" / "modeling" / "processed_dataset.csv"  # 查表推理用
 PREDICTOR_HORIZONS = ("30d", "60d", "90d")   # 推理输出窗口
 PREDICTOR_TOP_SHAP = 8                        # SHAP 输出 Top-K 特征
+
+# ---------- XGBoost-Cox 生存模型接口（可选，预留） ----------
+# 训练后放置：model_survival_xgb.json（survival:cox Booster）
+#            survival_baseline_hazard.json（Breslow 累积基线风险 H0(t)）
+#            survival_features.json（训练特征清单）
+# 缺失时 PredictorAgent 自动回退三模型集成（现有路径不变）
+PREDICTOR_SURVIVAL_XGB = Path(BASE_DIR) / "backend" / "models" / "predictor" / "model_survival_xgb.json"
+PREDICTOR_SURVIVAL_BASELINE = Path(BASE_DIR) / "backend" / "models" / "predictor" / "survival_baseline_hazard.json"
+PREDICTOR_SURVIVAL_FEATURES = Path(BASE_DIR) / "backend" / "models" / "predictor" / "survival_features.json"
 
 # ---------- 财务异常 F4/F5/F6 离线特征表（feature_loader / crawl_* 使用） ----------
 PREPROCESSED_DIR = Path(BASE_DIR) / "backend" / "data" / "modeling" / "preprocessed"
