@@ -279,8 +279,9 @@ def render_markdown(ctx, executive_summary=""):
     add(f"## 六、相似历史问询案例（Top {len(ctx.cases)}，含时间穿越控制）")
     add("")
     for c in ctx.cases:
+        score = c.get("rrf_score") or c.get("similarity")
         add(f"- **{c.get('company')}**｜{c.get('inquiry_type')}｜{c.get('publish_date')}"
-            f"｜相似度 {c.get('similarity')}")
+            f"｜RRF融合得分 {score}")
         topics = c.get("topics") or []
         if topics:
             add(f"  - 关注点：{'；'.join(str(t)[:60] for t in topics[:3])}")

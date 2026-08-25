@@ -168,8 +168,9 @@ for code in codes:
     # 相似案例
     with st.expander(f"🧩 相似历史问询案例（Top {len(ctx.cases)}）"):
         for c in ctx.cases:
+            score = c.get("rrf_score") or c.get("similarity")
             st.markdown(f"- **{c.get('company')}**｜{c.get('inquiry_type')}｜{c.get('publish_date')}"
-                        f"｜相似度 {c.get('similarity')}")
+                        f"｜RRF融合得分 {score}")
             if c.get("topics"):
                 st.markdown(f"  - 关注点：{'；'.join(str(t)[:50] for t in c['topics'][:3])}")
 
