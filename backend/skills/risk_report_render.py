@@ -280,8 +280,10 @@ def render_markdown(ctx, executive_summary=""):
     add("")
     for c in ctx.cases:
         score = c.get("rrf_score") or c.get("similarity")
+        cosine = c.get("cosine_similarity")
+        cos_txt = f"｜余弦相似度 {cosine:.4f}" if cosine is not None else ""
         add(f"- **{c.get('company')}**｜{c.get('inquiry_type')}｜{c.get('publish_date')}"
-            f"｜RRF融合得分 {score}")
+            f"｜RRF融合得分 {score}{cos_txt}")
         topics = c.get("topics") or []
         if topics:
             add(f"  - 关注点：{'；'.join(str(t)[:60] for t in topics[:3])}")

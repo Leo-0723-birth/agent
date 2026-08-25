@@ -60,7 +60,8 @@ def cases_dataframe(cases: list[dict]) -> pd.DataFrame:
                 "公司": c.get("company", ""),
                 "问询类型": c.get("inquiry_type", ""),
                 "发布日期": c.get("publish_date", ""),
-                "综合匹配度": c.get("rrf_score"),
+                "RRF融合得分": c.get("rrf_score"),
+                "余弦相似度": c.get("cosine_similarity"),
                 "关注点": "；".join(str(t)[:40] for t in (c.get("topics") or [])[:3]),
             }
         )
@@ -242,6 +243,7 @@ if result:
             ):
 
                 score = c.get("rrf_score", 0)
+                cosine = c.get("cosine_similarity")
 
                 col1, col2 = st.columns([1.5, 3])
 
@@ -261,6 +263,10 @@ if result:
                         </div>
                         """,
                         unsafe_allow_html=True
+                    )
+
+                    st.caption(
+                        f"余弦相似度：{cosine:.4f}" if cosine is not None else "余弦相似度：—"
                     )
 
                     st.caption(

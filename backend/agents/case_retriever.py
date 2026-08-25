@@ -56,6 +56,7 @@ class CaseRetrieverAgent(AgentBase):
         super().__init__()
         self.top_k = top_k
         self.rrf_k = rrf_k
+        self._cosine_scores = {}   # 语义通道余弦相似度（idx -> 0~1）
         self._db, self._vecs = None, None
 
     # ================= 数据加载 =================
@@ -248,14 +249,17 @@ class CaseRetrieverAgent(AgentBase):
 
     # ================= 通道1：语义向量 =================
     def _semantic_rank(self, query_vec, entries, vectors, eligible_indices):
-        """余弦相似度排序，返回 {case_index: rank}。"""
+        """余弦相似度排序，返回 {case_index: rank}；同时记录余弦相似度（0-1 直观值）。"""
         scores = vector_store.cosine_scores(query_vec, vectors)
 
         order = sorted(
             eligible_indices,
             key=lambda i: -float(scores[i]),
         )
-        return {i: r + 1 for r, i in enumerate(order)}
+        ranks = {i: r + 1 for r, i in enumerate(order)}
+        # 余弦相似度映射：供展示"RRF 融合得分 + 余弦相似度"双口径
+        self._cosine_scores = {i: round(float(scores[i]), 4) for i in eligible_indices}
+        return ranks
 
     # ================= 通道2：45类标签 + 关键词辅助 =================
     def _label_rank(self, raw_labels, taxonomy_codes, entries, eligible_indices):
@@ -475,6 +479,7 @@ class CaseRetrieverAgent(AgentBase):
                 # 兼容旧字段；其数值实际上是 RRF 融合分数。
                 "similarity": round(float(score), 6),
                 "rrf_score": round(float(score), 6),
+                "cosine_similarity": self._cosine_scores.get(idx),  # 语义通道余弦相似度（0-1）
                 "semantic_rank": semantic_ranks.get(idx),
                 "label_rank": label_ranks.get(idx),
                 "taxonomy_labels": sorted(case_codes),

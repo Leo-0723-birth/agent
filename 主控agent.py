@@ -169,8 +169,10 @@ for code in codes:
     with st.expander(f"🧩 相似历史问询案例（Top {len(ctx.cases)}）"):
         for c in ctx.cases:
             score = c.get("rrf_score") or c.get("similarity")
+            cosine = c.get("cosine_similarity")
+            cos_txt = f"｜余弦相似度 {cosine:.4f}" if cosine is not None else ""
             st.markdown(f"- **{c.get('company')}**｜{c.get('inquiry_type')}｜{c.get('publish_date')}"
-                        f"｜RRF融合得分 {score}")
+                        f"｜RRF融合得分 {score}{cos_txt}")
             if c.get("topics"):
                 st.markdown(f"  - 关注点：{'；'.join(str(t)[:50] for t in c['topics'][:3])}")
 
