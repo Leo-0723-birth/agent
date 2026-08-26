@@ -149,7 +149,7 @@ def build_graph(use_llm=False, use_finbert=False, use_rule=True,
         lambda: FinancialDetectorAgent(use_llm=False, rate_limit=rate_limit),
         timeout=240, name="FinancialDetector"))
     g.add_node("predictor", _tolerant_node(PredictorAgent, timeout=120))
-    g.add_node("case", _node_factory(CaseRetrieverAgent, timeout=180, name="CaseRetriever"))
+    g.add_node("case", _tolerant_node(CaseRetrieverAgent, timeout=180))
     g.add_node("chunk", _tolerant_node(ChunkRetrieverAgent, timeout=60))
     g.add_node("attribution", _node_factory(
         lambda: AttributorAgent(use_llm=use_llm), timeout=60, name="Attributor"))

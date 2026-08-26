@@ -138,9 +138,15 @@ class SweepingOrchestrator(AgentBase):
                                   "trace_complete": True})
 
     def _run_cases(self, company, ctx):
-        from .case_retriever import CaseRetrieverAgent
-        agent = CaseRetrieverAgent()
-        agent.run(company, ctx)
+        try:
+            from .case_retriever import CaseRetrieverAgent
+            agent = CaseRetrieverAgent()
+            agent.run(company, ctx)
+        except Exception as e:
+            ctx.cases = []
+            ctx.trace_log.append({"agent": "CaseRetriever", "status": "skipped",
+                                  "reason": f"案例检索不可用: {type(e).__name__}: {e}",
+                                  "trace_complete": True})
 
     def _run_attribution(self, company, ctx):
         from .attributor import AttributorAgent

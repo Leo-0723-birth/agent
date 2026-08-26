@@ -149,7 +149,7 @@ COMPETITION_DATA_ROOT=D:\your-path\Announcement_NLP_Project_Final
 
 ## 说明
 
-- **Embedding**：默认 `EMBEDDING_BACKEND=bge`（BGE-large-zh-v1.5，1024 维，权重在 backend/models/embedding/，加载失败自动回落 fallback 且维度守卫拦截语义通道）。
+- **Embedding**：默认 `EMBEDDING_BACKEND=bge`（BGE-large-zh-v1.5，1024 维）；离线演示默认不自动下载缺失权重，语义通道不可用时回退标签检索。确需下载时设置 `EMBEDDING_ALLOW_DOWNLOAD=true`。
 - **公告误报过滤**：公司章程、议事规则、候选人声明和通用管理制度只保留官方元数据，不下载 PDF、不进入风险抽取；真实处罚、立案、辞职、冻结等风险标题优先保留。
 - **历史与当前分层**：比赛历史库是 2020—2024 年历史研究产物，旧规则命中只作待复核候选；当前事实和 30/60/90 天统计仍只使用巨潮官方公告及 PDF。
 - **事实语境校验**：法规引用、董监高职责/任职资格、禁止性或假设性条款、会计政策及报表模板会记录过滤原因，但不计入风险事件。LLM 是可选精细通道，输出仍需通过逐字证据和事实语境双重校验。

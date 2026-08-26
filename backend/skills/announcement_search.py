@@ -47,16 +47,18 @@ CNINFO_HOME = "https://www.cninfo.com.cn"
 CNINFO_STATIC = "https://static.cninfo.com.cn/"
 CNINFO_COMPANY_QUERY = f"{CNINFO_HOME}/new/information/topSearch/query"
 CNINFO_ANNOUNCEMENT_QUERY = f"{CNINFO_HOME}/new/hisAnnouncement/query"
+CNINFO_CONNECT_TIMEOUT = float(os.getenv("CNINFO_CONNECT_TIMEOUT", "5"))
+CNINFO_READ_TIMEOUT = float(os.getenv("CNINFO_READ_TIMEOUT", "20"))
 
 
 def _build_http_session():
     session = requests.Session()
     retry = Retry(
-        total=3,
-        connect=3,
-        read=3,
-        status=3,
-        backoff_factor=0.8,
+        total=1,
+        connect=1,
+        read=1,
+        status=1,
+        backoff_factor=0.4,
         status_forcelist=(429, 500, 502, 503, 504),
         allowed_methods=frozenset({"GET", "POST"}),
         respect_retry_after_header=True,
@@ -78,7 +80,12 @@ def _build_http_session():
 
 
 def _request_json(session, method, url, **kwargs):
-    response = session.request(method, url, timeout=30, **kwargs)
+    response = session.request(
+        method,
+        url,
+        timeout=(CNINFO_CONNECT_TIMEOUT, CNINFO_READ_TIMEOUT),
+        **kwargs,
+    )
     response.raise_for_status()
     if not response.encoding or response.encoding.lower() in {"iso-8859-1", "latin-1"}:
         response.encoding = "utf-8"

@@ -430,14 +430,23 @@ class CaseRetrieverAgent(AgentBase):
 
         # BGE 查询使用 query instruction；案例库向量是 document embedding。
         if profile:
-            query_vec = embed_one(profile, is_query=True)
-            semantic_ranks = self._semantic_rank(
-                query_vec,
-                entries,
-                vectors,
-                eligible_indices,
-            )
-            ranks.append(semantic_ranks)
+            try:
+                query_vec = embed_one(profile, is_query=True)
+                semantic_ranks = self._semantic_rank(
+                    query_vec,
+                    entries,
+                    vectors,
+                    eligible_indices,
+                )
+                ranks.append(semantic_ranks)
+            except Exception as exc:
+                # 语义模型属于增强通道；本地权重缺失或网络不可达时退回标签通道。
+                ctx.trace_log.append({
+                    "agent": "CaseRetriever.Semantic",
+                    "status": "skipped",
+                    "reason": f"语义模型不可用，已退回标签检索：{type(exc).__name__}: {str(exc)[:180]}",
+                    "trace_complete": True,
+                })
 
         if raw_labels or taxonomy_codes:
             label_ranks = self._label_rank(

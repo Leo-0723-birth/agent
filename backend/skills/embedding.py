@@ -59,6 +59,13 @@ def _bge_load():
             _BGE["tokenizer"] = AutoTokenizer.from_pretrained(local_dir, local_files_only=True)
             _BGE["model"] = AutoModel.from_pretrained(local_dir, local_files_only=True)
         else:
+            allow_download = os.getenv("EMBEDDING_ALLOW_DOWNLOAD", "false").lower() in {
+                "1", "true", "yes", "on"
+            }
+            if not allow_download:
+                raise FileNotFoundError(
+                    "本地未安装 BGE 模型；离线演示模式不会自动联网下载。"
+                )
             print(f"[embedding] 本地无 BGE 快照，尝试联网下载（HF_ENDPOINT={os.getenv('HF_ENDPOINT', '')}）")
             _BGE["tokenizer"] = AutoTokenizer.from_pretrained(EMBEDDING_MODEL)
             _BGE["model"] = AutoModel.from_pretrained(EMBEDDING_MODEL)

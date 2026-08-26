@@ -42,6 +42,8 @@ def load_report_text(filename: str) -> str:
 def live_context_to_result(ctx, window: int) -> dict:
     financial, semantic = ctx.financial, ctx.semantic
     report = ctx.report or {}
+    data_quality = semantic.data_quality or {}
+    current_data_available = data_quality.get("current_data_available", True)
     return {
         "company": ctx.company,
         "name": (report.get("json", {}) or {}).get("name", ""),
@@ -54,7 +56,11 @@ def live_context_to_result(ctx, window: int) -> dict:
         "attribution": ctx.attribution or {},
         "trace_log": ctx.trace_log or [],
         "report": report,
-        "snapshot": {"mode": "live", "label": "本次实时运行", "generated_at": ""},
+        "snapshot": {
+            "mode": "live" if current_data_available else "partial_live",
+            "label": "本次实时运行" if current_data_available else "部分实时结果",
+            "generated_at": "",
+        },
     }
 
 
@@ -109,9 +115,21 @@ render_page_header(
     f"{company_name} · 监管问询风险简报",
     "用模型概率定位优先级，用公告、财务与历史案例解释风险，并保留可回溯证据链。",
     status=snapshot.get("label", "可用快照"),
-    status_kind="live" if snapshot.get("mode") == "live" else "offline",
+    status_kind=(
+        "live" if snapshot.get("mode") == "live"
+        else "danger" if snapshot.get("mode") == "partial_live"
+        else "offline"
+    ),
     metadata=[company, f"数据截止 {result.get('as_of', '—')}", f"{result.get('window', 60)} 天窗口"],
 )
+
+data_quality = semantic.get("data_quality", {}) or {}
+if data_quality.get("current_data_available") is False:
+    st.warning(
+        "巨潮资讯实时接口当前不可达，本次未取得最新公告；系统已继续完成其他可用环节。"
+        "公告数量及公告风险特征按缺失处理，不能解读为公司没有公告风险。",
+        icon=":material/cloud_off:",
+    )
 
 summary = report_json.get("executive_summary")
 if summary:
