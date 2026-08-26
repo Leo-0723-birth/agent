@@ -127,8 +127,8 @@ with st.sidebar:
 with st.form("company_query_form", border=True):
     company_input = st.text_input(
         "公司代码或准确名称",
-        value="000004.SZ",
-        placeholder="例如：000004.SZ、国华网安",
+        value="000063.SZ",
+        placeholder="例如：000063.SZ、中兴通讯",
     )
     submitted = st.form_submit_button("开始匹配", type="primary", icon=":material/search:")
 
@@ -367,4 +367,4 @@ else:
     with st.container(border=True):
         st.subheader("页面会展示什么")
         st.write("目标公司风险画像（公告 + 财务）→ RRF 融合检索 → Top 相似历史问询函（公司/类型/日期/综合匹配度/关注点）。")
-        st.caption("先使用默认示例 000004.SZ，点击“开始匹配”即可。首次运行需下载公告 PDF，可能等待数分钟（已缓存后秒级）。")
+        st.caption("先使用默认示例 000063.SZ（中兴通讯），点击“开始匹配”即可。首次运行需下载公告 PDF，可能等待数分钟（已缓存后秒级）。")

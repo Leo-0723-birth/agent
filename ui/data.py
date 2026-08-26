@@ -35,7 +35,7 @@ def dataset_shape() -> tuple[int, int]:
 
 
 @st.cache_data(show_spinner=False)
-def load_offline_context(company: str = "000004.SZ") -> dict:
+def load_offline_context(company: str = "000063.SZ") -> dict:
     manifest_path = OUTPUT_DIR / "reports" / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     normalized = company.upper().replace(".", "_")

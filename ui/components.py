@@ -56,3 +56,36 @@ def render_source_index(company: str) -> None:
     sources = [("公告原文与片段", "公告研读 Agent", f"/announcement?company={code}"), ("财务指标与计算", "财务异常 Agent", f"/financial?company={code}"), ("相似监管案例", "案例匹配 Agent", f"/case?company={code}"), ("推理与工具日志", "主控 Agent trace", f"/main?company={code}#agent-trace")]
     cards = "".join(f'<a class="risk-source-card" href="{href}" target="_self"><b>{_safe(title)} ↗</b><span>{_safe(detail)}</span></a>' for title, detail, href in sources)
     st.html(f'<div class="risk-source-grid">{cards}</div>')
+
+
+def render_countup(value: float, decimals: int = 2, suffix: str = "%", color: str = "#10B981", height: int = 96, font_size: int = 54) -> None:
+    """数字滚动动画组件（components.html 嵌入，0 → 目标值 1.2s 滚动）。
+
+    方案 A 已接受 CSS 近似，此组件为可选增强；不依赖任何前端构建。
+    """
+    from streamlit.components.v1 import html
+
+    target = f"{value:.{decimals}f}"
+    html(
+        f"""
+        <div style="font-family:'JetBrains Mono',Consolas,monospace;font-size:{font_size}px;font-weight:800;
+                    line-height:1.1;color:{color};text-align:left;">
+            <span id="ct">0.{'0' * decimals}</span><span style="font-size:{max(font_size // 2, 14)}px;font-weight:600;">{suffix}</span>
+        </div>
+        <script>
+            (function () {{
+                const el = document.getElementById("ct");
+                const target = {value};
+                const dur = 1200, t0 = performance.now();
+                function tick(t) {{
+                    const k = Math.min((t - t0) / dur, 1);
+                    const ease = 1 - Math.pow(1 - k, 3);
+                    el.textContent = (target * ease).toFixed({decimals});
+                    if (k < 1) requestAnimationFrame(tick);
+                }}
+                requestAnimationFrame(tick);
+            }})();
+        </script>
+        """,
+        height=height,
+    )

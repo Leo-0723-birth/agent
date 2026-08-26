@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """预测建模 Agent 的可审计 Streamlit 展示入口。
 运行：streamlit run 预测建模agent.py --server.port 8504
@@ -406,8 +406,8 @@ with st.sidebar:
 with st.form("company_query_form", border=True):
     company_input = st.text_input(
         "公司代码（带交易所后缀）",
-        value="000004.SZ",
-        placeholder="例如：000004.SZ",
+        value="000063.SZ",
+        placeholder="例如：000063.SZ",
     )
     submitted = st.form_submit_button("开始预测", type="primary", icon=":material/search:")
 
@@ -453,4 +453,4 @@ else:
     with st.container(border=True):
         st.subheader("页面会展示什么")
         st.write("30/60/90 天监管问询概率、风险等级、置信度、SHAP 特征贡献图与推理追踪。")
-        st.caption("先使用默认示例 000004.SZ，点击“开始预测”即可。若显示“未找到该股票特征”，说明该公司不在建模数据集内。")
+        st.caption("先使用默认示例 000063.SZ（中兴通讯），点击“开始预测”即可。若显示“未找到该股票特征”，说明该公司不在建模数据集内。")

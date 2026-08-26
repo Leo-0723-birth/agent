@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """归因分析 Agent 的可审计 Streamlit 展示入口。
 运行：streamlit run 归因分析agent.py --server.port 8506
@@ -105,8 +105,8 @@ with st.sidebar:
 with st.form("company_query_form", border=True):
     company_input = st.text_input(
         "公司代码或准确名称",
-        value="000004.SZ",
-        placeholder="例如：000004.SZ、国华网安",
+        value="000063.SZ",
+        placeholder="例如：000063.SZ、中兴通讯",
     )
     submitted = st.form_submit_button("开始归因", type="primary", icon=":material/search:")
 
@@ -187,4 +187,4 @@ else:
     with st.container(border=True):
         st.subheader("页面会展示什么")
         st.write("归因叙事、Top 风险诱因（SHAP 贡献 + 标签引用）、原文证据白名单与完整推理追踪。")
-        st.caption("先使用默认示例 000004.SZ，点击“开始归因”即可。首次运行需下载公告 PDF，可能等待数分钟。")
+        st.caption("先使用默认示例 000063.SZ（中兴通讯），点击“开始归因”即可。首次运行需下载公告 PDF，可能等待数分钟。")
