@@ -21,12 +21,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from backend.agents import SweepingOrchestrator
 from backend.config import OUTPUT_DIR
+from ui.theme import apply_page_style
 
 st.set_page_config(
     page_title="报告生成 Agent",
     page_icon=":material/description:",
     layout="wide",
 )
+apply_page_style()
 
 
 @st.cache_data(ttl="6h", max_entries=10, show_spinner=False)

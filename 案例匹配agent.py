@@ -25,12 +25,14 @@ from backend.agents.case_retriever import CaseRetrieverAgent
 from backend.agents.financial_detector import FinancialDetectorAgent
 from backend.context import Context
 from backend.skills.announcement_search import CninfoAnnouncementSource
+from ui.theme import apply_page_style
 
 st.set_page_config(
     page_title="案例匹配 Agent",
     page_icon=":material/compare_arrows:",
     layout="wide",
 )
+apply_page_style()
 
 
 @st.cache_data(ttl="6h", max_entries=10, show_spinner=False)
@@ -69,7 +71,7 @@ def cases_dataframe(cases: list[dict]) -> pd.DataFrame:
 
 
 st.title("案例匹配 Agent")
-st.caption("基于 1483 份历史监管问询函案例库，对目标公司风险画像做 RRF 融合检索（语义向量 + 标签重合），带时间穿越控制与防泄漏过滤。")
+st.caption("基于 4,785 份历史监管问询案例，对目标公司风险画像做 RRF 融合检索（语义向量 + 标签重合），带时间穿越控制与防泄漏过滤。")
 
 with st.sidebar:
     st.subheader("运行设置")

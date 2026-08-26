@@ -1,21 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-上市公司监管问询扫雷预警系统 —— Streamlit 演示页
-================================================
-运行：streamlit run 导航入口.py（推荐，单入口导航，默认打开本页）
-     或 streamlit run 主控agent.py --server.port 8501（独立运行）
-功能：
-  - 单公司/批量扫雷（真实 6-Agent 流水线：公告研读 → 财务检测 → 案例检索 → 归因 → 报告）
-  - 流水线实时状态（st.status 逐环节点亮）
-  - 可解释预警报告（预测结论 / 财务异常 / 公告风险 / 归因 / 相似案例 / 推理链路）
-  - 📁 已生成报告浏览（output/reports/ 存档：Markdown 预览 + JSON/文件下载）
-说明：
-  - 默认 use_llm=False（离线）；勾选"启用 LLM"需 .env 配 DEEPSEEK_API_KEY
-  - "启用 DeepSeek 执行摘要"：用 deepseek-v4-flash 生成风控函件式摘要（默认关，演示时勾选）
-"""
+"""主控 Agent：评委演示首页与完整扫雷流水线。"""
+from __future__ import annotations
+
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
@@ -24,169 +12,181 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from backend.agents import SweepingOrchestrator
 from backend.config import OUTPUT_DIR
+from ui.charts import case_score_chart, probability_chart, risk_severity_chart, shap_chart
+from ui.components import evidence_records, render_evidence_cards, render_metric_grid, render_page_header, render_source_index, render_trace
+from ui.data import dataset_shape, load_model_summary, load_offline_context
+from ui.theme import apply_page_style
 
-st.set_page_config(page_title="上市公司扫雷预警系统", page_icon="🛰️", layout="wide")
-st.title("🛰️ 上市公司监管问询扫雷预警系统")
-st.caption("基于 Agentic AI · 6-Agent 流水线（公告研读→财务检测→案例检索→归因→报告）· 可解释预警")
+st.set_page_config(page_title="监管问询风险简报", page_icon=":material/radar:", layout="wide")
+apply_page_style()
 
 
 def list_reports(max_n: int = 20) -> list[dict]:
-    """读取 output/reports/manifest.json 报告索引（按时间倒序）。"""
     try:
-        mp = Path(OUTPUT_DIR) / "reports" / "manifest.json"
-        if not mp.exists():
-            return []
-        data = json.loads(mp.read_text(encoding="utf-8"))
+        path = Path(OUTPUT_DIR) / "reports" / "manifest.json"
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
         return data[:max_n] if isinstance(data, list) else []
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         return []
 
 
-def load_report_md(report_dir: str = "reports") -> str:
-    """按选中的文件名读取 Markdown 内容。"""
+def load_report_text(filename: str) -> str:
     try:
-        p = Path(OUTPUT_DIR) / "reports" / report_dir
-        return p.read_text(encoding="utf-8")
-    except Exception:
+        return (Path(OUTPUT_DIR) / "reports" / filename).read_text(encoding="utf-8")
+    except OSError:
         return ""
 
 
-# ================= 侧边栏输入 =================
+def live_context_to_result(ctx, window: int) -> dict:
+    financial, semantic = ctx.financial, ctx.semantic
+    report = ctx.report or {}
+    return {
+        "company": ctx.company,
+        "name": (report.get("json", {}) or {}).get("name", ""),
+        "window": window,
+        "as_of": ctx.as_of,
+        "prediction": ctx.prediction or {},
+        "financial": {"risk_level": financial.risk_level, "skip": financial.skip, "skip_reason": financial.skip_reason, "anomaly_list": financial.anomaly_list, "features_count": len(financial.features)},
+        "semantic": {"stats": semantic.stats, "risk_factors": semantic.risk_factors, "data_quality": semantic.data_quality},
+        "cases": ctx.cases or [],
+        "attribution": ctx.attribution or {},
+        "trace_log": ctx.trace_log or [],
+        "report": report,
+        "snapshot": {"mode": "live", "label": "本次实时运行", "generated_at": ""},
+    }
+
+
+if "dashboard_result" not in st.session_state:
+    st.session_state.dashboard_result = load_offline_context("000004.SZ")
+
 with st.sidebar:
-    st.header("⚙️ 参数设置")
-    codes_text = st.text_area("公司代码（每行一个）", "000004.SZ", height=90)
-    window = st.selectbox("预测窗口（天）", [30, 60, 90], index=1)
-    use_llm = st.checkbox("启用 LLM 精细抽取（需 .env 配 key）", value=False)
-    use_llm_summary = st.checkbox("启用 DeepSeek 执行摘要（deepseek-v4-flash）", value=False,
-                                  help="报告执行摘要用大模型生成；关闭时用规则拼装。")
-    run_clicked = st.button("🚀 开始扫雷", type="primary", use_container_width=True)
+    st.subheader("公司扫雷")
+    st.caption("默认快照可离线秒开；需要时再启动完整流水线。")
+    with st.form("sweep_form"):
+        codes_text = st.text_area("公司代码（每行一个）", "000004.SZ", height=86)
+        window = st.selectbox("预测窗口", [30, 60, 90], index=1, format_func=lambda x: f"{x} 天")
+        use_llm = st.checkbox("启用 LLM 精细抽取", value=False, help="需要在 .env 中配置密钥")
+        use_llm_summary = st.checkbox("生成 LLM 执行摘要", value=False)
+        run_clicked = st.form_submit_button(":material/play_arrow: 运行完整扫雷", type="primary", width="stretch")
+    if st.button(":material/offline_bolt: 恢复离线演示快照", width="stretch"):
+        st.session_state.dashboard_result = load_offline_context("000004.SZ")
+        st.rerun()
 
-# ================= 已生成报告浏览区（无论是否扫雷都显示） =================
-st.subheader("📁 已生成报告（output/reports/ 存档）")
+if run_clicked:
+    codes = [code.strip() for code in codes_text.splitlines() if code.strip()]
+    if not codes:
+        st.warning("请输入至少一个公司代码。")
+    else:
+        orchestrator = SweepingOrchestrator(use_llm=use_llm, use_finbert=True)
+        for code in codes:
+            try:
+                with st.status(f"正在分析 {code}", expanded=True) as status:
+                    ctx = orchestrator.sweep_one(code, window=window, use_llm_summary=use_llm_summary)
+                    for step in ctx.trace_log:
+                        st.write(f"**{step.get('agent', 'Agent')}** · {step.get('status', 'done')} · {step.get('latency_ms', '—')} ms · {str(step.get('output_summary', ''))[:72]}")
+                    status.update(label=f"{code} 分析完成", state="complete")
+                st.session_state.dashboard_result = live_context_to_result(ctx, window)
+            except Exception as exc:
+                st.error(f"{code} 实时分析未完成：{exc}。页面继续保留上一次可用快照。")
+
+result = st.session_state.dashboard_result
+prediction = result.get("prediction", {})
+financial = result.get("financial", {})
+semantic = result.get("semantic", {})
+report_json = result.get("report", {}).get("json", {}) or {}
+snapshot = result.get("snapshot", {})
+company = result.get("company") or "000004.SZ"
+company_name = result.get("name") or "上市公司"
+
+render_page_header(
+    f"{company_name} · 监管问询风险简报",
+    "用模型概率定位优先级，用公告、财务与历史案例解释风险，并保留可回溯证据链。",
+    status=snapshot.get("label", "可用快照"),
+    status_kind="live" if snapshot.get("mode") == "live" else "offline",
+    metadata=[company, f"数据截止 {result.get('as_of', '—')}", f"{result.get('window', 60)} 天窗口"],
+)
+
+summary = report_json.get("executive_summary")
+if summary:
+    with st.container(border=True):
+        st.markdown("#### 研判结论")
+        st.write(summary)
+
+model_summary = load_model_summary()
+metrics_60 = model_summary.get("windows", {}).get("60", {}).get("Ensemble", {})
+rows, columns = dataset_shape()
+render_metric_grid([
+    {"label": "60D 模型 AUC", "value": f"{metrics_60.get('AUC', 0):.4f}", "note": "集成模型判别能力"},
+    {"label": "Top 10% 召回", "value": f"{metrics_60.get('Top10%Recall', 0):.1%}", "note": "高风险样本覆盖率"},
+    {"label": "建模样本", "value": f"{rows:,}", "note": "离线训练与验证样本"},
+    {"label": "建模特征", "value": f"{columns:,}", "unit": "维", "note": "含标识与标签字段"},
+    {"label": "历史问询案例", "value": f"{4_785:,}", "note": "用于相似案例检索"},
+])
+
+st.markdown("### 风险判断与模型解释")
+c1, c2, c3 = st.columns(3)
+p60 = prediction.get("probability_60d")
+c1.metric("60 天问询概率", f"{p60:.2%}" if p60 is not None else "未预测")
+c2.metric("风险等级", prediction.get("risk_level") or financial.get("risk_level") or "—")
+confidence = prediction.get("confidence")
+c3.metric("模型置信度", f"{confidence:.1%}" if confidence is not None else "—")
+
+left, right = st.columns(2)
+with left:
+    with st.container(border=True):
+        st.markdown("#### 30 / 60 / 90 天问询概率")
+        st.altair_chart(probability_chart(prediction), width="stretch")
+        st.caption("雾蓝、青绿与柔金分别对应 30、60、90 天预测窗口；柱顶为模型输出概率。")
+with right:
+    with st.container(border=True):
+        st.markdown("#### Top 特征贡献")
+        st.altair_chart(shap_chart(prediction.get("shap_features", [])), width="stretch")
+        st.caption("珊瑚红表示推升风险，雾蓝表示降低风险；数值为 SHAP 局部贡献。")
+
+st.markdown("### 关键证据与问题定位")
+st.caption("每条证据同时标明问题、系统记录与原文入口，评委可直接追溯。")
+render_evidence_cards(evidence_records(result, limit=6))
+
+chart_left, chart_right = st.columns(2)
+with chart_left:
+    with st.container(border=True):
+        st.markdown("#### 公告风险要素分布")
+        factors = semantic.get("risk_factors", [])
+        if factors:
+            st.altair_chart(risk_severity_chart(factors), width="stretch")
+            st.caption("珊瑚红对应高严重度，柔金对应关注项，青绿与雾蓝为较低等级。")
+        else:
+            st.info("当前结果未提取到公告风险要素。")
+with chart_right:
+    with st.container(border=True):
+        st.markdown("#### 相似历史问询案例")
+        cases = result.get("cases", [])
+        if cases:
+            st.altair_chart(case_score_chart(cases), width="stretch")
+            st.caption("青绿色柱表示案例检索可信度；悬停可查看问询类型和精确得分。")
+        else:
+            st.info("当前结果未检索到相似案例。")
+
+st.markdown('<div id="agent-trace"></div>', unsafe_allow_html=True)
+st.markdown("### Agent 推理链路")
+render_trace(result.get("trace_log", []))
+with st.expander("查看完整 trace_log"):
+    st.json(result.get("trace_log", []))
+
+st.markdown("### 数据与证据入口")
+render_source_index(company)
+
+st.markdown("### 报告归档与下载")
 reports = list_reports()
-if not reports:
-    st.caption("暂无已生成报告。扫雷完成后自动归档，可在此预览/下载。")
+if reports:
+    labels = {f"{item.get('report_id')} · P60 {item.get('probability_60d', '—')} · {item.get('risk_level', '—')}": item for item in reports}
+    selected = labels[st.selectbox("已生成报告", list(labels))]
+    d1, d2 = st.columns(2)
+    d1.download_button(":material/download: 下载 Markdown", data=load_report_text(selected.get("md_file", "")), file_name=selected.get("md_file", "report.md"), mime="text/markdown", width="stretch")
+    d2.download_button(":material/data_object: 下载索引 JSON", data=json.dumps(selected, ensure_ascii=False, indent=2), file_name=selected.get("json_file", "report.json"), mime="application/json", width="stretch")
+    with st.expander("预览报告原文"):
+        st.markdown(load_report_text(selected.get("md_file", "")))
 else:
-    labels = {f"{r.get('report_id')} ｜ {r.get('probability_60d')} ｜ {r.get('risk_level')}": r
-              for r in reports}
-    chosen = st.selectbox("选择报告", list(labels.keys()), key="report_selector")
-    if chosen:
-        r = labels[chosen]
-        c1, c2 = st.columns(2)
-        c1.download_button("⬇️ 下载 Markdown", data=load_report_md(r.get("md_file", "")),
-                           file_name=r.get("md_file", "report.md"), mime="text/markdown",
-                           key=f"dl_md_{r.get('report_id')}")
-        c2.download_button("⬇️ 下载 JSON",
-                           data=json.dumps(r, ensure_ascii=False, indent=2),
-                           file_name=r.get("json_file", "report.json"), mime="application/json",
-                           key=f"dl_meta_{r.get('report_id')}")
-        st.caption(f"生成时间 {r.get('generated_at')} ｜ 窗口 {r.get('window')} 天")
-        with st.expander("📄 预览报告", expanded=True):
-            st.markdown(load_report_md(r.get("md_file", "")))
+    st.info("暂无已归档报告。运行完整扫雷后会自动保存。")
 
-st.divider()
-
-if not run_clicked:
-    st.info("左侧输入公司代码后点击「开始扫雷」。示例：000004.SZ（国华网安）")
-    st.stop()
-
-codes = [c.strip() for c in codes_text.splitlines() if c.strip()]
-if not codes:
-    st.warning("请输入至少一个公司代码")
-    st.stop()
-
-# ================= 执行流水线 =================
-orch = SweepingOrchestrator(use_llm=use_llm, use_finbert=True)
-
-for code in codes:
-    st.divider()
-    with st.status(f"🔍 正在分析 {code} …", expanded=True) as status:
-        ctx = orch.sweep_one(code, window=window, use_llm_summary=use_llm_summary)
-        for t in ctx.trace_log:
-            agent = t.get("agent", "?")
-            stt = t.get("status", "done")
-            ms = t.get("latency_ms", "")
-            out = str(t.get("output_summary", ""))[:80]
-            st.write(f"**{agent}** ｜ {stt} ｜ {ms}ms ｜ {out}")
-        status.update(label=f"✅ {code} 分析完成", state="complete")
-
-    # ================= 报告展示 =================
-    st.subheader(f"📋 {code} 扫雷预警报告")
-    pred = ctx.prediction or {}
-    fin = ctx.financial
-    att = ctx.attribution or {}
-    rj = (ctx.report or {}).get("json", {})
-
-    # 执行摘要（优先展示）
-    if rj.get("executive_summary"):
-        with st.container(border=True):
-            st.markdown("**一、执行摘要**")
-            st.write(rj["executive_summary"])
-
-    c1, c2, c3 = st.columns(3)
-    p60 = pred.get("probability_60d")
-    c1.metric("60天问询概率", f"{p60:.4f}" if p60 is not None else "未预测")
-    level = pred.get("risk_level") or fin.risk_level or "—"
-    c2.metric("风险等级", level)
-    conf = pred.get("confidence")
-    c3.metric("置信度", f"{conf:.2f}" if conf is not None else "—")
-
-    # 概率条
-    probs = {f"{w}天": pred.get(f"probability_{w}d") for w in (30, 60, 90)}
-    if any(v is not None for v in probs.values()):
-        st.bar_chart({k: [v] for k, v in probs.items() if v is not None}, height=180)
-
-    # 财务异常
-    with st.expander(f"💹 财务异常信号（{len(fin.anomaly_list)} 条）", expanded=True):
-        if fin.skip:
-            st.write(f"财务分析跳过：{fin.skip_reason}")
-        for a in fin.anomaly_list:
-            st.markdown(f"- **[{a.get('type')}]**（severity {a.get('severity')}）{a.get('evidence', '')}"
-                        f"  `label_ref={a.get('label_ref')}`")
-
-    # 公告风险要素
-    with st.expander(f"📄 公告风险要素（{len(ctx.semantic.risk_factors)} 条 / "
-                     f"{ctx.semantic.stats.get('announcement_count', 0)} 份公告）"):
-        for r in ctx.semantic.risk_factors[:15]:
-            st.markdown(f"- [{r.get('severity')}] **{r.get('category')}**：{r.get('description')}")
-            if r.get("evidence"):
-                st.markdown(f"  > {r.get('evidence', '')[:100]}")
-        if not ctx.semantic.risk_factors:
-            st.write("（LLM 关闭或无风险要素）")
-
-    # 归因
-    with st.expander("🎯 归因解释（Top 风险诱因 + 证据）"):
-        if att.get("narrative"):
-            st.write(att["narrative"])
-        for f in att.get("top_risk_factors", []):
-            shap = f"（SHAP {f.get('shap'):+.3f}）" if f.get("shap") is not None else ""
-            st.markdown(f"- **{f.get('desc') or f.get('feature')}** {shap}  `{f.get('evidence_id', '')}`")
-        st.markdown("**证据池：**")
-        for e in att.get("evidence_citations", []):
-            st.markdown(f"- `{e.get('evidence_id')}` [{e.get('source')}] {e.get('snippet', '')[:100]}")
-
-    # 相似案例
-    with st.expander(f"🧩 相似历史问询案例（Top {len(ctx.cases)}）"):
-        for c in ctx.cases:
-            score = c.get("rrf_score") or c.get("similarity")
-            cosine = c.get("cosine_similarity")
-            cos_txt = f"｜余弦相似度 {cosine:.4f}" if cosine is not None else ""
-            st.markdown(f"- **{c.get('company')}**｜{c.get('inquiry_type')}｜{c.get('publish_date')}"
-                        f"｜RRF融合得分 {score}{cos_txt}")
-            if c.get("topics"):
-                st.markdown(f"  - 关注点：{'；'.join(str(t)[:50] for t in c['topics'][:3])}")
-
-    # 推理链路
-    with st.expander("🔍 完整推理链路 trace_log（可追踪率 100%）"):
-        st.json(ctx.trace_log)
-
-    # 报告下载
-    if ctx.report:
-        st.download_button(
-            f"⬇️ 下载 {code} 报告 (Markdown)",
-            data=ctx.report["markdown"],
-            file_name=f"{code}_risk_report.md",
-            mime="text/markdown",
-        )
-
-st.success("批量扫雷完成。报告已自动归档到 backend/data/output/reports/（可在上方「已生成报告」浏览/下载）。")
+st.caption("说明：本系统输出用于风险筛查与研究辅助，不构成投资建议或监管结论。")

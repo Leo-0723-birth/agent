@@ -29,6 +29,7 @@ from backend.skills.announcement_context_filter import FILTER_VERSION
 from backend.skills.announcement_search import CninfoAnnouncementSource
 from backend.skills.competition_history import CompetitionAwareAnnouncementSource
 from backend.skills.offline_announcement_snapshot import OfflineAnalysisSnapshotStore
+from ui.theme import apply_page_style
 
 
 st.set_page_config(
@@ -36,6 +37,7 @@ st.set_page_config(
     page_icon=":material/article:",
     layout="wide",
 )
+apply_page_style()
 
 
 SEVERITY_LABELS = {

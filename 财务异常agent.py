@@ -19,12 +19,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from backend.agents.financial_detector import FinancialDetectorAgent
 from backend.context import Context
+from ui.theme import apply_page_style
 
 st.set_page_config(
     page_title="财务异常 Agent",
     page_icon=":material/account_balance:",
     layout="wide",
 )
+apply_page_style()
 
 
 @st.cache_data(ttl="6h", max_entries=20, show_spinner=False)

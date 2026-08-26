@@ -21,12 +21,16 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from backend.agents.predictor import PredictorAgent
 from backend.context import Context
+from ui.charts import ensemble_weights_chart, model_performance_chart, risk_ranking_chart
+from ui.data import load_model_summary, load_risk_ranking
+from ui.theme import apply_page_style
 
 st.set_page_config(
     page_title="预测建模 Agent",
     page_icon=":material/model_training:",
     layout="wide",
 )
+apply_page_style()
 
 
 @st.cache_data(ttl="6h", max_entries=20, show_spinner=False)
@@ -88,9 +92,9 @@ def _theme() -> dict:
         }
     return {
         "dark": False,
-        "pos": "#d98a8a", "neg": "#7fa6d4", "bar": "#2a78d6",
-        "risk_low": "#006300", "risk_mid": "#c2410c",
-        "risk_high": "#d03b3b", "risk_none": "#898781",
+        "pos": "#E58C82", "neg": "#6F9FD8", "bar": "#70B8AA",
+        "risk_low": "#4F9587", "risk_mid": "#B88A32",
+        "risk_high": "#D76055", "risk_none": "#71808D",
         "ink": ink, "ink2": "#52514e", "muted": "#898781",
         "card_bg": card, "grid": "#e1e0d9", "border": "rgba(11,11,11,0.12)",
         "axis_grid": "rgba(11,11,11,0.06)",
@@ -349,7 +353,7 @@ def _render_shap(shap, c: dict) -> None:
         .encode(x=alt.X("zero:Q", title=None))
     )
     chart = (bars + rule).properties(height=max(160, 30 * len(df) + 50))
-    st.altair_chart(chart, use_container_width=True)
+    st.altair_chart(chart, width="stretch")
 
     # 明细表：按绝对值降序 + 正负着色
     rows = []
@@ -373,6 +377,25 @@ def _render_shap(shap, c: dict) -> None:
 
 st.title("预测建模 Agent")
 st.caption("按 (company, as_of) 从建模数据集取最新一行特征 → 三模型集成（RF+LightGBM+XGBoost）→ 30/60/90 天问询概率 + SHAP 归因。")
+
+model_summary = load_model_summary()
+st.subheader("模型质量与业务解释")
+quality_left, quality_right = st.columns(2)
+with quality_left:
+    with st.container(border=True):
+        st.markdown("#### 三个预测窗口的模型质量")
+        st.altair_chart(model_performance_chart(model_summary), width="stretch")
+        st.caption("雾蓝表示 AUC，青绿表示 F1，柔金表示 Top 10% 召回；悬停可查看精确数值。")
+with quality_right:
+    with st.container(border=True):
+        st.markdown("#### 三模型集成权重")
+        st.altair_chart(ensemble_weights_chart(model_summary), width="stretch")
+        st.caption("柱顶直接标注权重；颜色只区分模型，不表示风险高低。")
+
+with st.container(border=True):
+    st.markdown("#### 60 天批量公司风险排名 · Top 10")
+    st.altair_chart(risk_ranking_chart(load_risk_ranking(60, 10)), width="stretch")
+    st.caption("柔金表示需要关注，珊瑚红表示更高风险；横轴与悬停均保留概率数值。")
 
 with st.sidebar:
     st.subheader("运行设置")
