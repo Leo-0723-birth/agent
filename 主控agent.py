@@ -24,8 +24,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from backend.agents import SweepingOrchestrator
 from backend.config import OUTPUT_DIR
+from ui.charts import case_score_chart, probability_chart, risk_severity_chart, shap_chart
+from ui.components import evidence_records, render_evidence_cards, render_metric_grid, render_page_header, render_source_index, render_trace
+from ui.data import dataset_shape, load_model_summary, load_offline_context
+from ui.theme import apply_page_style
 
 st.set_page_config(page_title="上市公司扫雷预警系统", page_icon="🛰️", layout="wide")
+apply_page_style()
 st.title("🛰️ 上市公司监管问询扫雷预警系统")
 st.caption("基于 Agentic AI · 6-Agent 流水线（公告研读→财务检测→案例检索→归因→报告）· 可解释预警")
 
@@ -88,7 +93,61 @@ else:
 st.divider()
 
 if not run_clicked:
-    st.info("左侧输入公司代码后点击「开始扫雷」。示例：000004.SZ（国华网安）")
+    try:
+        result = load_offline_context("000004.SZ")
+        prediction = result.get("prediction", {})
+        report_json = result.get("report", {}).get("json", {}) or {}
+        snapshot = result.get("snapshot", {})
+        render_page_header(
+            f'{result.get("name") or "上市公司"} · 监管问询风险简报',
+            "用模型概率定位优先级，用公告、财务与历史案例解释风险，并保留可回溯证据链。",
+            status=snapshot.get("label", "离线演示快照"),
+            status_kind="offline",
+            metadata=[result.get("company", "000004.SZ"), f'数据截止 {result.get("as_of", "—")}', "60 天窗口"],
+        )
+        metrics = load_model_summary().get("windows", {}).get("60", {}).get("Ensemble", {})
+        rows, columns = dataset_shape()
+        render_metric_grid([
+            {"label": "60D 模型 AUC", "value": f'{metrics.get("AUC", 0):.4f}', "note": "测试集区分能力"},
+            {"label": "Top 10% 覆盖", "value": f'{metrics.get("Top10%Recall", 0):.2%}', "note": "高风险样本覆盖率"},
+            {"label": "建模样本", "value": f"{rows:,}", "unit": "条", "note": "离线训练数据"},
+            {"label": "模型字段", "value": f"{columns:,}", "unit": "列", "note": "含标签与切分字段"},
+            {"label": "历史案例", "value": "4,785", "unit": "份", "note": "相似问询检索库"},
+        ])
+        c1, c2 = st.columns(2)
+        with c1:
+            with st.container(border=True):
+                st.markdown("#### 30 / 60 / 90 天问询概率")
+                st.altair_chart(probability_chart(prediction), width="stretch")
+        with c2:
+            with st.container(border=True):
+                st.markdown("#### Top 风险特征贡献")
+                st.altair_chart(shap_chart(prediction.get("shap_features", [])), width="stretch")
+        st.markdown("### 关键证据")
+        render_evidence_cards(evidence_records(result, limit=6))
+        c1, c2 = st.columns(2)
+        with c1:
+            factors = result.get("semantic", {}).get("risk_factors", [])
+            if factors:
+                with st.container(border=True):
+                    st.markdown("#### 公告风险严重度")
+                    st.altair_chart(risk_severity_chart(factors), width="stretch")
+        with c2:
+            cases = result.get("cases", [])
+            if cases:
+                with st.container(border=True):
+                    st.markdown("#### 相似历史问询案例")
+                    st.altair_chart(case_score_chart(cases), width="stretch")
+        st.markdown("### Agent 推理链路")
+        render_trace(result.get("trace_log", []))
+        st.markdown("### 数据与证据入口")
+        render_source_index(result.get("company", "000004.SZ"))
+        if report_json.get("executive_summary"):
+            with st.container(border=True):
+                st.markdown("#### 执行摘要")
+                st.write(report_json["executive_summary"])
+    except Exception as exc:
+        st.info(f"左侧输入公司代码后点击「开始扫雷」。默认快照暂不可用：{exc}")
     st.stop()
 
 codes = [c.strip() for c in codes_text.splitlines() if c.strip()]
@@ -97,11 +156,11 @@ if not codes:
     st.stop()
 
 # ================= 执行流水线 =================
-    orch = SweepingOrchestrator(
-        use_llm=use_llm,
-        use_finbert=True,
-        use_semantic_cases=use_semantic_cases,
-    )
+orch = SweepingOrchestrator(
+    use_llm=use_llm,
+    use_finbert=True,
+    use_semantic_cases=use_semantic_cases,
+)
 
 for code in codes:
     st.divider()
@@ -126,6 +185,13 @@ for code in codes:
     fin = ctx.financial
     att = ctx.attribution or {}
     rj = (ctx.report or {}).get("json", {})
+
+    # ---- 降级提示：任一 Agent 发生降级（如 BGE 超时）时说明原因 ----
+    degraded = [t for t in ctx.trace_log if t.get("status") in ("timeout", "needs_choice", "skipped")]
+    for t in degraded[:3]:
+        st.warning(f"⚠️ **{t.get('agent')} 降级/跳过**：{t.get('reason', '')}", icon=":material/warning:")
+    if degraded:
+        st.caption("降级不中断流水线；可在对应 Agent 审计页调整参数重试。")
 
     # 执行摘要（优先展示）
     if rj.get("executive_summary"):

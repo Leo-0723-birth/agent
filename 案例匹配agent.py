@@ -25,12 +25,14 @@ from backend.agents.case_retriever import CaseRetrieverAgent
 from backend.agents.financial_detector import FinancialDetectorAgent
 from backend.context import Context
 from backend.skills.announcement_search import CninfoAnnouncementSource
+from ui.theme import apply_page_style
 
 st.set_page_config(
     page_title="案例匹配 Agent",
     page_icon=":material/compare_arrows:",
     layout="wide",
 )
+apply_page_style()
 
 
 @st.cache_data(ttl="6h", max_entries=10, show_spinner=False)
@@ -42,13 +44,17 @@ def analyze_company(
     use_finbert: bool,
     use_llm: bool,
     top_k: int,
+    semantic_timeout: float = 60,
 ) -> dict:
-    """公告研读 → 财务检测 → 案例检索（RRF 融合 + 三源标签通道 + 时间穿越控制）。"""
+    """公告研读 → 财务检测 → 案例检索（RRF 融合 + 三源标签通道 + 时间穿越控制）。
+
+    semantic_timeout: BGE 语义查询超时秒数（冷启动加载 1.3GB 权重可能超 60s）。
+    """
     source = CninfoAnnouncementSource(max_documents=max_documents, ocr_enabled=use_ocr)
     ctx = Context(company=company, as_of=as_of)
     AnnouncementReaderAgent(source=source, use_finbert=use_finbert, use_llm=use_llm).run(company, ctx)
     FinancialDetectorAgent(use_llm=False).run(company, ctx)
-    CaseRetrieverAgent(top_k=top_k).run(company, ctx)
+    CaseRetrieverAgent(top_k=top_k, semantic_timeout=semantic_timeout).run(company, ctx)
     return asdict(ctx)
 
 
@@ -69,7 +75,7 @@ def cases_dataframe(cases: list[dict]) -> pd.DataFrame:
 
 
 st.title("案例匹配 Agent")
-st.caption("基于 1483 份历史监管问询函案例库，对目标公司风险画像做 RRF 融合检索（语义向量 + 标签重合），带时间穿越控制与防泄漏过滤。")
+st.caption("基于 4785 份历史监管问询函案例库，对目标公司风险画像做 RRF 融合检索（语义向量 + 标签重合），带时间穿越控制与防泄漏过滤。")
 
 with st.sidebar:
     st.subheader("运行设置")
@@ -79,6 +85,9 @@ with st.sidebar:
     use_finbert = st.toggle("启用 FinBERT", value=False)
     use_llm = st.toggle("启用 LLM 精细抽取", value=False, help="需要 DEEPSEEK_API_KEY。")
     top_k = st.slider("返回相似案例数", min_value=1, max_value=20, value=5)
+    semantic_timeout = st.slider(
+        "BGE 语义查询超时（秒）", min_value=30, max_value=300, value=60, step=10,
+        help="独立页面冷启动加载 BGE(1.3GB) 可能超 60s；完整流水线中公告研读已加载，无需调大。")
     st.caption("端口约定：8505（独立运行：streamlit run 案例匹配agent.py --server.port 8505）")
 
 with st.form("company_query_form", border=True):
@@ -141,6 +150,7 @@ if submitted:
                     use_finbert,
                     use_llm,
                     top_k,
+                    semantic_timeout,
                 )
 
                 st.write("✅ 步骤 4/5：历史案例检索完成")
@@ -174,6 +184,25 @@ if result:
     semantic = result.get("semantic", {})
     financial = result.get("financial", {})
     trace = result.get("trace_log", [])
+    # ---- 降级确认：BGE 语义通道超时/不可用时，需用户确认是否接受"仅标签检索" ----
+    choice_entry = next((t for t in trace if t.get("status") == "needs_choice"), None)
+    if choice_entry:
+        reason = choice_entry.get("reason", "BGE 语义检索不可用")
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            st.warning(
+                f"⚠️ **BGE 语义检索降级**\n\n原因：{reason}\n\n"
+                f"当前结果仅基于**标签匹配**通道（未包含语义余弦相似度）。"
+                f"完整流水线中公告研读已加载 BGE，不会触发；独立页面冷启动加载 1.3GB 权重可能超时。",
+                icon=":material/warning:",
+            )
+        with c2:
+            if st.button("🔄 重试（延长等待）", use_container_width=True,
+                         key="retry_semantic"):
+                st.session_state["retry_semantic"] = True
+        if st.session_state.pop("retry_semantic", False):
+            st.session_state.pop("case_analysis", None)
+            st.rerun()
     # 案例库规模动态读取（backend/data/vector_db/case_meta.json）
     try:
         import json as _json
