@@ -276,7 +276,8 @@ class AnnouncementReaderAgent(AgentBase):
 4. “如发生、若发生、存在下列情形之一、不得、应当、有权”等假设或规范描述不是已发生事实。
 5. 描述其他公司、行业或历史案例时不得归因于本公司；无法区分时不输出。"""
             try:
-                result = self.llm_callable("", prompt, max_tokens=2000)
+                # max_tokens 需容纳 thinking(reasoning) + 答案：v4-flash 推理会占用约 2000 token
+                result = self.llm_callable("", prompt, max_tokens=6000)
             except Exception as exc:
                 failed += 1
                 per_announcement[item["id"]] = {

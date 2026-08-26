@@ -112,14 +112,19 @@ def chat(system: str = "", prompt: str = "", temperature: float = DEFAULT_TEMPER
          max_tokens: int = DEFAULT_MAX_TOKENS, json_mode: bool = False) -> str:
     """统一 LLM 调用：返回文本。json_mode=True 时要求模型输出 JSON 对象。
 
-    通道策略：LangChain 优先，异常自动回落 requests 直连（行为与历史一致）。
+    通道策略：
+    - json_mode=True：直接走 requests 直连（thinking 禁用）——DeepSeek v4-flash 的
+      thinking 模式会吃光 max_tokens 导致 LengthFinishReasonError，且输出 JSON 结构不稳；
+    - 其余：LangChain 优先，异常回落 requests 直连。
     """
+    if json_mode:
+        return get_client().chat(system, prompt, temperature, max_tokens, json_mode=True)
     if LANGCHAIN_AVAILABLE:
         try:
-            return _langchain_chat(system, prompt, temperature, max_tokens, json_mode)
+            return _langchain_chat(system, prompt, temperature, max_tokens, False)
         except Exception as e:
             print(f"[llm] LangChain 通道异常，回落 requests 直连: {type(e).__name__}: {e}")
-    return get_client().chat(system, prompt, temperature, max_tokens, json_mode)
+    return get_client().chat(system, prompt, temperature, max_tokens, json_mode=False)
 
 
 def chat_json(system: str = "", prompt: str = "", temperature: float = DEFAULT_TEMPERATURE,
@@ -206,6 +211,10 @@ class _DeepSeekClient:
         }
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
+        # 禁用 thinking：v4-flash 推理会耗尽 max_tokens 且 JSON 结构不稳；
+        # 抽取/结构化任务走确定性输出（可用环境变量 DEEPSEEK_THINKING=1 重新开启）
+        if os.getenv("DEEPSEEK_THINKING", "0") != "1":
+            payload["thinking"] = {"type": "disabled"}
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         resp = requests.post(url, json=payload, headers=headers, timeout=120)
         if resp.status_code != 200:

@@ -141,6 +141,8 @@ def build_graph(use_llm=False, use_finbert=False, use_rule=True,
 
     g = StateGraph(SweepState)
 
+    # 公告研读节点超时自适应：开 FinBERT/LLM 时显著放大（全开关演示可到 ~1300s）
+    ann_timeout = 420 + (300 if use_finbert else 0) + (600 if use_llm else 0)
     g.add_node("announcement", _node_factory(
         lambda: AnnouncementReaderAgent(
             max_documents=max_documents,
@@ -148,7 +150,7 @@ def build_graph(use_llm=False, use_finbert=False, use_rule=True,
             use_llm=use_llm,
             use_rule=use_rule,
         ),
-        timeout=420, name="AnnouncementReader"))
+        timeout=ann_timeout, name="AnnouncementReader"))
     g.add_node("financial", _node_factory(
         lambda: FinancialDetectorAgent(use_llm=False, rate_limit=rate_limit),
         timeout=240, name="FinancialDetector"))
