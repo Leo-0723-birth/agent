@@ -57,6 +57,7 @@ with st.sidebar:
     codes_text = st.text_area("公司代码（每行一个）", "000004.SZ", height=90)
     window = st.selectbox("预测窗口（天）", [30, 60, 90], index=1)
     use_llm = st.checkbox("启用 LLM 精细抽取（需 .env 配 key）", value=False)
+    use_semantic_cases = st.checkbox("启用 BGE 语义案例检索", value=True, key="main_use_semantic_cases")
     use_llm_summary = st.checkbox("启用 DeepSeek 执行摘要（deepseek-v4-flash）", value=False,
                                   help="报告执行摘要用大模型生成；关闭时用规则拼装。")
     run_clicked = st.button("🚀 开始扫雷", type="primary", use_container_width=True)
@@ -96,7 +97,11 @@ if not codes:
     st.stop()
 
 # ================= 执行流水线 =================
-orch = SweepingOrchestrator(use_llm=use_llm, use_finbert=True)
+    orch = SweepingOrchestrator(
+        use_llm=use_llm,
+        use_finbert=True,
+        use_semantic_cases=use_semantic_cases,
+    )
 
 for code in codes:
     st.divider()
@@ -108,6 +113,11 @@ for code in codes:
             ms = t.get("latency_ms", "")
             out = str(t.get("output_summary", ""))[:80]
             st.write(f"**{agent}** ｜ {stt} ｜ {ms}ms ｜ {out}")
+        if any(t.get("status") == "needs_choice" for t in ctx.trace_log):
+            st.warning("BGE 语义检索未完成，本次暂使用标签检索。")
+            if st.button("切换为快速标签检索并重新运行", key=f"fast_{code}"):
+                st.session_state["main_use_semantic_cases"] = False
+                st.rerun()
         status.update(label=f"✅ {code} 分析完成", state="complete")
 
     # ================= 报告展示 =================

@@ -44,6 +44,7 @@ def analyze_company(
     use_llm: bool,
     top_k: int,
     shap_threshold: float,
+    use_semantic_cases: bool,
 ) -> dict:
     """公告研读 → 财务检测 → 预测建模(SHAP) → 归因解释（SHAP + 证据白名单 + validate_narrative 防幻觉）。"""
     # 离线（ANNOUNCE_SOURCE=local）时不传 source，AnnouncementReaderAgent 自动走本地 PDF 扫描
@@ -51,10 +52,15 @@ def analyze_company(
     if ANNOUNCE_SOURCE != "local":
         source = CninfoAnnouncementSource(max_documents=max_documents, ocr_enabled=use_ocr)
     ctx = Context(company=company, as_of=as_of)
-    AnnouncementReaderAgent(source=source, use_finbert=use_finbert, use_llm=use_llm).run(company, ctx)
+    AnnouncementReaderAgent(
+        source=source,
+        max_documents=max_documents,
+        use_finbert=use_finbert,
+        use_llm=use_llm,
+    ).run(company, ctx)
     FinancialDetectorAgent(use_llm=False).run(company, ctx)
     PredictorAgent().run(company, ctx)
-    CaseRetrieverAgent().run(company, ctx)
+    CaseRetrieverAgent(use_semantic=use_semantic_cases).run(company, ctx)
     AttributorAgent(top_k=top_k, shap_threshold=shap_threshold, use_llm=use_llm).run(company, ctx)
     return asdict(ctx)
 
@@ -86,7 +92,8 @@ with st.sidebar:
     st.subheader("运行设置")
     as_of_value = st.date_input("数据截止日", value=date.today(), max_value=date.today())
     max_documents = st.slider("最多解析 PDF 数量", min_value=5, max_value=120, value=30, step=5)
-    use_ocr = st.toggle("启用扫描 PDF OCR", value=True)
+    use_ocr = st.toggle("启用扫描 PDF OCR", value=False)
+    use_semantic_cases = st.toggle("启用 BGE 语义案例检索", value=True, key="attribution_use_semantic_cases")
     use_finbert = st.toggle("启用 FinBERT", value=False)
     use_llm = st.toggle("启用 LLM 归因叙事", value=False, help="需要 DEEPSEEK_API_KEY。")
     top_k = st.slider("Top 诱因数", min_value=1, max_value=15, value=5)
@@ -117,6 +124,7 @@ if submitted:
                     use_llm,
                     top_k,
                     shap_threshold,
+                    use_semantic_cases,
                 )
                 st.session_state["attribution_analysis"] = result
                 status.update(label="归因分析完成", state="complete", expanded=False)
@@ -129,6 +137,11 @@ if result:
     att = result.get("attribution", {})
     pred = result.get("prediction", {})
     trace = result.get("trace_log", [])
+    if any(t.get("status") == "needs_choice" for t in trace):
+        st.warning("BGE 语义检索未完成，本次暂使用标签检索。")
+        if st.button("切换为快速标签检索并重新运行", key="attribution_fast_cases"):
+            st.session_state["attribution_use_semantic_cases"] = False
+            st.rerun()
     factors = att.get("top_risk_factors", [])
     citations = att.get("evidence_citations", [])
     case_links = att.get("case_links", [])

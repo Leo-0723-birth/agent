@@ -46,13 +46,15 @@ class SweepingOrchestrator(AgentBase):
     name = "SweepingOrchestrator"
 
     def __init__(self, use_llm=True, use_finbert=True, use_rule=True, rate_limit=0.5,
-                 use_checkpointer=False):
+                 use_checkpointer=False, use_semantic_cases=True, max_documents=20):
         super().__init__()
         self.use_llm = use_llm          # 公告研读/归因的 LLM 开关
         self.use_finbert = use_finbert  # FinBERT 门控开关
         self.use_rule = use_rule        # 规则抽取通道（官方词典）
         self.rate_limit = rate_limit    # 财务爬虫限速
         self.use_checkpointer = use_checkpointer
+        self.use_semantic_cases = bool(use_semantic_cases)
+        self.max_documents = None if max_documents is None else int(max_documents)
         self._graph = None
         try:
             # LangGraph 编排（首选）：7 节点图，见 backend/agents/graph.py
@@ -61,6 +63,8 @@ class SweepingOrchestrator(AgentBase):
             self._graph = build_graph(
                 use_llm=use_llm, use_finbert=use_finbert, use_rule=use_rule,
                 rate_limit=rate_limit, checkpointer=checkpointer,
+                use_semantic_cases=self.use_semantic_cases,
+                max_documents=self.max_documents,
             )
         except Exception as e:
             self._graph = None
@@ -111,9 +115,12 @@ class SweepingOrchestrator(AgentBase):
     # ============ Dispatch：各环节 ============
     def _run_announcement(self, company, ctx):
         from .announcement_reader import AnnouncementReaderAgent
-        agent = AnnouncementReaderAgent(use_finbert=self.use_finbert,
-                                        use_llm=self.use_llm,
-                                        use_rule=self.use_rule)
+        agent = AnnouncementReaderAgent(
+            max_documents=self.max_documents,
+            use_finbert=self.use_finbert,
+            use_llm=self.use_llm,
+            use_rule=self.use_rule,
+        )
         agent.run(company, ctx)      # base.run 自动把 trace 追加进 ctx.trace_log
 
     def _run_financial(self, company, ctx):
@@ -136,7 +143,7 @@ class SweepingOrchestrator(AgentBase):
 
     def _run_cases(self, company, ctx):
         from .case_retriever import CaseRetrieverAgent
-        agent = CaseRetrieverAgent()
+        agent = CaseRetrieverAgent(use_semantic=self.use_semantic_cases)
         agent.run(company, ctx)
 
     def _run_attribution(self, company, ctx):

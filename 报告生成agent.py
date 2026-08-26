@@ -31,9 +31,14 @@ st.set_page_config(
 
 @st.cache_data(ttl="6h", max_entries=10, show_spinner=False)
 def generate_report(company: str, as_of: str, window: int, use_llm: bool,
-                    use_finbert: bool, use_llm_summary: bool) -> dict:
+                    use_finbert: bool, use_llm_summary: bool,
+                    use_semantic_cases: bool) -> dict:
     """全流程（公告研读→财务检测→预测→案例→归因→报告）后渲染报告。"""
-    orch = SweepingOrchestrator(use_llm=use_llm, use_finbert=use_finbert)
+    orch = SweepingOrchestrator(
+        use_llm=use_llm,
+        use_finbert=use_finbert,
+        use_semantic_cases=use_semantic_cases,
+    )
     ctx = orch.sweep_one(company, window=window, as_of=as_of, use_llm_summary=use_llm_summary)
     return ctx.to_dict()
 
@@ -44,7 +49,15 @@ def list_reports(max_n: int = 10) -> list[dict]:
         if not mp.exists():
             return []
         data = json.loads(mp.read_text(encoding="utf-8"))
-        return data[:max_n] if isinstance(data, list) else []
+        if not isinstance(data, list):
+            return []
+        reports_dir = mp.parent
+        return [
+            item for item in data
+            if isinstance(item, dict)
+            and (reports_dir / str(item.get("md_file", ""))).is_file()
+            and (reports_dir / str(item.get("json_file", ""))).is_file()
+        ][:max_n]
     except Exception:
         return []
 
@@ -58,6 +71,7 @@ with st.sidebar:
     window = st.selectbox("预测窗口（天）", [30, 60, 90], index=1)
     use_llm = st.toggle("启用 LLM 精细抽取", value=False, help="需要 DEEPSEEK_API_KEY。")
     use_finbert = st.toggle("启用 FinBERT", value=False)
+    use_semantic_cases = st.toggle("启用 BGE 语义案例检索", value=True, key="report_use_semantic_cases")
     use_llm_summary = st.toggle(
         "启用 DeepSeek 执行摘要（deepseek-v4-flash）", value=False,
         help="用大模型生成风控函件式执行摘要；关闭时用规则拼装。演示时建议勾选。")
@@ -79,7 +93,8 @@ if submitted:
         try:
             with st.status("正在运行 6-Agent 全流程并渲染报告……", expanded=True) as status:
                 result = generate_report(normalized, as_of_value.isoformat(), window,
-                                         use_llm, use_finbert, use_llm_summary)
+                                         use_llm, use_finbert, use_llm_summary,
+                                         use_semantic_cases)
                 st.session_state["report_analysis"] = result
                 status.update(label="报告生成完成", state="complete", expanded=False)
         except Exception as exc:
@@ -94,6 +109,11 @@ if result:
     report_json = report.get("json", {})
     pred = result.get("prediction", {})
     att = result.get("attribution", {})
+    if any(t.get("status") == "needs_choice" for t in trace):
+        st.warning("BGE 语义检索未完成，本次暂使用标签检索。")
+        if st.button("切换为快速标签检索并重新运行", key="report_fast_cases"):
+            st.session_state["report_use_semantic_cases"] = False
+            st.rerun()
 
     with st.container(horizontal=True):
         st.metric("流水线环节", len(trace), border=True)
@@ -158,11 +178,12 @@ else:
 st.divider()
 st.subheader("📁 已生成报告（output/reports/ 存档）")
 for r in list_reports():
+    report_path = Path(OUTPUT_DIR) / "reports" / str(r.get("md_file", ""))
     st.markdown(f"- **{r.get('report_id')}** ｜ 60d 概率 {r.get('probability_60d')} ｜ "
                 f"{r.get('risk_level')} ｜ {r.get('generated_at')}")
     st.download_button(
         f"⬇️ {r.get('md_file')}",
-        data=(Path(OUTPUT_DIR) / "reports" / r.get("md_file", "")).read_text(encoding="utf-8"),
+        data=report_path.read_text(encoding="utf-8"),
         file_name=r.get("md_file", "report.md"),
         mime="text/markdown",
         key=f"dl_{r.get('report_id')}",

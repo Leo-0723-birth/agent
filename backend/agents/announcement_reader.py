@@ -81,6 +81,7 @@ class AnnouncementReaderAgent(AgentBase):
         max_text_chars=MAX_TEXT_CHARS,
         gate_threshold=FINBERT_GATE,
         source=None,
+        max_documents=ANNOUNCE_MAX_DOCUMENTS,
         rule_extractor=None,
         llm_callable=None,
         progress_callback=None,
@@ -94,6 +95,7 @@ class AnnouncementReaderAgent(AgentBase):
         self.gate_threshold = float(gate_threshold)
         self.rule_extractor = rule_extractor or RuleRiskExtractor()
         self.progress_callback = progress_callback   # 需在 _default_source() 之前赋值
+        self.max_documents = None if max_documents is None else int(max_documents)
         self.source = source or self._default_source()
         self.llm_callable = llm_callable or chat_json
         self.llm_configured = bool(llm_callable is not None or os.getenv("DEEPSEEK_API_KEY"))
@@ -140,6 +142,8 @@ class AnnouncementReaderAgent(AgentBase):
         cache = Path(INDEX_DIR) / f"{secucode.replace('.', '_')}_index.json"
         store = AnnouncementStore(Path(self.data_root or DATA_RAW) / secucode, str(cache))
         announcements = store.search(days=ANNOUNCE_WINDOW_DAYS, as_of=as_of)
+        if self.max_documents is not None:
+            announcements = announcements[:self.max_documents]
         identity = {
             "code": code.group(0),
             "secucode": secucode,

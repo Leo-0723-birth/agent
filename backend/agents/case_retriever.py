@@ -52,10 +52,13 @@ class CaseRetrieverAgent(AgentBase):
     KEYWORD_WEIGHT = 0.25
     KEYWORD_HIT_CAP = 8
 
-    def __init__(self, top_k=CASE_TOP_K, rrf_k=RRF_K):
+    def __init__(self, top_k=CASE_TOP_K, rrf_k=RRF_K, use_semantic=True,
+                 semantic_timeout=60):
         super().__init__()
         self.top_k = top_k
         self.rrf_k = rrf_k
+        self.use_semantic = bool(use_semantic)
+        self.semantic_timeout = float(semantic_timeout)
         self._cosine_scores = {}   # 语义通道余弦相似度（idx -> 0~1）
         self._db, self._vecs = None, None
 
@@ -429,15 +432,48 @@ class CaseRetrieverAgent(AgentBase):
         label_ranks = {}
 
         # BGE 查询使用 query instruction；案例库向量是 document embedding。
-        if profile:
-            query_vec = embed_one(profile, is_query=True)
-            semantic_ranks = self._semantic_rank(
-                query_vec,
-                entries,
-                vectors,
-                eligible_indices,
-            )
-            ranks.append(semantic_ranks)
+        if profile and self.use_semantic:
+            import threading
+
+            result = {}
+            error = {}
+
+            def embed_worker():
+                try:
+                    result["vector"] = embed_one(profile, is_query=True)
+                except Exception as exc:  # noqa: BLE001
+                    error["value"] = exc
+
+            worker = threading.Thread(target=embed_worker, daemon=True)
+            worker.start()
+            worker.join(self.semantic_timeout)
+            if worker.is_alive():
+                ctx.trace_log.append({
+                    "agent": self.name,
+                    "status": "needs_choice",
+                    "reason": f"BGE 语义查询超过 {self.semantic_timeout:.0f}s，当前仅使用标签检索",
+                    "trace_complete": True,
+                })
+            elif "value" in error:
+                exc = error["value"]
+                ctx.trace_log.append({
+                    "agent": self.name,
+                    "status": "needs_choice",
+                    "reason": f"BGE 语义检索不可用，当前仅使用标签检索: {type(exc).__name__}: {exc}",
+                    "trace_complete": True,
+                })
+            elif result["vector"].shape[0] != vectors.shape[1]:
+                ctx.trace_log.append({
+                    "agent": self.name,
+                    "status": "needs_choice",
+                    "reason": f"BGE 向量维度不匹配 query={result['vector'].shape[0]} cases={vectors.shape[1]}，当前仅使用标签检索",
+                    "trace_complete": True,
+                })
+            else:
+                semantic_ranks = self._semantic_rank(
+                    result["vector"], entries, vectors, eligible_indices
+                )
+                ranks.append(semantic_ranks)
 
         if raw_labels or taxonomy_codes:
             label_ranks = self._label_rank(
