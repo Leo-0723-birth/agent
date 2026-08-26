@@ -24,3 +24,6 @@ agent_v1.0_backup.py
 # 临时/历史遗留
 无关文件夹/
 *.log
+
+# Superpowers brainstorming visual companion（仅本地设计讨论，不入库）
+.superpowers/
