@@ -17,10 +17,10 @@ import json
 import re
 from pathlib import Path
 
-from ..config import BASE_DIR
+from ..config import RISK_DICTIONARY
 from .announcement_context_filter import contextual_suppression_reason
 
-DICT_PATH = Path(BASE_DIR) / "backend" / "data" / "labels" / "risk_dictionary.yaml"
+DICT_PATH = Path(RISK_DICTIONARY)
 
 
 class RuleRiskExtractor:
