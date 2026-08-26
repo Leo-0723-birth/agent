@@ -92,14 +92,12 @@ def _get_lc_base():
 
 
 def _langchain_chat(system: str, prompt: str, temperature: float,
-                    max_tokens: int, json_mode: bool) -> str:
-    """LangChain 通道：ChatDeepSeek.invoke。json_mode 时尝试 response_format 约束。"""
+                    max_tokens: int) -> str:
+    """LangChain 通道：ChatDeepSeek.invoke（非 JSON 调用）。
+
+    说明：json_mode 已改走 requests 直连（thinking 禁用），本函数不再处理 JSON。
+    """
     model = _get_lc_base().bind(temperature=temperature, max_tokens=max_tokens)
-    if json_mode:
-        try:
-            model = model.bind(response_format={"type": "json_object"})
-        except Exception:
-            pass  # 模型不支持该参数时退化为普通调用，由 _extract_json 兜底
     messages = [
         ("system", system or "你是严谨的金融风控分析助手。"),
         ("human", prompt),
@@ -121,7 +119,7 @@ def chat(system: str = "", prompt: str = "", temperature: float = DEFAULT_TEMPER
         return get_client().chat(system, prompt, temperature, max_tokens, json_mode=True)
     if LANGCHAIN_AVAILABLE:
         try:
-            return _langchain_chat(system, prompt, temperature, max_tokens, False)
+            return _langchain_chat(system, prompt, temperature, max_tokens)
         except Exception as e:
             print(f"[llm] LangChain 通道异常，回落 requests 直连: {type(e).__name__}: {e}")
     return get_client().chat(system, prompt, temperature, max_tokens, json_mode=False)
