@@ -20,7 +20,6 @@
 设计：纯规则 + 可选 LLM 解读（backend/llm.py，模型 deepseek-v4-flash）。
 参考：底层建模方案 2.3/2.4 + 桌面《财务异常agent》已有实现（已跑通）。
 """
-import re
 import sys
 from pathlib import Path
 
@@ -44,6 +43,7 @@ from ..config import (
 from ..llm import chat, chat_json
 from ..skills import f2_calc, market_fetch
 from ..skills.financial_data_fetch import DataFetcher
+from ..skills.stock_code import StockCodeError, normalize_stock_code
 from .base import AgentBase
 
 # 特殊行业的财务特点（高杠杆/金融属性；仍参与常规检测，供审计参考）
@@ -332,7 +332,7 @@ class FinancialDetectorAgent(AgentBase):
         """把名称/简称/代码解析为标准 secucode（用共享 LLM）。失败返回空 dict。"""
         prompt = f"""你是A股上市公司识别助手。请识别用户输入所指的公司，输出 JSON：
 {{"secucode": "6位代码.交易所后缀", "company_name": "公司简称", "matched": true/false}}
-规则：6/9开头→.SH，0/3开头→.SZ，4/8开头→.BJ；无法识别 matched=false。
+规则：6/9开头（92除外）→.SH，0/2/3开头→.SZ，4/8/92开头→.BJ；无法识别 matched=false。
 用户输入：{user_input}"""
         try:
             return chat_json("", prompt, max_tokens=200)
@@ -361,11 +361,18 @@ class FinancialDetectorAgent(AgentBase):
     # ================= 主入口（统一签名） =================
     def execute(self, company, ctx):
         """统一签名：读 ctx（company/name/window），写回 ctx.financial。"""
-        code = company
-        # 1. 输入解析：若传入的是名称/简称，用 LLM 解析为代码
-        if self.use_llm and not re.match(r"^\d{6}", code):
-            resolved = self._resolve_company(code)
-            code = resolved.get("secucode") or code
+        raw_company = str(company or "").strip()
+        # 1. 输入解析：股票代码统一规范；纯名称仅在启用 LLM 时解析。
+        try:
+            code = normalize_stock_code(raw_company)
+        except StockCodeError:
+            if not self.use_llm or any(character.isdigit() for character in raw_company):
+                raise
+            resolved = self._resolve_company(raw_company)
+            # 兼容只返回 secucode 的旧模型响应；只有明确 matched=false 才拒绝。
+            if resolved.get("matched") is False or not resolved.get("secucode"):
+                raise StockCodeError(f"无法把公司名称“{raw_company}”解析为上市公司股票代码。")
+            code = normalize_stock_code(resolved["secucode"])
             ctx.name = resolved.get("company_name") or ctx.name
         ctx.company = code
 

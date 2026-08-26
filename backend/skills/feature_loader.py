@@ -26,6 +26,7 @@ from pathlib import Path
 import pandas as pd
 
 from ..config import FEATURE_TABLE_CONFIG, META_COLS
+from .stock_code import StockCodeError, normalize_stock_code
 
 
 # ============================================================
@@ -39,17 +40,15 @@ def normalize_company_code(code) -> str:
     - "000004"     -> "000004.SZ"（按首位推断交易所）
     - "4" / 4      -> "000004.SZ"（补零 + 推断）
     """
-    s = str(code).strip()
-    if "." in s:
-        return s
-    digits = "".join(ch for ch in s if ch.isdigit()) or "000000"
-    digits = digits.zfill(6)[:6]
-    first = digits[0]
-    if first in ("6", "9"):
-        return f"{digits}.SH"
-    if first in ("4", "8"):
-        return f"{digits}.BJ"
-    return f"{digits}.SZ"
+    return normalize_stock_code(code)
+
+
+def _safe_normalize_company_code(code) -> str:
+    """加载批量表时跳过空值/脏键，不让一行坏数据中断整张特征表。"""
+    try:
+        return normalize_company_code(code)
+    except StockCodeError:
+        return ""
 
 
 def normalize_report_period(p) -> int:
@@ -105,7 +104,8 @@ def _read_family(agent_id_or_spec) -> pd.DataFrame:
     for f in spec["files"]:
         # dtype=str 读入，避免 000004 被读成整数 4（丢前导零）
         df = pd.read_csv(str(f), encoding="utf-8-sig", dtype=str, low_memory=False)
-        df["__code"] = df[key].map(normalize_company_code)
+        df["__code"] = df[key].map(_safe_normalize_company_code)
+        df = df[df["__code"] != ""].copy()
         df["__period"] = df[period].map(normalize_report_period)
         # 元数据列（含 key/period 本身）不算特征
         feature_cols = [c for c in df.columns

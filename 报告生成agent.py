@@ -21,6 +21,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from backend.agents import SweepingOrchestrator
 from backend.config import OUTPUT_DIR
+from backend.skills.stock_code import normalize_company_input
 from ui.theme import apply_page_style
 from ui.session import active_as_of, active_company, hydrate_page_state, shared_context_caption
 
@@ -82,6 +83,7 @@ if submitted:
         st.error("请输入公司代码或准确名称。", icon=":material/error:")
     else:
         try:
+            normalized = normalize_company_input(normalized, allow_name=True)
             with st.status("正在运行 6-Agent 全流程并渲染报告……", expanded=True) as status:
                 result = generate_report(normalized, as_of_value.isoformat(), window,
                                          use_llm, use_finbert, use_llm_summary)

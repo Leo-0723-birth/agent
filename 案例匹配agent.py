@@ -24,6 +24,7 @@ from backend.agents.announcement_reader import AnnouncementReaderAgent
 from backend.agents.case_retriever import CaseRetrieverAgent
 from backend.agents.financial_detector import FinancialDetectorAgent
 from backend.context import Context
+from backend.skills.stock_code import normalize_company_input
 from backend.skills.announcement_search import CninfoAnnouncementSource
 from ui.theme import apply_page_style
 from ui.session import active_as_of, active_company, hydrate_page_state, shared_context_caption
@@ -100,6 +101,7 @@ if submitted:
         st.error("请输入公司代码或准确名称。", icon=":material/error:")
     else:
         try:
+            normalized = normalize_company_input(normalized, allow_name=True)
             with st.status("正在启动案例匹配 Agent...", expanded=True) as status:
 
                 progress_bar = st.progress(0)

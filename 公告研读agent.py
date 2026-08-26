@@ -29,6 +29,7 @@ from backend.skills.announcement_context_filter import FILTER_VERSION
 from backend.skills.announcement_search import CninfoAnnouncementSource
 from backend.skills.competition_history import CompetitionAwareAnnouncementSource
 from backend.skills.offline_announcement_snapshot import OfflineAnalysisSnapshotStore
+from backend.skills.stock_code import normalize_company_input
 from ui.theme import apply_page_style
 from ui.session import active_as_of, active_company, hydrate_page_state, shared_context_caption
 
@@ -468,6 +469,7 @@ if submitted:
     else:
         progress_slot = st.empty()
         try:
+            normalized = normalize_company_input(normalized, allow_name=True)
             with progress_slot.container():
                 with st.status("准备开始分层查询……", expanded=True) as status:
                     history_line = st.empty()

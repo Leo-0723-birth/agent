@@ -78,7 +78,8 @@ def _node_factory(agent_factory, timeout=240, name="?"):
 
     def _run_agent(state: SweepState) -> dict:
         agent = agent_factory()
-        agent.run(state["company"], state["ctx"])
+        company = state["ctx"].company or state["company"]
+        agent.run(company, state["ctx"])
         return {"ctx": state["ctx"]}
     return node
 
@@ -102,7 +103,8 @@ def _tolerant_node(agent_factory, timeout=120):
     def _run_tolerant(state: SweepState) -> dict:
         agent = agent_factory()
         try:
-            agent.run(state["company"], state["ctx"])
+            company = state["ctx"].company or state["company"]
+            agent.run(company, state["ctx"])
         except Exception as e:
             state["ctx"].trace_log.append({
                 "agent": getattr(agent, "name", "?"),

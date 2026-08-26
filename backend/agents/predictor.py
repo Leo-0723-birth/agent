@@ -24,6 +24,7 @@ import pandas as pd
 from ..config import (MODELING_DATASET, PREDICTOR_HORIZONS, PREDICTOR_MODEL_DIR,
                       PREDICTOR_SURVIVAL_BASELINE, PREDICTOR_SURVIVAL_FEATURES,
                       PREDICTOR_SURVIVAL_XGB, PREDICTOR_TOP_SHAP, RISK_THRESHOLDS)
+from ..skills.stock_code import normalize_stock_code
 from .base import AgentBase
 
 
@@ -226,7 +227,7 @@ class PredictorAgent(AgentBase):
 
     # ================= 主入口 =================
     def execute(self, company, ctx):
-        code = company
+        code = normalize_stock_code(company)
         as_of = ctx.as_of or None
         ctx.company = code
 

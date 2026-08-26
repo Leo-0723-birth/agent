@@ -25,6 +25,7 @@ from backend.agents.financial_detector import FinancialDetectorAgent
 from backend.agents.predictor import PredictorAgent
 from backend.config import ANNOUNCE_SOURCE
 from backend.context import Context
+from backend.skills.stock_code import normalize_company_input
 from backend.skills.announcement_search import CninfoAnnouncementSource
 from ui.theme import apply_page_style
 from ui.session import active_as_of, active_company, hydrate_page_state, shared_context_caption
@@ -112,6 +113,7 @@ if submitted:
         st.error("请输入公司代码或准确名称。", icon=":material/error:")
     else:
         try:
+            normalized = normalize_company_input(normalized, allow_name=True)
             with st.status("正在运行公告研读→财务检测→预测建模→归因……", expanded=True) as status:
                 result = analyze_company(
                     normalized,

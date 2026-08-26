@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from backend.agents import SweepingOrchestrator
 from backend.config import OUTPUT_DIR
+from backend.skills.stock_code import StockCodeError, normalize_stock_code
 from ui.charts import case_score_chart, probability_chart, risk_severity_chart, shap_chart
 from ui.components import evidence_records, render_evidence_cards, render_metric_grid, render_page_header, render_source_index, render_trace
 from ui.data import dataset_shape, load_model_summary, load_offline_context
@@ -74,9 +75,14 @@ with st.sidebar:
         st.rerun()
 
 if run_clicked:
-    codes = [code.strip() for code in codes_text.splitlines() if code.strip()]
+    try:
+        codes = [normalize_stock_code(code) for code in codes_text.splitlines() if code.strip()]
+    except StockCodeError as exc:
+        codes = []
+        st.error(str(exc), icon=":material/error:")
     if not codes:
-        st.warning("请输入至少一个公司代码。")
+        if not codes_text.strip():
+            st.warning("请输入至少一个公司代码。")
     else:
         orchestrator = SweepingOrchestrator(use_llm=use_llm, use_finbert=True)
         for code in codes:

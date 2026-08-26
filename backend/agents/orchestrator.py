@@ -39,6 +39,7 @@ if sys.platform == "win32":
         pass
 
 from ..context import Context
+from ..skills.stock_code import normalize_company_input
 from .base import AgentBase
 
 
@@ -82,6 +83,7 @@ class SweepingOrchestrator(AgentBase):
             return ctx
         # 兜底：确定性串行编排（langgraph 未安装/导入失败时）
         self._run_announcement(company, ctx)   # Phase 1
+        company = ctx.company or company       # 公告研读解析名称后向下游传播标准代码
         self._run_financial(company, ctx)      # Phase 2
         self._run_predict(company, ctx)        # Phase 3（占位，待填充）
         self._run_cases(company, ctx)          # Phase 4
@@ -95,6 +97,7 @@ class SweepingOrchestrator(AgentBase):
 
         use_llm_summary：报告执行摘要是否用 DeepSeek 生成（默认关，演示时勾选）。
         """
+        company = normalize_company_input(company, allow_name=True)
         ctx = Context(company=company, window=window,
                       as_of=as_of or str(date.today()))
         ctx.use_llm_summary = bool(use_llm_summary)

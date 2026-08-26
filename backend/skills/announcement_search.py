@@ -93,7 +93,7 @@ def _six_digit_code(value):
 def _market(code):
     if code.startswith(("6", "9")) and not code.startswith("92"):
         return "SSE", "SH", "sse", "sh"
-    if code.startswith(("0", "3")):
+    if code.startswith(("0", "2", "3")):
         return "SZSE", "SZ", "szse", "sz"
     if code.startswith(("4", "8", "92")):
         return "BSE", "BJ", "bj", "bj"

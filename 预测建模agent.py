@@ -21,6 +21,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from backend.agents.predictor import PredictorAgent
 from backend.context import Context
+from backend.skills.stock_code import normalize_stock_code
 from ui.charts import ensemble_weights_chart, model_performance_chart, risk_ranking_chart
 from ui.data import load_model_summary, load_risk_ranking
 from ui.theme import apply_page_style
@@ -402,6 +403,7 @@ if submitted:
         st.error("请输入公司代码。", icon=":material/error:")
     else:
         try:
+            normalized = normalize_stock_code(normalized)
             with st.status("正在查表并执行三模型集成推理……", expanded=True) as status:
                 result = analyze_company(normalized, as_of_value.isoformat(), 60)
                 st.session_state["prediction_analysis"] = result

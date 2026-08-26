@@ -19,6 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from backend.agents.financial_detector import FinancialDetectorAgent
 from backend.context import Context
+from backend.skills.stock_code import normalize_company_input
 from ui.theme import apply_page_style
 from ui.session import active_as_of, active_company, hydrate_page_state, shared_context_caption
 from ui.components import render_trace
@@ -269,6 +270,7 @@ if submitted:
         st.error("请输入公司代码或准确名称。", icon=":material/error:")
     else:
         try:
+            normalized = normalize_company_input(normalized, allow_name=use_llm)
             with st.status("正在抓取财务数据并检测异常……", expanded=True) as status:
                 result = analyze_company(normalized, as_of_value.isoformat(), use_llm)
                 st.session_state["financial_analysis"] = result
