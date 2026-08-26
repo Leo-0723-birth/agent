@@ -26,6 +26,7 @@ from backend.agents.financial_detector import FinancialDetectorAgent
 from backend.context import Context
 from backend.skills.announcement_search import CninfoAnnouncementSource
 from ui.theme import apply_page_style
+from ui.session import active_as_of, active_company, hydrate_page_state, shared_context_caption
 
 st.set_page_config(
     page_title="案例匹配 Agent",
@@ -72,10 +73,12 @@ def cases_dataframe(cases: list[dict]) -> pd.DataFrame:
 
 st.title("案例匹配 Agent")
 st.caption("基于 4,785 份历史监管问询案例，对目标公司风险画像做 RRF 融合检索（语义向量 + 标签重合），带时间穿越控制与防泄漏过滤。")
+if shared_context_caption():
+    st.info(shared_context_caption(), icon=":material/sync:")
 
 with st.sidebar:
     st.subheader("运行设置")
-    as_of_value = st.date_input("数据截止日", value=date.today(), max_value=date.today())
+    as_of_value = st.date_input("数据截止日", value=active_as_of(), max_value=date.today())
     max_documents = st.slider("最多解析 PDF 数量", min_value=5, max_value=120, value=30, step=5)
     use_ocr = st.toggle("启用扫描 PDF OCR", value=True)
     use_finbert = st.toggle("启用 FinBERT", value=False)
@@ -86,7 +89,7 @@ with st.sidebar:
 with st.form("company_query_form", border=True):
     company_input = st.text_input(
         "公司代码或准确名称",
-        value="000004.SZ",
+        value=active_company(),
         placeholder="例如：000004.SZ、国华网安",
     )
     submitted = st.form_submit_button("开始匹配", type="primary", icon=":material/search:")
@@ -170,7 +173,7 @@ if submitted:
             st.session_state.pop("case_analysis", None)
             st.error(f"匹配失败：{type(exc).__name__}: {exc}", icon=":material/error:")
 
-result = st.session_state.get("case_analysis")
+result = hydrate_page_state("case_analysis")
 if result:
     cases = result.get("cases", [])
     semantic = result.get("semantic", {})
@@ -196,9 +199,10 @@ if result:
         <div style="
             text-align:center;
             padding:12px;
-            border:1px solid #444;
+            border:1px solid #DFE5E8;
             border-radius:10px;
-            background:#151922;
+            background:#F7F9FA;
+            color:#314456;
             font-size:18px;
             ">
             🏢 目标上市公司风险输入

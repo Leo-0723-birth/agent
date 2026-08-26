@@ -22,6 +22,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from backend.agents import SweepingOrchestrator
 from backend.config import OUTPUT_DIR
 from ui.theme import apply_page_style
+from ui.session import active_as_of, active_company, hydrate_page_state, shared_context_caption
 
 st.set_page_config(
     page_title="报告生成 Agent",
@@ -53,10 +54,12 @@ def list_reports(max_n: int = 10) -> list[dict]:
 
 st.title("报告生成 Agent")
 st.caption("聚合全流水线结果（预测/财务/公告/案例/归因/trace）→ 八章风控函件式 Markdown 报告 + 结构化 JSON，自动归档 output/reports/。")
+if shared_context_caption():
+    st.info(shared_context_caption(), icon=":material/sync:")
 
 with st.sidebar:
     st.subheader("运行设置")
-    as_of_value = st.date_input("数据截止日", value=date.today(), max_value=date.today())
+    as_of_value = st.date_input("数据截止日", value=active_as_of(), max_value=date.today())
     window = st.selectbox("预测窗口（天）", [30, 60, 90], index=1)
     use_llm = st.toggle("启用 LLM 精细抽取", value=False, help="需要 DEEPSEEK_API_KEY。")
     use_finbert = st.toggle("启用 FinBERT", value=False)
@@ -68,7 +71,7 @@ with st.sidebar:
 with st.form("company_query_form", border=True):
     company_input = st.text_input(
         "公司代码或准确名称",
-        value="000004.SZ",
+        value=active_company(),
         placeholder="例如：000004.SZ、国华网安",
     )
     submitted = st.form_submit_button("生成报告", type="primary", icon=":material/search:")
@@ -88,7 +91,7 @@ if submitted:
             st.session_state.pop("report_analysis", None)
             st.error(f"报告生成失败：{type(exc).__name__}: {exc}", icon=":material/error:")
 
-result = st.session_state.get("report_analysis")
+result = hydrate_page_state("report_analysis")
 if result:
     report = result.get("report", {})
     trace = result.get("trace_log", [])
@@ -141,13 +144,13 @@ if result:
     c1.download_button(
         "⬇️ 下载 Markdown 报告",
         data=markdown,
-        file_name=f"{normalized}_risk_report.md",
+        file_name=f"{result.get('company', 'company')}_risk_report.md",
         mime="text/markdown",
     )
     c2.download_button(
         "⬇️ 下载 JSON 报告",
         data=json.dumps(report_json, ensure_ascii=False, indent=2),
-        file_name=f"{normalized}_risk_report.json",
+        file_name=f"{result.get('company', 'company')}_risk_report.json",
         mime="application/json",
     )
 else:

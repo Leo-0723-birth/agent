@@ -27,6 +27,7 @@ from backend.config import ANNOUNCE_SOURCE
 from backend.context import Context
 from backend.skills.announcement_search import CninfoAnnouncementSource
 from ui.theme import apply_page_style
+from ui.session import active_as_of, active_company, hydrate_page_state, shared_context_caption
 
 st.set_page_config(
     page_title="归因分析 Agent",
@@ -83,10 +84,12 @@ def factors_dataframe(factors: list[dict]) -> pd.DataFrame:
 
 st.title("归因分析 Agent")
 st.caption("SHAP 特征贡献（LightGBM pred_contrib 代理）+ 证据白名单 + validate_narrative 防幻觉校验；无 SHAP 时自动降级为规则归因。")
+if shared_context_caption():
+    st.info(shared_context_caption(), icon=":material/sync:")
 
 with st.sidebar:
     st.subheader("运行设置")
-    as_of_value = st.date_input("数据截止日", value=date.today(), max_value=date.today())
+    as_of_value = st.date_input("数据截止日", value=active_as_of(), max_value=date.today())
     max_documents = st.slider("最多解析 PDF 数量", min_value=5, max_value=120, value=30, step=5)
     use_ocr = st.toggle("启用扫描 PDF OCR", value=True)
     use_finbert = st.toggle("启用 FinBERT", value=False)
@@ -98,7 +101,7 @@ with st.sidebar:
 with st.form("company_query_form", border=True):
     company_input = st.text_input(
         "公司代码或准确名称",
-        value="000004.SZ",
+        value=active_company(),
         placeholder="例如：000004.SZ、国华网安",
     )
     submitted = st.form_submit_button("开始归因", type="primary", icon=":material/search:")
@@ -126,7 +129,7 @@ if submitted:
             st.session_state.pop("attribution_analysis", None)
             st.error(f"归因失败：{type(exc).__name__}: {exc}", icon=":material/error:")
 
-result = st.session_state.get("attribution_analysis")
+result = hydrate_page_state("attribution_analysis")
 if result:
     att = result.get("attribution", {})
     pred = result.get("prediction", {})

@@ -24,6 +24,7 @@ from backend.context import Context
 from ui.charts import ensemble_weights_chart, model_performance_chart, risk_ranking_chart
 from ui.data import load_model_summary, load_risk_ranking
 from ui.theme import apply_page_style
+from ui.session import active_as_of, active_company, hydrate_page_state, shared_context_caption
 
 st.set_page_config(
     page_title="预测建模 Agent",
@@ -377,6 +378,8 @@ def _render_shap(shap, c: dict) -> None:
 
 st.title("预测建模 Agent")
 st.caption("按 (company, as_of) 从建模数据集取最新一行特征 → 三模型集成（RF+LightGBM+XGBoost）→ 30/60/90 天问询概率 + SHAP 归因。")
+if shared_context_caption():
+    st.info(shared_context_caption(), icon=":material/sync:")
 
 model_summary = load_model_summary()
 st.subheader("模型质量与业务解释")
@@ -399,7 +402,7 @@ with st.container(border=True):
 
 with st.sidebar:
     st.subheader("运行设置")
-    as_of_value = st.date_input("特征锚点 T", value=date.today(), max_value=date.today(),
+    as_of_value = st.date_input("特征锚点 T", value=active_as_of(), max_value=date.today(),
                                 help="取该日前最新一期特征（建模数据集的最近报告期）进行推理。")
     st.caption("公司需在建模数据集 backend/data/modeling/processed_dataset.csv 内。")
     st.caption("端口约定：8504（独立运行：streamlit run 预测建模agent.py --server.port 8504）")
@@ -407,7 +410,7 @@ with st.sidebar:
 with st.form("company_query_form", border=True):
     company_input = st.text_input(
         "公司代码（带交易所后缀）",
-        value="000004.SZ",
+        value=active_company(),
         placeholder="例如：000004.SZ",
     )
     submitted = st.form_submit_button("开始预测", type="primary", icon=":material/search:")
@@ -426,7 +429,7 @@ if submitted:
             st.session_state.pop("prediction_analysis", None)
             st.error(f"预测失败：{type(exc).__name__}: {exc}", icon=":material/error:")
 
-result = st.session_state.get("prediction_analysis")
+result = hydrate_page_state("prediction_analysis")
 if result:
     pred = result.get("prediction", {})
     trace = result.get("trace_log", [])

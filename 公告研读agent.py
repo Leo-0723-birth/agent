@@ -30,6 +30,7 @@ from backend.skills.announcement_search import CninfoAnnouncementSource
 from backend.skills.competition_history import CompetitionAwareAnnouncementSource
 from backend.skills.offline_announcement_snapshot import OfflineAnalysisSnapshotStore
 from ui.theme import apply_page_style
+from ui.session import active_as_of, active_company, hydrate_page_state, shared_context_caption
 
 
 st.set_page_config(
@@ -419,12 +420,14 @@ def historical_risk_dataframe(history: dict) -> pd.DataFrame:
 
 st.title("公告研读 Agent")
 st.caption("输入上市公司代码或准确名称：先查比赛历史库，再读取巨潮近一年官方公告，分层输出可核验证据。")
+if shared_context_caption():
+    st.info(shared_context_caption(), icon=":material/sync:")
 
 with st.sidebar:
     st.subheader("运行设置")
     as_of_value = st.date_input(
         "数据截止日",
-        value=date.today(),
+        value=active_as_of(),
         max_value=date.today(),
         help="系统不会读取该日期之后的公告。",
     )
@@ -448,7 +451,7 @@ with st.sidebar:
 with st.form("company_query_form", border=True):
     company_input = st.text_input(
         "公司代码或准确名称",
-        value="000004SZ",
+        value=active_company("000004SZ"),
         placeholder="例如：000004SZ、国华退",
         help="000004SZ 内置截至 2026-08-24 的可核验离线快照，可用于快速演示。",
     )
@@ -499,7 +502,7 @@ if submitted:
                 icon=":material/error:",
             )
 
-result = st.session_state.get("announcement_analysis")
+result = hydrate_page_state("announcement_analysis")
 if result:
     semantic = result.get("semantic", {})
     quality = semantic.get("data_quality", {})

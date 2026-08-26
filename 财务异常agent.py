@@ -20,6 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from backend.agents.financial_detector import FinancialDetectorAgent
 from backend.context import Context
 from ui.theme import apply_page_style
+from ui.session import active_as_of, active_company, hydrate_page_state, shared_context_caption
 
 st.set_page_config(
     page_title="财务异常 Agent",
@@ -58,17 +59,19 @@ def anomaly_dataframe(anomalies: list[dict]) -> pd.DataFrame:
 
 st.title("财务异常 Agent")
 st.caption("东方财富实时财务数据 → F2/F3 特征 → 行业对标 Z-Score → 规则异常检测（含双负信号兜底）。")
+if shared_context_caption():
+    st.info(shared_context_caption(), icon=":material/sync:")
 
 with st.sidebar:
     st.subheader("运行设置")
-    as_of_value = st.date_input("数据截止日", value=date.today(), max_value=date.today())
+    as_of_value = st.date_input("数据截止日", value=active_as_of(), max_value=date.today())
     use_llm = st.toggle("启用 LLM 财务解读", value=False, help="需要 DEEPSEEK_API_KEY。")
     st.caption("端口约定：8503（独立运行：streamlit run 财务异常agent.py --server.port 8503）")
 
 with st.form("company_query_form", border=True):
     company_input = st.text_input(
         "公司代码或准确名称",
-        value="000004.SZ",
+        value=active_company(),
         placeholder="例如：000004.SZ、国华网安",
     )
     submitted = st.form_submit_button("开始检测", type="primary", icon=":material/search:")
@@ -87,7 +90,7 @@ if submitted:
             st.session_state.pop("financial_analysis", None)
             st.error(f"检测失败：{type(exc).__name__}: {exc}", icon=":material/error:")
 
-result = st.session_state.get("financial_analysis")
+result = hydrate_page_state("financial_analysis")
 if result:
     fin = result.get("financial", {})
     trace = result.get("trace_log", [])
@@ -95,7 +98,7 @@ if result:
         st.metric("风险等级", fin.get("risk_level") or "—", border=True)
         st.metric("异常信号", len(fin.get("anomaly_list", [])), border=True)
         st.metric("行业", fin.get("industry") or "—", border=True)
-        st.metric("特征维度", len(fin.get("features", {})), border=True)
+        st.metric("特征维度", fin.get("features_count") or len(fin.get("features", {})), border=True)
     if fin.get("skip"):
         st.info(f"财务分析跳过：{fin.get('skip_reason')}", icon=":material/info:")
         st.json(fin.get("indicators", {}), expanded=False)
@@ -121,7 +124,8 @@ if result:
         st.json(fin.get("benchmarks", {}), expanded=False)
     with tab3:
         features = fin.get("features", {})
-        st.caption(f"共 {len(features)} 个特征。")
+        feature_count = fin.get("features_count") or len(features)
+        st.caption(f"共 {feature_count} 个特征；离线报告仅展示已归档摘要，实时重跑可展开全部特征。")
         st.json(features, expanded=False)
     with tab4:
         st.json(trace, expanded=False)

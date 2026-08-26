@@ -15,6 +15,7 @@ from backend.config import OUTPUT_DIR
 from ui.charts import case_score_chart, probability_chart, risk_severity_chart, shap_chart
 from ui.components import evidence_records, render_evidence_cards, render_metric_grid, render_page_header, render_source_index, render_trace
 from ui.data import dataset_shape, load_model_summary, load_offline_context
+from ui.session import publish_analysis
 from ui.theme import apply_page_style
 
 st.set_page_config(page_title="监管问询风险简报", page_icon=":material/radar:", layout="wide")
@@ -57,7 +58,7 @@ def live_context_to_result(ctx, window: int) -> dict:
 
 
 if "dashboard_result" not in st.session_state:
-    st.session_state.dashboard_result = load_offline_context("000004.SZ")
+    publish_analysis(load_offline_context("000004.SZ"), source="离线演示快照")
 
 with st.sidebar:
     st.subheader("公司扫雷")
@@ -69,7 +70,7 @@ with st.sidebar:
         use_llm_summary = st.checkbox("生成 LLM 执行摘要", value=False)
         run_clicked = st.form_submit_button(":material/play_arrow: 运行完整扫雷", type="primary", width="stretch")
     if st.button(":material/offline_bolt: 恢复离线演示快照", width="stretch"):
-        st.session_state.dashboard_result = load_offline_context("000004.SZ")
+        publish_analysis(load_offline_context("000004.SZ"), source="离线演示快照")
         st.rerun()
 
 if run_clicked:
@@ -85,7 +86,7 @@ if run_clicked:
                     for step in ctx.trace_log:
                         st.write(f"**{step.get('agent', 'Agent')}** · {step.get('status', 'done')} · {step.get('latency_ms', '—')} ms · {str(step.get('output_summary', ''))[:72]}")
                     status.update(label=f"{code} 分析完成", state="complete")
-                st.session_state.dashboard_result = live_context_to_result(ctx, window)
+                publish_analysis(live_context_to_result(ctx, window), source="主控 Agent 实时分析")
             except Exception as exc:
                 st.error(f"{code} 实时分析未完成：{exc}。页面继续保留上一次可用快照。")
 
