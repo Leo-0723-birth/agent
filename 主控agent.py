@@ -2,21 +2,20 @@
 """
 上市公司监管问询扫雷预警系统 —— Streamlit 演示页（设计规范 v1.1 金融蓝主题）
 =============================================================
-运行：streamlit run 导航入口.py（推荐，单入口导航，默认打开本页）
-     或 streamlit run 主控agent.py --server.port 8501（独立运行）
+布局对齐 docs/ui_preview_主控页.html：
+  - 顶栏：品牌 + Agent 在线状态 + 「⇄ 切换公司」按钮（弹窗含参数设置）
+  - 左栏：Agent 流水线（7 步状态）
+  - 右栏：技术指标卡 → 风险仪表盘 → 执行摘要 → SHAP 因子卡 → 风险报告
 功能：
-  - 单公司/批量扫雷（真实 7-Agent 流水线：公告研读→财务检测→预测→案例→段落→归因→报告）
-  - 「切换公司」弹窗：3 家预跑公司（000001/000063/000858，均未退市）秒级缓存切换
-  - 技术指标卡（真实评估值：AUC/Top10%/F1/可追踪率）
+  - 单公司/批量扫雷（真实 7-Agent 流水线）
+  - 「切换公司」弹窗：3 家预跑公司缓存秒级切换 + 运行参数（窗口/LLM/BGE/摘要）
+  - 技术指标卡（真实评估值：AUC 0.8312 / Top10% 46.3% / F1 0.337 / 可追踪率 100%）
   - 风险仪表盘（概率大数字/数字滚动/进度条/风险徽章）+ SHAP 因子卡 + Pipeline 步骤条
-  - 可解释预警报告（财务/公告/归因/相似案例/推理链路）+ 报告归档浏览
 说明：
   - 默认 use_llm=False（离线）；勾选"启用 LLM"需 .env 配 DEEPSEEK_API_KEY
-  - "启用 DeepSeek 执行摘要"：deepseek-v4-flash 生成风控函件式摘要（默认关，演示勾选）
 """
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -39,6 +38,12 @@ PREFETCHED_COMPANIES = [
     ("000063.SZ", "中兴通讯"),
     ("000858.SZ", "五粮液"),
 ]
+AGENT_STEPS = [
+    ("公告研读", "📄"), ("财务检测", "📈"), ("预测建模", "🎯"), ("案例匹配", "🧩"),
+    ("段落检索", "📑"), ("归因解释", "🔍"), ("报告生成", "📋"),
+]
+AGENT_KEYS = ["AnnouncementReader", "FinancialDetector", "Predictor", "CaseRetriever",
+              "ChunkRetriever", "Attributor", "Reporter"]
 
 
 # ================= 工具 =================
@@ -61,7 +66,6 @@ def load_report_md(report_dir: str = "reports") -> str:
 
 
 def risk_badge(level: str) -> str:
-    """风险徽章 HTML（三档配色）。"""
     level = (level or "").lower()
     if "高" in level:
         return '<span class="badge badge-high">高风险</span>'
@@ -80,19 +84,56 @@ def risk_color(level: str) -> str:
     return "#10B981"
 
 
+# ================= 顶栏 / 左栏 =================
+def render_header(agent_online: int = 7) -> None:
+    """顶栏：品牌 + Agent 在线状态 + 切换公司按钮。"""
+    h_l, h_r = st.columns([5, 1], vertical_alignment="center")
+    with h_l:
+        st.html(
+            '<div class="app-header"><div class="header-left">'
+            '<div class="logo">警</div>'
+            '<div class="brand-name"><span>监管问询扫雷预警系统</span></div></div>'
+            f'<div class="header-right"><div class="agent-status">'
+            f'<span class="status-dot"></span>{agent_online} 个 Agent 在线</div></div></div>'
+        )
+    with h_r:
+        if st.button("⇄ 切换公司", key="open_switcher", use_container_width=True):
+            company_switcher_dialog()
+
+
+def render_sidebar_pipeline(trace: list) -> None:
+    """左栏：Agent 流水线 7 步状态（对齐设计稿 .sidebar）。"""
+    done_map = {t.get("agent"): t for t in trace or [] if t.get("status") == "done"}
+    html = '<div class="section-title" style="margin-top:0">Agent 流水线</div>'
+    for i, (name, icon) in enumerate(AGENT_STEPS):
+        t = done_map.get(AGENT_KEYS[i])
+        if t:
+            detail = t.get("output_summary") or ""
+            status = f'✓ {detail[:24] or f"{t.get("latency_ms", "")}ms"}'
+            cls = "step-done"
+        else:
+            status = "待执行"
+            cls = "step-pending"
+        html += (
+            f'<div class="pipeline-step {cls}"><div class="step-icon">{icon}</div>'
+            f'<div><div class="step-title">{name}</div><div class="step-status">{status}</div></div></div>'
+        )
+    st.html(f'<aside class="app-sidebar">{html}</aside>')
+
+
+# ================= 技术指标 / 仪表盘 / 因子 =================
 def render_tech_cards(metrics: dict) -> None:
-    """技术指标卡（真实评估值，model_summary.json 驱动）。"""
     cards = [
-        ("60D 模型 AUC", f'{metrics.get("AUC", 0):.4f}', "目标 ≥ 0.75", "测试集区分能力"),
-        ("Top10% 覆盖率", f'{metrics.get("Top10%Recall", 0):.1%}', "目标 ≥ 40%", "高风险样本召回"),
-        ("60D 集成 F1", f'{metrics.get("F1", 0):.3f}', "正样本 5.8%", "阈值 0.30"),
-        ("可解释追踪率", "100%", "目标 100%", "7-Agent 全链路 trace"),
+        ("AUC", f'{metrics.get("AUC", 0):.4f}', "目标 ≥ 0.75", "RF+LGB+XGB 集成 · 60d", ""),
+        ("Top10% 覆盖率", f'{metrics.get("Top10%Recall", 0):.1%}', "目标 ≥ 40%", "60d 问询召回", "unit"),
+        ("F1-Score", f'{metrics.get("F1", 0):.3f}', "正样本 5.8%", "60d 集成 · 阈值 0.30", ""),
+        ("可解释追踪率", "100%", "目标 100%", "7-Agent 全链路 trace", "unit"),
     ]
     html = '<div class="tech-grid">'
-    for label, value, target, sub in cards:
+    for label, value, target, sub, _u in cards:
         html += (
-            f'<div class="tech-metric-card">'
-            f'<div class="m-label">{label}<span class="m-target">{target}</span></div>'
+            f'<div class="tech-metric-card"><div class="m-label">{label}'
+            f'<span class="m-target">{target}</span></div>'
             f'<div class="m-value">{value}</div><div class="m-sub">{sub}</div></div>'
         )
     html += "</div>"
@@ -101,10 +142,6 @@ def render_tech_cards(metrics: dict) -> None:
 
 
 def render_risk_dashboard(ctx, pred: dict, fin, att: dict, countup: bool = False) -> None:
-    """风险仪表盘（概率大数字 + 进度条 + 徽章 + 置信度 + 因子数）。
-
-    countup=True 时概率数字用 components.html 数字滚动动画（可选增强）。
-    """
     p60 = pred.get("probability_60d")
     level = pred.get("risk_level") or fin.risk_level or "—"
     conf = pred.get("confidence")
@@ -123,7 +160,7 @@ def render_risk_dashboard(ctx, pred: dict, fin, att: dict, countup: bool = False
       <div class="comp-cell">
         <div class="comp-name">{ctx.name or ctx.company}</div>
         <div class="comp-code mono">{ctx.company}</div>
-        <div class="comp-meta">行业：{industry}<br>报告期：{report_period}<br>近一年公告：{ann_count} 份</div>
+        <div class="comp-meta">行业：{industry}<br>最新报告期：{report_period}<br>近一年公告：{ann_count} 份</div>
       </div>
       <div class="prob-cell">
         <div class="prob-label">未来 {ctx.window} 天被监管问询概率</div>
@@ -150,21 +187,34 @@ def render_risk_dashboard(ctx, pred: dict, fin, att: dict, countup: bool = False
 
 
 def render_factor_cards(shap_features: list) -> None:
-    """SHAP Top 因子卡（贡献条 + 标签）。"""
     if not shap_features:
         st.caption("无 SHAP 特征（规则降级归因见报告）")
         return
-    tag_pool = ["财务", "市场", "问询历史", "舆情", "治理", "估值"]
+    tag_pool = ["市场异动", "问询历史", "问询历史", "舆情", "市值", "财务"]
+    desc_pool = {
+        "mkt_volume_ratio_20d": "当日成交量 / 前 19 日均量异常",
+        "f6_last_inquiry_interval_days": "距最近一次监管问询天数",
+        "f6_inquiry_count_60m": "历史监管问询频次",
+        "sent_guba_negative_ratio_30d": "近 30 天负面舆情比例",
+        "mkt_market_cap": "当前总市值水平",
+        "mkt_log_market_cap": "当前总市值水平（对数）",
+    }
     html = '<div class="factor-grid">'
     for i, (feat, val) in enumerate(shap_features[:6]):
         tag = tag_pool[i % len(tag_pool)]
         width = min(abs(val) * 100, 100)
-        bar_color = "#EF4444" if val < 0 else "#10B981"
+        bar_color = "#EF4444" if val < 0 else "#F59E0B"
+        if val < -0.1:
+            bar_color = "#EF4444"
+        elif val > 0.1:
+            bar_color = "#F59E0B"
+        desc = desc_pool.get(feat, "SHAP 特征贡献")
         html += (
-            f'<div class="factor-card">'
-            f'<div class="factor-head"><span class="factor-tag">{tag}</span>'
+            f'<div class="factor-card"><div class="factor-head">'
+            f'<span class="factor-tag">{tag}</span>'
             f'<span class="factor-score">SHAP {val:+.3f}</span></div>'
             f'<div class="factor-name mono">{feat}</div>'
+            f'<div class="factor-desc">{desc}</div>'
             f'<div class="factor-bar"><div class="factor-bar-fill" style="width:{width:.0f}%;background:{bar_color}"></div></div>'
             f'</div>'
         )
@@ -173,32 +223,8 @@ def render_factor_cards(shap_features: list) -> None:
     st.markdown(html, unsafe_allow_html=True)
 
 
-def render_pipeline_steps(trace: list) -> None:
-    """Pipeline 步骤条（状态：done/active/pending，含耗时）。"""
-    agent_names = ["公告研读", "财务检测", "预测建模", "案例匹配", "段落检索", "归因解释", "报告生成"]
-    icons = ["📄", "📈", "🎯", "🧩", "📑", "🔍", "📋"]
-    agent_keys = ["AnnouncementReader", "FinancialDetector", "Predictor", "CaseRetriever",
-                  "ChunkRetriever", "Attributor", "Reporter"]
-    done_map = {t.get("agent"): t for t in trace if t.get("status") == "done"}
-    html = '<div class="sec-title">Agent 流水线</div>'
-    for i, name in enumerate(agent_names):
-        t = done_map.get(agent_keys[i])
-        if t:
-            status = f'✓ {t.get("latency_ms", "")}ms'
-            cls = "step-done"
-        else:
-            status = "待执行"
-            cls = "step-pending"
-        html += (
-            f'<div class="pipeline-step {cls}"><div class="step-icon">{icons[i]}</div>'
-            f'<div><div class="step-title">{name}</div><div class="step-status">{status}</div></div></div>'
-        )
-    st.markdown(html, unsafe_allow_html=True)
-
-
 # ================= 缓存切换 =================
 def offline_to_ctx(off: dict) -> SimpleNamespace:
-    """把 load_offline_context 返回的离线 dict 适配成 ctx-like 对象，复用统一渲染。"""
     fin = off.get("financial") or {}
     sem = off.get("semantic") or {}
     return SimpleNamespace(
@@ -215,7 +241,6 @@ def offline_to_ctx(off: dict) -> SimpleNamespace:
 
 
 def render_ctx_report(ctx, code: str, *, cache_label: str = "") -> None:
-    """统一报告渲染：实时扫雷结果与预跑缓存共用。"""
     pred = ctx.prediction or {}
     fin = ctx.financial
     att = ctx.attribution or {}
@@ -226,23 +251,18 @@ def render_ctx_report(ctx, code: str, *, cache_label: str = "") -> None:
             f'<div class="sec-title">⚡ {cache_label} <span class="badge badge-low">预跑缓存 · 秒级切换</span></div>',
             unsafe_allow_html=True)
 
-    # ---- 降级提示 ----
     degraded = [t for t in ctx.trace_log if t.get("status") in ("timeout", "needs_choice", "skipped")]
     for t in degraded[:3]:
         st.warning(f"⚠️ **{t.get('agent')} 降级/跳过**：{t.get('reason', '')}", icon=":material/warning:")
 
-    # ---- 风险仪表盘 ----
     render_risk_dashboard(ctx, pred, fin, att, countup=bool(cache_label))
 
-    # ---- 执行摘要 ----
     if rj.get("executive_summary"):
         st.markdown('<div class="sec-title">执行摘要</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="summary-card">{rj["executive_summary"]}</div>', unsafe_allow_html=True)
 
-    # ---- SHAP 因子卡 ----
     render_factor_cards(pred.get("shap_features", []))
 
-    # ---- 明细（财务/公告/归因/案例/trace） ----
     with st.expander(f"💹 财务异常信号（{len(fin.anomaly_list)} 条）", expanded=False):
         if getattr(fin, "skip", False):
             st.write(f"财务分析跳过：{fin.skip_reason}")
@@ -278,7 +298,6 @@ def render_ctx_report(ctx, code: str, *, cache_label: str = "") -> None:
     with st.expander("🔍 完整推理链路 trace_log（可追踪率 100%）"):
         st.json(ctx.trace_log)
 
-    # ---- 报告下载 ----
     c1, c2 = st.columns(2)
     if ctx.report:
         c1.download_button(f"⬇️ 下载 {code} 报告 (Markdown)", data=ctx.report["markdown"],
@@ -287,117 +306,182 @@ def render_ctx_report(ctx, code: str, *, cache_label: str = "") -> None:
                            data=json.dumps(rj, ensure_ascii=False, indent=2),
                            file_name=f"{code}_risk_report.json", mime="application/json")
 
-    # ---- Pipeline 步骤条 ----
-    with st.expander("🤖 Agent 流水线状态", expanded=False):
-        render_pipeline_steps(ctx.trace_log)
+
+def render_report_cards(current_code: str = "") -> None:
+    """风险报告卡（对齐设计稿：featured + 普通卡 + 下载按钮）。"""
+    st.markdown('<div class="sec-title">风险报告</div>', unsafe_allow_html=True)
+    reports = list_reports()
+    if not reports:
+        st.caption("暂无已生成报告。扫雷完成后自动归档。")
+        return
+    ordered = sorted(reports, key=lambda r: r.get("generated_at", ""), reverse=True)
+    current = next((r for r in ordered if r.get("company") == current_code), ordered[0]) if current_code else ordered[0]
+    others = [r for r in ordered if r.get("report_id") != current.get("report_id")][:2]
+    for r in [current] + others:
+        featured = " featured" if r == current else ""
+        html = (
+            f'<div class="report-card{featured}">'
+            f'<div class="report-head"><div class="report-title">{r.get("name") or r.get("company")} · 风险提示函 '
+            f'{risk_badge(r.get("risk_level", ""))}</div></div>'
+            f'<div class="report-meta mono">{r.get("company")} · {str(r.get("generated_at", ""))[:10]} · 八章风控函件式</div>'
+            f'</div>'
+        )
+        st.markdown(html, unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        c1.download_button(f"⬇️ 下载 Markdown（{r.get('company')}）", data=load_report_md(r.get("md_file", "")),
+                           file_name=r.get("md_file", "report.md"), mime="text/markdown",
+                           key=f"dl_r_md_{r.get('report_id')}")
+        c2.download_button(f"⬇️ 导出 JSON（{r.get('company')}）",
+                           data=json.dumps(r, ensure_ascii=False, indent=2),
+                           file_name=r.get("json_file", "report.json"), mime="application/json",
+                           key=f"dl_r_js_{r.get('report_id')}")
 
 
-@st.dialog("🔄 切换预跑公司", width="large")
+# ================= 切换公司弹窗（含参数设置） =================
+@st.dialog("🎯 选择目标公司", width="large")
 def company_switcher_dialog() -> None:
-    """「切换公司」弹窗：3 家预跑公司点选即切换（缓存秒级，无需重跑流水线）。"""
-    st.caption("以下公司已预跑并归档（output/reports/），点选后立即切换展示；需要最新结果可再点「开始扫雷」。")
+    """「切换公司」弹窗：预跑 3 家快捷切换 + 运行参数（对齐设计稿 modal + 参数抽屉）。"""
+    st.caption("预跑缓存秒级切换；也可以直接输入代码执行新扫雷。参数设置已合并到此弹窗。")
+
+    # --- 预跑快捷切换 ---
     reports = list_reports()
     latest = {}
     for r in reports:
         code = r.get("company", "")
-        if code not in latest:  # manifest 按时间升序，取每条公司最新一条
+        if code not in latest:
             latest[code] = r
+    st.markdown("**⚡ 预跑公司（缓存秒级切换）**")
     for code, name in PREFETCHED_COMPANIES:
         entry = latest.get(code)
-        st.markdown('<div class="tech-grid">', unsafe_allow_html=True)
-        html = (
-            f'<div class="tech-metric-card" style="grid-column:span 2;">'
-            f'<div class="m-label">{code}<span class="m-target">{name}</span></div>'
-            f'<div class="m-value">{f"{float(entry.get("probability_60d") or 0) * 100:.2f}%" if entry else "—"}</div>'
-            f'<div class="m-sub">{risk_badge(entry.get("risk_level", "")) if entry else "未预跑 · 请先扫雷"}</div>'
-            f'</div>'
-        )
-        st.markdown(html, unsafe_allow_html=True)
-        if st.button(f"载入 {code}（{name}）", key=f"pf_switch_{code}", use_container_width=True):
+        c1, c2, c3 = st.columns([3, 1, 1])
+        c1.markdown(f"**{code}** {name}")
+        c2.markdown(f'<div style="text-align:right">{f"{float(entry.get("probability_60d") or 0) * 100:.2f}%" if entry else "—"}</div>',
+                    unsafe_allow_html=True)
+        c3.markdown(risk_badge(entry.get("risk_level", "")) if entry else "未预跑", unsafe_allow_html=True)
+        if st.button(f"载入 {code}", key=f"pf_switch_{code}", use_container_width=True):
             st.session_state["prefetch_company"] = code
+            st.session_state["sweep_code"] = code
             st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.divider()
+
+    # --- 参数设置（原侧边栏移入） ---
+    st.markdown("**⚙️ 运行参数**")
+    code_input = st.text_input("公司代码（单选）", value=st.session_state.get("sweep_code", "000063.SZ"),
+                               placeholder="例如：000063.SZ、中兴通讯")
+    batch_input = st.text_area("批量扫雷名单（每行一个）", value=st.session_state.get("sweep_batch", ""),
+                               height=70, placeholder="多个代码每行一个，留空则扫雷上方单选代码")
+    window = st.selectbox("预测窗口（天）", [30, 60, 90],
+                          index=[30, 60, 90].index(st.session_state.get("sweep_window", 60)))
+    use_llm = st.checkbox("启用 LLM 精细抽取（需 .env 配 key）", value=st.session_state.get("sweep_llm", False))
+    use_semantic = st.checkbox("BGE 语义检索（案例匹配）", value=st.session_state.get("sweep_semantic", True))
+    use_llm_summary = st.checkbox("DeepSeek 执行摘要（deepseek-v4-flash）",
+                                  value=st.session_state.get("sweep_summary", False))
+    c_ok, c_run = st.columns(2)
+    with c_ok:
+        if st.button("✓ 确认切换", key="dlg_confirm", type="primary", use_container_width=True):
+            st.session_state["sweep_code"] = code_input.strip()
+            st.session_state["sweep_batch"] = batch_input
+            st.session_state["sweep_window"] = window
+            st.session_state["sweep_llm"] = use_llm
+            st.session_state["sweep_semantic"] = use_semantic
+            st.session_state["sweep_summary"] = use_llm_summary
+            st.session_state["prefetch_company"] = code_input.strip()
+            st.session_state["run_clicked"] = False
+            st.rerun()
+    with c_run:
+        if st.button("🚀 开始扫雷", key="dlg_run", use_container_width=True):
+            st.session_state["sweep_code"] = code_input.strip()
+            st.session_state["sweep_batch"] = batch_input
+            st.session_state["sweep_window"] = window
+            st.session_state["sweep_llm"] = use_llm
+            st.session_state["sweep_semantic"] = use_semantic
+            st.session_state["sweep_summary"] = use_llm_summary
+            st.session_state["run_clicked"] = True
+            st.rerun()
 
 
-# ================= 侧边栏输入 =================
-with st.sidebar:
-    st.header("⚙️ 参数设置")
-    codes_text = st.text_area("公司代码（每行一个）", "000063.SZ", height=90,
-                              help="示例：000063.SZ（中兴通讯）、000001.SZ（平安银行）、000858.SZ（五粮液）")
-    window = st.selectbox("预测窗口（天）", [30, 60, 90], index=1)
-    use_llm = st.checkbox("启用 LLM 精细抽取（需 .env 配 key）", value=False)
-    use_llm_summary = st.checkbox("启用 DeepSeek 执行摘要（deepseek-v4-flash）", value=False,
-                                  help="报告执行摘要用大模型生成；关闭时用规则拼装。")
-    run_clicked = st.button("🚀 开始扫雷", type="primary", use_container_width=True)
+# ================= 页面主体 =================
+render_header()
 
-# ================= 技术指标卡（始终展示，真实评估值） =================
-metrics = load_model_summary().get("windows", {}).get("60", {}).get("Ensemble", {})
-render_tech_cards(metrics)
+# 读取运行参数（默认值）
+run_clicked = st.session_state.get("run_clicked", False)
+window = st.session_state.get("sweep_window", 60)
+use_llm = st.session_state.get("sweep_llm", False)
+use_semantic = st.session_state.get("sweep_semantic", True)
+use_llm_summary = st.session_state.get("sweep_summary", False)
+sweep_code = st.session_state.get("sweep_code", "000063.SZ")
+sweep_batch = st.session_state.get("sweep_batch", "")
 
-# ================= 切换公司（预跑缓存，秒级） =================
-c_switch, c_switch_hint = st.columns([1, 3])
-with c_switch:
-    if st.button("🔄 切换公司（预跑缓存）", key="open_switcher", use_container_width=True):
-        company_switcher_dialog()
-with c_switch_hint:
-    st.caption("预跑 3 家公司：000001 平安银行 · 000063 中兴通讯 · 000858 五粮液（均未退市）")
-
+# 预跑缓存展示（未点开始扫雷时）
 prefetch_code = st.session_state.get("prefetch_company")
+prefetch_off = None
 if prefetch_code and not run_clicked:
     try:
-        off = load_offline_context(prefetch_code)
-        render_ctx_report(offline_to_ctx(off), prefetch_code, cache_label="预跑缓存 · 000001/000063/000858")
-        st.divider()
-    except FileNotFoundError as e:
-        st.warning(f"未找到 {prefetch_code} 的预跑报告，请先执行一次扫雷。({e})")
+        prefetch_off = load_offline_context(prefetch_code)
+    except Exception:
+        prefetch_off = None
 
-# ================= 已生成报告（顶部浏览） =================
-st.markdown('<div class="sec-title">📁 已生成报告（output/reports/ 存档）</div>', unsafe_allow_html=True)
-reports = list_reports()
-if reports:
-    labels = {f"{r.get('report_id')} ｜ 60d {r.get('probability_60d')} ｜ {r.get('risk_level')}": r
-              for r in reports}
-    chosen = st.selectbox("选择报告", list(labels.keys()), key="report_selector")
-    if chosen:
-        r = labels[chosen]
-        c1, c2 = st.columns(2)
-        c1.download_button("⬇️ 下载 Markdown", data=load_report_md(r.get("md_file", "")),
-                           file_name=r.get("md_file", "report.md"), mime="text/markdown",
-                           key=f"dl_md_{r.get('report_id')}")
-        c2.download_button("⬇️ 下载 JSON",
-                           data=json.dumps(r, ensure_ascii=False, indent=2),
-                           file_name=r.get("json_file", "report.json"), mime="application/json",
-                           key=f"dl_meta_{r.get('report_id')}")
-        with st.expander("📄 预览报告", expanded=False):
-            st.markdown(load_report_md(r.get("md_file", "")))
+# ===== 两栏布局 =====
+left_col, right_col = st.columns([1, 3.4], gap="large")
+with left_col:
+    if prefetch_off is not None:
+        render_sidebar_pipeline(prefetch_off.get("trace_log", []))
+    else:
+        render_sidebar_pipeline([])
+    st.html('<div style="height:12px"></div>')
+    st.markdown("---")
+    st.caption("左侧为 7-Agent 流水线状态；运行或切换缓存后实时更新。")
 
-st.divider()
+with right_col:
+    # 技术指标卡（真实评估值，始终展示）
+    metrics = load_model_summary().get("windows", {}).get("60", {}).get("Ensemble", {})
+    render_tech_cards(metrics)
 
-if not run_clicked:
-    st.info("左侧输入公司代码后点击「开始扫雷」，或使用上方「切换公司」秒级查看预跑缓存。"
-            "示例：000063.SZ（中兴通讯）、000001.SZ（平安银行）、000858.SZ（五粮液）")
-    st.stop()
+    # 预跑缓存报告
+    if prefetch_off is not None:
+        render_ctx_report(offline_to_ctx(prefetch_off), prefetch_code,
+                          cache_label="预跑缓存 · 000001/000063/000858")
 
-codes = [c.strip() for c in codes_text.splitlines() if c.strip()]
-if not codes:
-    st.warning("请输入至少一个公司代码")
-    st.stop()
+    # 已生成报告浏览
+    st.markdown('<div class="sec-title">📁 已生成报告（output/reports/ 存档）</div>', unsafe_allow_html=True)
+    reports = list_reports()
+    if reports:
+        labels = {f"{r.get('report_id')} ｜ 60d {r.get('probability_60d')} ｜ {r.get('risk_level')}": r
+                  for r in reports}
+        chosen = st.selectbox("选择报告", list(labels.keys()), key="report_selector")
+        if chosen:
+            r = labels[chosen]
+            with st.expander("📄 预览报告", expanded=False):
+                st.markdown(load_report_md(r.get("md_file", "")))
 
-# ================= 执行流水线 =================
-orch = SweepingOrchestrator(use_llm=use_llm, use_finbert=True)
-
-for code in codes:
     st.divider()
-    with st.status(f"🔍 正在分析 {code} …", expanded=True) as status:
-        ctx = orch.sweep_one(code, window=window, use_llm_summary=use_llm_summary)
-        for t in ctx.trace_log:
-            agent = t.get("agent", "?")
-            stt = t.get("status", "done")
-            ms = t.get("latency_ms", "")
-            out = str(t.get("output_summary", ""))[:80]
-            st.write(f"**{agent}** ｜ {stt} ｜ {ms}ms ｜ {out}")
-        status.update(label=f"✅ {code} 分析完成", state="complete")
 
-    render_ctx_report(ctx, code)
+    if not run_clicked:
+        st.info("点右上角「⇄ 切换公司」选择预跑缓存或输入公司代码；或直接点弹窗内「🚀 开始扫雷」执行实时流水线。"
+                "示例：000063.SZ（中兴通讯）、000001.SZ（平安银行）、000858.SZ（五粮液）")
+        st.stop()
 
-st.success("批量扫雷完成。报告已自动归档到 backend/data/output/reports/。")
+    # ===== 执行流水线 =====
+    codes = [c.strip() for c in sweep_batch.splitlines() if c.strip()] or [sweep_code]
+    if not codes or not codes[0]:
+        st.warning("请输入至少一个公司代码")
+        st.stop()
+
+    orch = SweepingOrchestrator(use_llm=use_llm, use_finbert=True, use_semantic_cases=use_semantic)
+
+    for code in codes:
+        st.divider()
+        with st.status(f"🔍 正在分析 {code} …", expanded=True) as status:
+            ctx = orch.sweep_one(code, window=window, use_llm_summary=use_llm_summary)
+            for t in ctx.trace_log:
+                agent = t.get("agent", "?")
+                stt = t.get("status", "done")
+                ms = t.get("latency_ms", "")
+                out = str(t.get("output_summary", ""))[:80]
+                st.write(f"**{agent}** ｜ {stt} ｜ {ms}ms ｜ {out}")
+            status.update(label=f"✅ {code} 分析完成", state="complete")
+
+        render_ctx_report(ctx, code)
+        render_report_cards(current_code=code)
+
+    st.success("批量扫雷完成。报告已自动归档到 backend/data/output/reports/。")

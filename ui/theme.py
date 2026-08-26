@@ -105,6 +105,28 @@ def _scan_css() -> str:
     .report-meta {{ color:var(--text-muted); font-size:11px; margin-top:4px; }}
     .mono {{ font-family:"SF Mono",Consolas,monospace; font-variant-numeric:tabular-nums; }}
     .status-dot {{ display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--risk-low); box-shadow:0 0 0 4px rgba(16,185,129,0.15); animation:scan-pulse 2s infinite; }}
+    /* 顶栏（设计稿 ui_preview_主控页.html） */
+    .app-header {{ background:rgba(255,255,255,0.92); border:1px solid var(--border); border-radius:12px;
+      padding:10px 18px; display:flex; align-items:center; justify-content:space-between; }}
+    .header-left {{ display:flex; align-items:center; gap:12px; }}
+    .logo {{ width:34px; height:34px; background:linear-gradient(135deg,#1E40AF,#3B82F6); border-radius:10px;
+      display:grid; place-items:center; color:#fff; font-weight:700; font-size:15px; }}
+    .brand-name {{ font-size:16px; font-weight:700; }}
+    .brand-name span {{ background:linear-gradient(135deg,#1E40AF,#3B82F6 60%,#06B6D4);
+      -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }}
+    .header-right {{ display:flex; align-items:center; gap:12px; }}
+    .agent-status {{ display:flex; align-items:center; gap:8px; padding:5px 12px; background:var(--brand-light);
+      border-radius:999px; color:var(--brand-primary); font-weight:500; font-size:12px; }}
+    .switch-btn {{ display:inline-flex; align-items:center; gap:6px; padding:7px 14px; border-radius:8px;
+      border:1px solid var(--brand-secondary); background:#fff; color:var(--brand-primary);
+      font-size:13px; font-weight:500; cursor:pointer; transition:all .2s; }}
+    .switch-btn:hover {{ background:var(--brand-light); transform:translateY(-1px); box-shadow:var(--shadow-lg); }}
+    /* 主控页两栏布局（设计稿 .layout / .sidebar / .main） */
+    .app-layout {{ display:flex; gap:20px; align-items:flex-start; }}
+    .app-sidebar {{ width:255px; flex-shrink:0; background:#fff; border:1px solid var(--border);
+      border-radius:12px; padding:14px 10px; }}
+    .app-main {{ flex:1; min-width:0; }}
+    @media (max-width:1024px) {{ .app-layout {{ flex-direction:column; }} .app-sidebar {{ width:100%; }} }}
     @media (max-width:1024px) {{ .tech-grid{{grid-template-columns:repeat(2,1fr);}} .risk-dashboard{{grid-template-columns:1fr 1fr;}} }}
     @media (max-width:768px) {{ .risk-dashboard{{grid-template-columns:1fr;}} .factor-grid{{grid-template-columns:1fr;}} }}
     </style>
