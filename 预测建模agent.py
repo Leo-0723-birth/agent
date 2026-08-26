@@ -381,25 +381,6 @@ st.caption("按 (company, as_of) 从建模数据集取最新一行特征 → 三
 if shared_context_caption():
     st.info(shared_context_caption(), icon=":material/sync:")
 
-model_summary = load_model_summary()
-st.subheader("模型质量与业务解释")
-quality_left, quality_right = st.columns(2)
-with quality_left:
-    with st.container(border=True):
-        st.markdown("#### 三个预测窗口的模型质量")
-        st.altair_chart(model_performance_chart(model_summary), width="stretch")
-        st.caption("雾蓝表示 AUC，青绿表示 F1，柔金表示 Top 10% 召回；悬停可查看精确数值。")
-with quality_right:
-    with st.container(border=True):
-        st.markdown("#### 三模型集成权重")
-        st.altair_chart(ensemble_weights_chart(model_summary), width="stretch")
-        st.caption("柱顶直接标注权重；颜色只区分模型，不表示风险高低。")
-
-with st.container(border=True):
-    st.markdown("#### 60 天批量公司风险排名 · Top 10")
-    st.altair_chart(risk_ranking_chart(load_risk_ranking(60, 10)), width="stretch")
-    st.caption("柔金表示需要关注，珊瑚红表示更高风险；横轴与悬停均保留概率数值。")
-
 with st.sidebar:
     st.subheader("运行设置")
     as_of_value = st.date_input("特征锚点 T", value=active_as_of(), max_value=date.today(),
@@ -428,6 +409,25 @@ if submitted:
         except Exception as exc:
             st.session_state.pop("prediction_analysis", None)
             st.error(f"预测失败：{type(exc).__name__}: {exc}", icon=":material/error:")
+
+model_summary = load_model_summary()
+st.subheader("模型质量与业务解释")
+quality_left, quality_right = st.columns(2)
+with quality_left:
+    with st.container(border=True):
+        st.markdown("#### 三个预测窗口的模型质量")
+        st.altair_chart(model_performance_chart(model_summary), width="stretch")
+        st.caption("雾蓝表示 AUC，青绿表示 F1，柔金表示 Top 10% 召回；悬停可查看精确数值。")
+with quality_right:
+    with st.container(border=True):
+        st.markdown("#### 三模型集成权重")
+        st.altair_chart(ensemble_weights_chart(model_summary), width="stretch")
+        st.caption("柱顶直接标注权重；颜色只区分模型，不表示风险高低。")
+
+with st.container(border=True):
+    st.markdown("#### 60 天批量公司风险排名 · Top 10")
+    st.altair_chart(risk_ranking_chart(load_risk_ranking(60, 10)), width="stretch")
+    st.caption("柔金表示需要关注，珊瑚红表示更高风险；横轴与悬停均保留概率数值。")
 
 result = hydrate_page_state("prediction_analysis")
 if result:
