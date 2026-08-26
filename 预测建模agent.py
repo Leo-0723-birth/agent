@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """预测建模 Agent 的可审计 Streamlit 展示入口。
 运行：streamlit run 预测建模agent.py --server.port 8504
@@ -21,12 +21,16 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from backend.agents.predictor import PredictorAgent
 from backend.context import Context
+from ui.charts import ensemble_weights_chart, model_performance_chart, risk_ranking_chart
+from ui.data import load_model_summary, load_risk_ranking
+from ui.theme import apply_scan_theme
 
 st.set_page_config(
     page_title="预测建模 Agent",
     page_icon=":material/model_training:",
     layout="wide",
 )
+apply_scan_theme()
 
 
 @st.cache_data(ttl="6h", max_entries=20, show_spinner=False)
@@ -373,6 +377,24 @@ def _render_shap(shap, c: dict) -> None:
 
 st.title("预测建模 Agent")
 st.caption("按 (company, as_of) 从建模数据集取最新一行特征 → 三模型集成（RF+LightGBM+XGBoost）→ 30/60/90 天问询概率 + SHAP 归因。")
+
+model_summary = load_model_summary()
+quality_left, quality_right = st.columns(2)
+with quality_left:
+    with st.container(border=True):
+        st.markdown("#### 三窗口模型质量")
+        st.altair_chart(model_performance_chart(model_summary), width="stretch")
+        st.caption("AUC、F1 和 Top 10% 覆盖率均来自当前测试集摘要。")
+with quality_right:
+    with st.container(border=True):
+        st.markdown("#### 三模型集成权重")
+        st.altair_chart(ensemble_weights_chart(model_summary), width="stretch")
+        st.caption("RandomForest 30%，LightGBM 35%，XGBoost 35%。")
+
+with st.container(border=True):
+    st.markdown("#### 60 天批量风险排名 Top 10")
+    st.altair_chart(risk_ranking_chart(load_risk_ranking(60, 10)), width="stretch")
+    st.caption("排序来自已归档测试集结果，不依赖当前公司查询。")
 
 with st.sidebar:
     st.subheader("运行设置")

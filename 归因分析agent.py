@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """归因分析 Agent 的可审计 Streamlit 展示入口。
 运行：streamlit run 归因分析agent.py --server.port 8506
@@ -26,12 +26,14 @@ from backend.agents.predictor import PredictorAgent
 from backend.config import ANNOUNCE_SOURCE
 from backend.context import Context
 from backend.skills.announcement_search import CninfoAnnouncementSource
+from ui.theme import apply_scan_theme
 
 st.set_page_config(
     page_title="归因分析 Agent",
     page_icon=":material/psychology:",
     layout="wide",
 )
+apply_scan_theme()
 
 
 @st.cache_data(ttl="6h", max_entries=10, show_spinner=False)

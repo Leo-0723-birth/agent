@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """报告生成 Agent 的可审计 Streamlit 展示入口。
 运行：streamlit run 报告生成agent.py --server.port 8507
@@ -21,12 +21,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from backend.agents import SweepingOrchestrator
 from backend.config import OUTPUT_DIR
+from ui.theme import apply_scan_theme
 
 st.set_page_config(
     page_title="报告生成 Agent",
     page_icon=":material/description:",
     layout="wide",
 )
+apply_scan_theme()
 
 
 @st.cache_data(ttl="6h", max_entries=10, show_spinner=False)

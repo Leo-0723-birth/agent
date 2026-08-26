@@ -25,14 +25,48 @@ from backend.agents.case_retriever import CaseRetrieverAgent
 from backend.agents.financial_detector import FinancialDetectorAgent
 from backend.context import Context
 from backend.skills.announcement_search import CninfoAnnouncementSource
-from ui.theme import apply_page_style
+from ui.theme import apply_scan_theme
 
 st.set_page_config(
     page_title="案例匹配 Agent",
     page_icon=":material/compare_arrows:",
     layout="wide",
 )
-apply_page_style()
+apply_scan_theme()
+
+
+# ================= 设计规范组件 =================
+def _pipeline_flow() -> None:
+    """Agent 智能分析流程（pipeline-step 组件，金融蓝主题）。"""
+    st.markdown('<div class="sec-title">🤖 Agent 智能分析流程</div>', unsafe_allow_html=True)
+    st.caption("上市公司输入 → 风险画像构建 → 历史案例检索 → 融合决策输出")
+    stages = [
+        ("风险画像 Agent", "📊", ["📄 公告解析", "📈 财务异常检测", "🏷️ 风险标签抽取"]),
+        ("案例匹配 Agent", "🔍", ["🧠 BGE 语义检索", "🏷️ 标签联合匹配", "⏳ 时间穿越过滤"]),
+        ("决策输出 Agent", "⚖️", ["🔗 RRF 融合排序", "📋 Top-K 案例生成", "🔎 审计轨迹记录"]),
+    ]
+    html = '<div class="pipeline-grid">'
+    for title, icon, items in stages:
+        chips = "".join(f'<span class="badge badge-low">{it}</span>' for it in items)
+        html += (
+            f'<div class="pipeline-step step-done"><div class="step-icon">{icon}</div>'
+            f'<div><div class="step-title">{title}</div>'
+            f'<div class="step-status">{chips}</div></div></div>'
+        )
+    html += "</div>"
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def _metric_cards(items: list[tuple[str, str, str]]) -> None:
+    """技术指标卡风格指标行。items: (label, value, sub)。"""
+    html = '<div class="tech-grid">'
+    for label, value, sub in items:
+        html += (
+            f'<div class="tech-metric-card"><div class="m-label">{label}</div>'
+            f'<div class="m-value">{value}</div><div class="m-sub">{sub}</div></div>'
+        )
+    html += "</div>"
+    st.markdown(html, unsafe_allow_html=True)
 
 
 @st.cache_data(ttl="6h", max_entries=10, show_spinner=False)
@@ -213,20 +247,20 @@ if result:
         library_size = len(cases)
 
     # =========================
-    # Agent执行流程展示 v1.1（队员新增）
+    # Agent执行流程展示 v1.1（队员新增，设计规范金融蓝主题）
     # =========================
-    st.subheader("🤖 Agent智能分析流程")
-    st.caption("上市公司输入 → 风险画像构建 → 历史案例检索 → 融合决策输出")
+    _pipeline_flow()
 
     st.markdown(
         """
         <div style="
             text-align:center;
             padding:12px;
-            border:1px solid #444;
+            border:1px solid var(--border,#334);
             border-radius:10px;
-            background:#151922;
+            background:linear-gradient(135deg,#0b1b3a,#12285c);
             font-size:18px;
+            color:#e6f0ff;
             ">
             🏢 目标上市公司风险输入
         </div>
@@ -238,29 +272,12 @@ if result:
         unsafe_allow_html=True
     )
 
-    modules = [
-        ("📊 风险画像 Agent", ["📄 公告解析", "📈 财务异常检测", "🏷️ 风险标签抽取"]),
-        ("🔍 案例匹配 Agent", ["🧠 BGE语义检索", "🏷️ 标签联合匹配", "⏳ 时间穿越过滤"]),
-        ("⚖️ 决策输出 Agent", ["🔗 RRF融合排序", "📋 Top-K案例生成", "🔎 审计轨迹记录"]),
-    ]
-    for idx, (title, items) in enumerate(modules):
-        with st.container(border=True):
-            st.markdown(f"### {title}")
-            cols = st.columns(len(items))
-            for col, item in zip(cols, items):
-                with col:
-                    st.info(item)
-        if idx < len(modules) - 1:
-            st.markdown(
-                "<div style='text-align:center;font-size:25px;'>⬇️</div>",
-                unsafe_allow_html=True
-            )
-
-    with st.container(horizontal=True):
-        st.metric("相似案例", len(cases), border=True)
-        st.metric("公告风险要素", len(semantic.get("risk_factors", [])), border=True)
-        st.metric("财务异常", len(financial.get("anomaly_list", [])), border=True)
-        st.metric("案例库规模", library_size, border=True)
+    _metric_cards([
+        ("相似案例", str(len(cases)), "RRF 融合 Top-K"),
+        ("公告风险要素", str(len(semantic.get("risk_factors", []))), "规则 + FinBERT + LLM"),
+        ("财务异常", str(len(financial.get("anomaly_list", []))), "异常信号数"),
+        ("案例库规模", str(library_size), "历史监管问询函"),
+    ])
 
     st.subheader("相似历史问询案例（Top 综合匹配）")
     if cases:

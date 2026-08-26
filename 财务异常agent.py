@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """财务异常检测 Agent 的可审计 Streamlit 展示入口。
 运行：streamlit run 财务异常agent.py --server.port 8503
@@ -19,12 +19,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from backend.agents.financial_detector import FinancialDetectorAgent
 from backend.context import Context
+from ui.theme import apply_scan_theme
 
 st.set_page_config(
     page_title="财务异常 Agent",
     page_icon=":material/account_balance:",
     layout="wide",
 )
+apply_scan_theme()
 
 
 @st.cache_data(ttl="6h", max_entries=20, show_spinner=False)
