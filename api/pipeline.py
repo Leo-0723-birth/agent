@@ -28,7 +28,11 @@ REPORTS_DIR = PROJECT_ROOT / "backend" / "data" / "output" / "reports"
 
 def _load_manifest() -> list[dict]:
     path = REPORTS_DIR / "manifest.json"
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, list) else []
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return []
 
 
 def _latest_report_file(company: str) -> Path | None:
@@ -534,8 +538,10 @@ def list_available_companies() -> list[dict]:
 # ============================================================
 
 import asyncio
+import threading
 import time
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Callable
@@ -573,20 +579,21 @@ class StreamingOrchestrator:
     """
 
     _AGENT_ORDER = [
-        ("AnnouncementReader", "公告研读", "读取并解析最新公告、抽取语义风险"),
-        ("FinancialDetector", "财务异动", "检测财务指标异常与偏离度"),
-        ("Predictor", "预测建模", "XGBoost + SHAP 计算问询概率"),
-        ("CaseRetriever", "案例匹配", "BGE 语义检索历史问询案例"),
-        ("ChunkRetriever", "段落召回", "chunk 级证据召回（可选）"),
-        ("Attributor", "归因分析", "聚合归因解释与风险叙事"),
-        ("Reporter", "报告生成", "渲染风控简报并落盘"),
+        ("AnnouncementReader", "announcement", "公告研读", "读取并解析最新公告、抽取语义风险"),
+        ("FinancialDetector", "financial", "财务异常", "检测财务指标异常与偏离度"),
+        ("Predictor", "prediction", "预测建模", "XGBoost + SHAP 计算问询概率"),
+        ("CaseRetriever", "case", "案例匹配", "BGE 语义检索历史问询案例"),
+        ("ChunkRetriever", "chunk", "段落召回", "chunk 级证据召回（可选）"),
+        ("Attributor", "attribution", "归因分析", "聚合归因解释与风险叙事"),
+        ("Reporter", "report", "报告生成", "渲染风控简报并落盘"),
     ]
 
     def __init__(self, callback: Callable[[ProgressMessage], None]):
         self.callback = callback
 
     def run(self, company: str, window: int = 60, as_of: str | None = None,
-            use_llm: bool = False, use_bge: bool = True, max_documents: int | None = 5):
+            use_llm: bool = False, use_bge: bool = True, max_documents: int | None = 5,
+            cancel_event: threading.Event | None = None):
         from backend.agents.orchestrator import SweepingOrchestrator
         from backend.context import Context
 
@@ -600,14 +607,19 @@ class StreamingOrchestrator:
         ctx = Context(company=company, window=window, as_of=as_of or str(date.today()))
         ctx.use_llm_summary = bool(use_llm)
         ctx.use_llm = bool(use_llm)
+        ctx.use_bge = bool(use_bge)
         ctx.max_documents = max_documents
+        ctx.cancel_event = cancel_event
 
         total = len(self._AGENT_ORDER)
         start_total = time.time()
 
-        for idx, (agent_name, display_name, desc) in enumerate(self._AGENT_ORDER, start=1):
+        for idx, (agent_name, agent_key, display_name, desc) in enumerate(self._AGENT_ORDER, start=1):
+            if getattr(ctx, "cancel_event", None) is not None and ctx.cancel_event.is_set():
+                raise PipelineCancelled("任务已取消")
             step_start = time.time()
-            self._emit(idx, total, agent_name, "running", f"{display_name} Agent 正在执行：{desc}", 0)
+            self._current_agent = (idx, total, agent_name, agent_key, display_name)
+            self._emit(idx, total, agent_name, agent_key, "running", f"{display_name} Agent 正在执行：{desc}", 0, 0)
 
             try:
                 runner = getattr(self, f"_run_{agent_name.lower()}", None)
@@ -622,27 +634,62 @@ class StreamingOrchestrator:
                 # 段落召回失败可跳过，不打断流水线
                 if agent_name == "ChunkRetriever":
                     ctx.trace_log.append({"agent": agent_name, "status": "skipped", "reason": str(e), "trace_complete": True})
-                    self._emit(idx, total, agent_name, "skipped", f"{display_name} Agent 跳过：{e}", latency)
+                    self._emit(idx, total, agent_name, agent_key, "skipped", f"{display_name} Agent 跳过：{e}", latency, 100)
                 else:
-                    self._emit(idx, total, agent_name, "error", f"{display_name} Agent 失败：{e}", latency)
+                    self._emit(idx, total, agent_name, agent_key, "error", f"{display_name} Agent 失败：{e}", latency, 100)
                     raise
             else:
                 latency = int((time.time() - step_start) * 1000)
-                self._emit(idx, total, agent_name, "done", f"{display_name} Agent 完成（{latency} ms）", latency)
+                self._emit(idx, total, agent_name, agent_key, "done", f"{display_name} Agent 完成（{latency} ms）", latency, 100)
 
         ctx.meta = {"total_elapsed_ms": int((time.time() - start_total) * 1000)}
         return ctx
 
-    def _emit(self, step: int, total: int, agent: str, status: str, message: str, elapsed_ms: int):
+    def _emit(self, step: int, total: int, agent: str, agent_key: str, status: str,
+              message: str, elapsed_ms: int, progress_percent: int):
         self.callback(ProgressMessage(
             type="progress",
             step=step,
             total=total,
             agent=agent,
+            agent_key=agent_key,
             status=status,
+            progress_percent=progress_percent,
             message=message,
             elapsed_ms=elapsed_ms,
         ))
+
+    def _detail_callback(self, payload):
+        """把 Agent 内部事件翻译为统一 WebSocket 进度消息。"""
+        idx, total, agent, agent_key, display_name = self._current_agent
+        event = str((payload or {}).get("event", "agent_progress"))
+        percent = int((payload or {}).get("percent", 0) or 0)
+        message = str((payload or {}).get("message", "") or "")
+        if event == "pdf_processing":
+            current = int((payload or {}).get("current", 0) or 0)
+            count = max(1, int((payload or {}).get("total", 1) or 1))
+            percent = 15 + int(25 * current / count)
+            message = f"正在下载/解析第 {current}/{count} 份公告 PDF"
+        event_map = {
+            "offline_snapshot_started": (8, "正在检查官方公告离线快照"),
+            "offline_snapshot_completed": (35, "已加载官方公告离线快照"),
+            "online_company_started": (8, "正在校验公司与交易所代码"),
+            "online_metadata_started": (12, "正在获取公告列表"),
+            "online_metadata_completed": (15, f"已获取公告列表，共 {(payload or {}).get('announcement_count', 0)} 份"),
+            "pdf_processing": (percent, message),
+            "pdf_processing_completed": (42, "公告 PDF 下载与 OCR 解析完成"),
+            "rule_analysis_started": (45, "正在匹配风险词典"),
+            "rule_analysis_completed": (65, "风险词典匹配完成"),
+            "finbert_started": (70, "正在执行 FinBERT 语义筛查"),
+            "finbert_completed": (82, "FinBERT 语义筛查完成"),
+            "llm_started": (84, "正在执行 LLM 精细抽取"),
+            "llm_completed": (92, "LLM 精细抽取完成"),
+            "finalizing": (96, "正在汇总公告风险证据"),
+            "analysis_completed": (100, "公告研读完成"),
+            "agent_progress": (percent, message),
+        }
+        percent, default_message = event_map.get(event, (percent or 20, message or f"{display_name} Agent 处理中"))
+        self._emit(idx, total, agent, agent_key, "running", message or default_message, 0, max(0, min(100, percent)))
 
     # 下面这些方法与 SweepingOrchestrator 内部保持一致，便于注入回调
     def _run_announcementreader(self, company, ctx):
@@ -652,37 +699,44 @@ class StreamingOrchestrator:
             use_finbert=False,
             use_llm=getattr(ctx, "use_llm", False),
             use_rule=True,
+            progress_callback=self._detail_callback,
         )
         agent.run(company, ctx)
 
     def _run_financialdetector(self, company, ctx):
         from backend.agents.financial_detector import FinancialDetectorAgent
         agent = FinancialDetectorAgent(use_llm=False, rate_limit=0.5)
+        agent.progress_callback = self._detail_callback
         agent.run(company, ctx)
 
     def _run_predictor(self, company, ctx):
         from backend.agents.predictor import PredictorAgent
         agent = PredictorAgent()
+        agent.progress_callback = self._detail_callback
         agent.run(company, ctx)
 
     def _run_caseretriever(self, company, ctx):
         from backend.agents.case_retriever import CaseRetrieverAgent
-        agent = CaseRetrieverAgent(use_semantic=True)
+        agent = CaseRetrieverAgent(use_semantic=getattr(ctx, "use_bge", True))
+        agent.progress_callback = self._detail_callback
         agent.run(company, ctx)
 
     def _run_chunkretriever(self, company, ctx):
         from backend.agents.chunk_retriever import ChunkRetrieverAgent
         agent = ChunkRetrieverAgent()
+        agent.progress_callback = self._detail_callback
         agent.run(company, ctx)
 
     def _run_attributor(self, company, ctx):
         from backend.agents.attributor import AttributorAgent
         agent = AttributorAgent(use_llm=getattr(ctx, "use_llm", False))
+        agent.progress_callback = self._detail_callback
         agent.run(company, ctx)
 
     def _run_reporter(self, company, ctx):
         from backend.agents.reporter import ReporterAgent
         agent = ReporterAgent()
+        agent.progress_callback = self._detail_callback
         agent.run(company, ctx)
 
 
@@ -754,22 +808,71 @@ def offline_to_response_from_report(report: dict) -> AnalyzeResponse:
 
 # ---------- 任务状态管理 ----------
 
+
+AGENT_TOTAL = len(StreamingOrchestrator._AGENT_ORDER)
+TERMINAL_STATUSES = {"completed", "failed", "fallback", "cancelled"}
+RESULT_CACHE_SIZE = 20
+
+
+class PipelineCancelled(RuntimeError):
+    pass
+
+
 @dataclass
 class TaskState:
     task_id: str
     code: str
-    status: str = "pending"           # pending / running / completed / failed
+    status: str = "pending"           # pending / running / completed / failed / fallback / cancelled
     progress: list[ProgressMessage] = field(default_factory=list)
     result: AnalyzeResponse | None = None
     error: str | None = None
-    queue: asyncio.Queue = field(default_factory=asyncio.Queue)
+    subscribers: set[asyncio.Queue] = field(default_factory=set)
+    cancel_event: threading.Event = field(default_factory=threading.Event)
+    created_at: float = field(default_factory=time.time)
+    finished_at: float | None = None
 
 
 _task_store: dict[str, TaskState] = {}
+_task_handles: dict[str, asyncio.Task] = {}
+_result_cache: OrderedDict[str, AnalyzeResponse] = OrderedDict()
 
 # 实时扫雷串行锁：SweepingOrchestrator 内部有全局模型/状态，并发容易竞争/死锁，
 # 因此同一时刻只跑一个实时任务，其他任务排队等待。
 _scan_lock = asyncio.Lock()
+
+
+def _cache_key(code: str, window: int) -> str:
+    return f"{str(code).strip().upper()}_{int(window)}"
+
+
+def get_cached_result(code: str, window: int = 60) -> AnalyzeResponse | None:
+    key = _cache_key(code, window)
+    result = _result_cache.get(key)
+    if result is None:
+        return None
+    _result_cache.move_to_end(key)
+    return result.model_copy(deep=True)
+
+
+def cache_result(code: str, window: int, result: AnalyzeResponse) -> None:
+    key = _cache_key(code, window)
+    _result_cache[key] = result.model_copy(deep=True)
+    _result_cache.move_to_end(key)
+    while len(_result_cache) > RESULT_CACHE_SIZE:
+        _result_cache.popitem(last=False)
+
+
+def get_offline_result(code: str, window: int = 60) -> AnalyzeResponse | None:
+    cached = get_cached_result(code, window)
+    if cached is not None:
+        return cached
+    try:
+        result = offline_to_response(code)
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError, KeyError):
+        result = None
+    if result is not None:
+        cache_result(code, window, result)
+    return result
 
 
 def create_task(code: str) -> TaskState:
@@ -783,9 +886,72 @@ def get_task(task_id: str) -> TaskState | None:
     return _task_store.get(task_id)
 
 
+def active_tasks() -> list[TaskState]:
+    return [state for state in _task_store.values() if state.status in {"pending", "running"}]
+
+
+def bind_task_handle(task_id: str, handle: asyncio.Task) -> None:
+    _task_handles[task_id] = handle
+
+
+def subscribe_task(state: TaskState) -> asyncio.Queue:
+    queue: asyncio.Queue = asyncio.Queue()
+    state.subscribers.add(queue)
+    return queue
+
+
+def unsubscribe_task(state: TaskState, queue: asyncio.Queue) -> None:
+    state.subscribers.discard(queue)
+
+
+def _record_message(state: TaskState, msg: ProgressMessage) -> None:
+    # 历史由生产端记录，不依赖 WebSocket 是否已连接。
+    state.progress.append(msg)
+    for subscriber in tuple(state.subscribers):
+        try:
+            subscriber.put_nowait(msg)
+        except asyncio.QueueFull:
+            pass
+
+
+def emit_message(state: TaskState, msg: ProgressMessage) -> None:
+    _record_message(state, msg)
+
+
 def _thread_safe_emit(loop: asyncio.AbstractEventLoop, state: TaskState, msg: ProgressMessage):
-    """从工作线程向 asyncio.Queue 写消息的线程安全方式。"""
-    asyncio.run_coroutine_threadsafe(state.queue.put(msg), loop)
+    """从工作线程写入历史并广播给所有 WebSocket 订阅者。"""
+    if not loop.is_closed():
+        loop.call_soon_threadsafe(_record_message, state, msg)
+
+
+async def cancel_task(task_id: str) -> TaskState | None:
+    state = get_task(task_id)
+    if state is None:
+        return None
+    if state.status in TERMINAL_STATUSES:
+        return state
+
+    state.cancel_event.set()
+    previous_status = state.status
+    state.status = "cancelled"
+    state.finished_at = time.time()
+    emit_message(state, ProgressMessage(
+        type="cancelled",
+        step=0,
+        total=AGENT_TOTAL,
+        agent="SweepingOrchestrator",
+        agent_key="orchestrator",
+        status="cancelled",
+        progress_percent=0,
+        message=f"任务 {task_id} 已取消",
+    ))
+
+    # 排队中的协程可直接取消；已进入同步 Agent 的任务采用边界点协作取消，
+    # 避免释放串行锁后底层线程仍在运行、与新任务抢模型资源。
+    handle = _task_handles.get(task_id)
+    if previous_status == "pending" and handle is not None and not handle.done():
+        handle.cancel()
+    return state
 
 
 async def run_scan_task(state: TaskState, req: ScanRequest):
@@ -797,32 +963,37 @@ async def run_scan_task(state: TaskState, req: ScanRequest):
 
     # 排队等待：同一时刻只跑一个实时任务
     state.status = "pending"
-    _thread_safe_emit(loop, state, ProgressMessage(
+    emit_message(state, ProgressMessage(
         type="progress",
         step=0,
-        total=7,
+        total=AGENT_TOTAL,
         agent="SweepingOrchestrator",
+        agent_key="orchestrator",
         status="running",
+        progress_percent=0,
         message=f"任务 {state.task_id} 已排队，正在等待模型资源（当前有任务正在执行）...",
         elapsed_ms=0,
     ))
+    try:
+        async with _scan_lock:
+            if state.cancel_event.is_set():
+                raise PipelineCancelled("任务已取消")
+            state.status = "running"
+            emit_message(state, ProgressMessage(
+                type="progress",
+                step=0,
+                total=AGENT_TOTAL,
+                agent="SweepingOrchestrator",
+                agent_key="orchestrator",
+                status="running",
+                progress_percent=0,
+                message=f"正在为 {req.code} 启动 {AGENT_TOTAL}-Agent 实时扫雷流水线...",
+                elapsed_ms=0,
+            ))
 
-    async with _scan_lock:
-        state.status = "running"
-        _thread_safe_emit(loop, state, ProgressMessage(
-            type="progress",
-            step=0,
-            total=7,
-            agent="SweepingOrchestrator",
-            status="running",
-            message=f"正在为 {req.code} 启动 7-Agent 实时扫雷流水线（首次加载 BGE/OCR 模型约需 15-30 秒）...",
-            elapsed_ms=0,
-        ))
-
-        try:
             streamer = StreamingOrchestrator(callback=callback)
             ctx = await asyncio.wait_for(
-                loop.run_in_executor(
+                asyncio.shield(loop.run_in_executor(
                     None,
                     lambda: streamer.run(
                         company=req.code,
@@ -830,49 +1001,82 @@ async def run_scan_task(state: TaskState, req: ScanRequest):
                         use_llm=req.use_llm,
                         use_bge=req.use_bge,
                         max_documents=req.max_documents,
+                        cancel_event=state.cancel_event,
                     ),
-                ),
+                )),
                 timeout=600,  # 10 分钟硬上限
             )
+            if state.cancel_event.is_set():
+                raise PipelineCancelled("任务已取消")
             result = report_ctx_to_response(ctx)
             state.result = result
             state.status = "completed"
+            state.finished_at = time.time()
+            cache_result(req.code, req.window, result)
             complete_msg = ProgressMessage(
                 type="complete",
-                step=7,
-                total=7,
+                step=AGENT_TOTAL,
+                total=AGENT_TOTAL,
                 agent="Reporter",
+                agent_key="report",
                 status="done",
+                progress_percent=100,
                 message="报告生成完成",
                 elapsed_ms=0,
                 result=result,
             )
-            _thread_safe_emit(loop, state, complete_msg)
-            # 给 WebSocket handler 留时间把 complete 发出去再结束任务
-            await asyncio.sleep(0.5)
-        except asyncio.TimeoutError:
-            state.status = "failed"
-            state.error = "实时扫雷超过 10 分钟超时，请尝试减少公告数量或关闭 LLM/BGE。"
-            _thread_safe_emit(loop, state, ProgressMessage(
-                type="error",
-                step=0,
-                total=7,
-                agent="SweepingOrchestrator",
-                status="error",
-                message=state.error,
-                elapsed_ms=0,
-                error=state.error,
+            emit_message(state, complete_msg)
+    except (PipelineCancelled, asyncio.CancelledError):
+        state.cancel_event.set()
+        if state.status != "cancelled":
+            state.status = "cancelled"
+            state.finished_at = time.time()
+            emit_message(state, ProgressMessage(
+                type="cancelled", total=AGENT_TOTAL,
+                agent="SweepingOrchestrator", agent_key="orchestrator",
+                status="cancelled", message=f"任务 {state.task_id} 已取消",
             ))
-        except Exception as e:
-            state.status = "failed"
-            state.error = f"{type(e).__name__}: {e}"
-            _thread_safe_emit(loop, state, ProgressMessage(
-                type="error",
-                step=0,
-                total=7,
-                agent="SweepingOrchestrator",
-                status="error",
-                message=state.error,
-                elapsed_ms=0,
-                error=state.error,
-            ))
+    except asyncio.TimeoutError:
+        state.cancel_event.set()
+        await _fallback_after_error(state, req, "实时扫雷超过 10 分钟超时。")
+    except Exception as exc:
+        if state.cancel_event.is_set():
+            state.status = "cancelled"
+            state.finished_at = state.finished_at or time.time()
+        else:
+            await _fallback_after_error(state, req, f"{type(exc).__name__}: {exc}")
+    finally:
+        current = _task_handles.get(state.task_id)
+        if current is asyncio.current_task():
+            _task_handles.pop(state.task_id, None)
+
+
+async def _fallback_after_error(state: TaskState, req: ScanRequest, error: str) -> None:
+    state.error = error
+    emit_message(state, ProgressMessage(
+        type="error", total=AGENT_TOTAL,
+        agent="SweepingOrchestrator", agent_key="orchestrator",
+        status="error", progress_percent=0,
+        message=error, error=error, fatal=False,
+    ))
+    offline = get_offline_result(req.code, req.window)
+    state.finished_at = time.time()
+    if offline is not None:
+        state.result = offline
+        state.status = "fallback"
+        emit_message(state, ProgressMessage(
+            type="fallback", total=AGENT_TOTAL,
+            agent="SweepingOrchestrator", agent_key="orchestrator",
+            status="done", progress_percent=100,
+            message="实时扫雷失败，已自动切换离线快照",
+            error=error, result=offline,
+        ))
+    else:
+        state.status = "failed"
+        emit_message(state, ProgressMessage(
+            type="error", total=AGENT_TOTAL,
+            agent="SweepingOrchestrator", agent_key="orchestrator",
+            status="error", progress_percent=0,
+            message=f"{error}；且未找到可用离线快照",
+            error=error, fatal=True,
+        ))

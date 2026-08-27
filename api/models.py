@@ -1,7 +1,7 @@
 """Pydantic 数据模型 —— 与前端 index.html 的 JS 数据结构对齐。"""
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -83,10 +83,12 @@ class AnalyzeRequest(BaseModel):
 
 class ScanRequest(BaseModel):
     code: str = Field(..., description="公司代码，如 000001.SZ")
-    window: int = Field(60, description="预测窗口天数")
+    window: int = Field(60, ge=1, le=365, description="预测窗口天数")
     use_llm: bool = Field(False, description="是否启用LLM精细抽取（演示建议关闭，可大幅提速）")
     use_bge: bool = Field(True, description="是否启用BGE语义检索")
-    max_documents: Optional[int] = Field(5, description="公告研读最大文档数（越小越快）")
+    max_documents: Optional[int] = Field(5, ge=1, le=100, description="公告研读最大文档数（越小越快）")
+    realtime: bool = Field(False, description="默认返回离线快照；为 true 时执行实时 Agent 流水线")
+    force: bool = Field(False, description="是否取消当前任务并切换到新公司")
 
 
 class ScanResponse(BaseModel):
@@ -94,16 +96,22 @@ class ScanResponse(BaseModel):
     code: str
     status: str
     message: str
+    cached: bool = False
+    result: Optional[AnalyzeResponse] = None
 
 
 class ProgressMessage(BaseModel):
-    type: str = "progress"              # progress / complete / error
+    id: str = Field(default_factory=lambda: __import__("uuid").uuid4().hex)
+    type: Literal["progress", "complete", "error", "fallback", "cancelled"] = "progress"
     step: int = 0
-    total: int = 7
+    total: int = 0
     agent: str = ""
-    status: str = "running"             # running / done / skipped / error
+    agent_key: str = ""
+    status: str = "running"             # pending / running / done / skipped / error / cancelled
+    progress_percent: int = Field(0, ge=0, le=100)
     message: str = ""
     elapsed_ms: int = 0
-    # complete/error 时附带
+    timestamp: float = Field(default_factory=lambda: __import__("time").time())
+    fatal: bool = False
     result: Optional[AnalyzeResponse] = None
     error: Optional[str] = None

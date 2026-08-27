@@ -23,9 +23,19 @@ class AgentBase(ABC):
 
     name = "AgentBase"
 
-    def __init__(self):
+    def __init__(self, progress_callback=None):
         self.run_id = None
         self.trace = None
+        self.progress_callback = progress_callback
+
+    def _report_progress(self, percent, message):
+        """向上层流水线报告 Agent 内部进度；未传回调时不影响原逻辑。"""
+        if self.progress_callback is not None:
+            self.progress_callback({
+                "event": "agent_progress",
+                "percent": max(0, min(100, int(percent))),
+                "message": str(message),
+            })
 
     @abstractmethod
     def execute(self, company, ctx):
@@ -39,8 +49,11 @@ class AgentBase(ABC):
         """
         self.run_id = str(uuid.uuid4())[:8]
         start = time.time()
+        self._report_progress(5, f"{self.name} 已启动")
 
         ctx = self.execute(company, ctx)
+
+        self._report_progress(100, f"{self.name} 处理完成")
 
         latency_ms = int((time.time() - start) * 1000)
         self.trace = {

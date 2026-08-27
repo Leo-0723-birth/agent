@@ -1834,6 +1834,7 @@
   let selectedCompany = '';
   let realtimeMode = false;
   let wsConnection = null;
+  let activeTaskId = null;
   let lastResultIsRealtime = false;
 
   // ==================== 调用后端 API ====================
@@ -2096,6 +2097,10 @@
   }
 
   async function startRealtimeScan(code) {
+    if (activeTaskId) {
+      try { await fetch(`${API_BASE}/api/scan/${activeTaskId}`, { method: 'DELETE' }); } catch (e) {}
+      activeTaskId = null;
+    }
     if (wsConnection) {
       try { wsConnection.close(); } catch (e) {}
       wsConnection = null;
@@ -2110,14 +2115,30 @@
 
     let taskId;
     try {
-      const resp = await fetch(`${API_BASE}/api/scan`, {
+      let resp = await fetch(`${API_BASE}/api/scan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, window: windowVal, use_llm: useLLM, use_bge: useBGE, max_documents: maxDocs })
+        body: JSON.stringify({ code, window: windowVal, use_llm: useLLM, use_bge: useBGE, max_documents: maxDocs, realtime: true })
       });
+      if (resp.status === 409) {
+        const conflict = await resp.json();
+        const shouldSwitch = confirm('当前有实时任务正在运行，是否终止并切换公司？');
+        if (!shouldSwitch) { showLoading(false); return; }
+        resp = await fetch(`${API_BASE}/api/scan`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, window: windowVal, use_llm: useLLM, use_bge: useBGE, max_documents: maxDocs, realtime: true, force: true })
+        });
+      }
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
+      if (data.cached && data.result) {
+        showLoading(false);
+        renderDashboard(data.result);
+        return;
+      }
       taskId = data.task_id;
+      activeTaskId = taskId;
     } catch (err) {
       console.error('创建任务失败:', err);
       showLoading(false);
@@ -2153,12 +2174,26 @@
           renderCompanyList();
           updateModalCount();
         }
+        activeTaskId = null;
         ws.close();
       } else if (data.type === 'error') {
-        showLoading(false);
         console.error('实时扫雷失败:', data.error);
-        alert('实时扫雷失败：' + (data.message || data.error) + '\n已回退到离线快照。');
-        fallbackToOffline(code);
+        if (data.fatal) {
+          showLoading(false);
+          alert('实时扫雷失败：' + (data.message || data.error));
+          fallbackToOffline(code);
+          activeTaskId = null;
+          ws.close();
+        }
+      } else if (data.type === 'fallback') {
+        showLoading(false);
+        alert('⚠️ 实时扫雷失败，已自动切换离线快照。');
+        if (data.result) renderDashboard(data.result);
+        activeTaskId = null;
+        ws.close();
+      } else if (data.type === 'cancelled') {
+        showLoading(false);
+        activeTaskId = null;
         ws.close();
       }
     };
