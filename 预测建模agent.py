@@ -21,12 +21,16 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from backend.agents.predictor import PredictorAgent
 from backend.context import Context
+from ui.charts import ensemble_weights_chart, model_performance_chart, risk_ranking_chart
+from ui.data import load_model_summary, load_risk_ranking
+from ui.theme import apply_scan_theme
 
 st.set_page_config(
     page_title="预测建模 Agent",
     page_icon=":material/model_training:",
     layout="wide",
 )
+apply_scan_theme()
 
 
 @st.cache_data(ttl="6h", max_entries=20, show_spinner=False)
@@ -374,6 +378,24 @@ def _render_shap(shap, c: dict) -> None:
 st.title("预测建模 Agent")
 st.caption("按 (company, as_of) 从建模数据集取最新一行特征 → 三模型集成（RF+LightGBM+XGBoost）→ 30/60/90 天问询概率 + SHAP 归因。")
 
+model_summary = load_model_summary()
+quality_left, quality_right = st.columns(2)
+with quality_left:
+    with st.container(border=True):
+        st.markdown("#### 三窗口模型质量")
+        st.altair_chart(model_performance_chart(model_summary), width="stretch")
+        st.caption("AUC、F1 和 Top 10% 覆盖率均来自当前测试集摘要。")
+with quality_right:
+    with st.container(border=True):
+        st.markdown("#### 三模型集成权重")
+        st.altair_chart(ensemble_weights_chart(model_summary), width="stretch")
+        st.caption("RandomForest 30%，LightGBM 35%，XGBoost 35%。")
+
+with st.container(border=True):
+    st.markdown("#### 60 天批量风险排名 Top 10")
+    st.altair_chart(risk_ranking_chart(load_risk_ranking(60, 10)), width="stretch")
+    st.caption("排序来自已归档测试集结果，不依赖当前公司查询。")
+
 with st.sidebar:
     st.subheader("运行设置")
     as_of_value = st.date_input("特征锚点 T", value=date.today(), max_value=date.today(),
@@ -384,8 +406,8 @@ with st.sidebar:
 with st.form("company_query_form", border=True):
     company_input = st.text_input(
         "公司代码（带交易所后缀）",
-        value="000004.SZ",
-        placeholder="例如：000004.SZ",
+        value="000063.SZ",
+        placeholder="例如：000063.SZ",
     )
     submitted = st.form_submit_button("开始预测", type="primary", icon=":material/search:")
 
@@ -431,4 +453,4 @@ else:
     with st.container(border=True):
         st.subheader("页面会展示什么")
         st.write("30/60/90 天监管问询概率、风险等级、置信度、SHAP 特征贡献图与推理追踪。")
-        st.caption("先使用默认示例 000004.SZ，点击“开始预测”即可。若显示“未找到该股票特征”，说明该公司不在建模数据集内。")
+        st.caption("先使用默认示例 000063.SZ（中兴通讯），点击“开始预测”即可。若显示“未找到该股票特征”，说明该公司不在建模数据集内。")

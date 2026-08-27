@@ -25,12 +25,48 @@ from backend.agents.case_retriever import CaseRetrieverAgent
 from backend.agents.financial_detector import FinancialDetectorAgent
 from backend.context import Context
 from backend.skills.announcement_search import CninfoAnnouncementSource
+from ui.theme import apply_scan_theme
 
 st.set_page_config(
     page_title="案例匹配 Agent",
     page_icon=":material/compare_arrows:",
     layout="wide",
 )
+apply_scan_theme()
+
+
+# ================= 设计规范组件 =================
+def _pipeline_flow() -> None:
+    """Agent 智能分析流程（pipeline-step 组件，金融蓝主题）。"""
+    st.markdown('<div class="sec-title">🤖 Agent 智能分析流程</div>', unsafe_allow_html=True)
+    st.caption("上市公司输入 → 风险画像构建 → 历史案例检索 → 融合决策输出")
+    stages = [
+        ("风险画像 Agent", "📊", ["📄 公告解析", "📈 财务异常检测", "🏷️ 风险标签抽取"]),
+        ("案例匹配 Agent", "🔍", ["🧠 BGE 语义检索", "🏷️ 标签联合匹配", "⏳ 时间穿越过滤"]),
+        ("决策输出 Agent", "⚖️", ["🔗 RRF 融合排序", "📋 Top-K 案例生成", "🔎 审计轨迹记录"]),
+    ]
+    html = '<div class="pipeline-grid">'
+    for title, icon, items in stages:
+        chips = "".join(f'<span class="badge badge-low">{it}</span>' for it in items)
+        html += (
+            f'<div class="pipeline-step step-done"><div class="step-icon">{icon}</div>'
+            f'<div><div class="step-title">{title}</div>'
+            f'<div class="step-status">{chips}</div></div></div>'
+        )
+    html += "</div>"
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def _metric_cards(items: list[tuple[str, str, str]]) -> None:
+    """技术指标卡风格指标行。items: (label, value, sub)。"""
+    html = '<div class="tech-grid">'
+    for label, value, sub in items:
+        html += (
+            f'<div class="tech-metric-card"><div class="m-label">{label}</div>'
+            f'<div class="m-value">{value}</div><div class="m-sub">{sub}</div></div>'
+        )
+    html += "</div>"
+    st.markdown(html, unsafe_allow_html=True)
 
 
 @st.cache_data(ttl="6h", max_entries=10, show_spinner=False)
@@ -42,13 +78,17 @@ def analyze_company(
     use_finbert: bool,
     use_llm: bool,
     top_k: int,
+    semantic_timeout: float = 60,
 ) -> dict:
-    """公告研读 → 财务检测 → 案例检索（RRF 融合 + 三源标签通道 + 时间穿越控制）。"""
+    """公告研读 → 财务检测 → 案例检索（RRF 融合 + 三源标签通道 + 时间穿越控制）。
+
+    semantic_timeout: BGE 语义查询超时秒数（冷启动加载 1.3GB 权重可能超 60s）。
+    """
     source = CninfoAnnouncementSource(max_documents=max_documents, ocr_enabled=use_ocr)
     ctx = Context(company=company, as_of=as_of)
     AnnouncementReaderAgent(source=source, use_finbert=use_finbert, use_llm=use_llm).run(company, ctx)
     FinancialDetectorAgent(use_llm=False).run(company, ctx)
-    CaseRetrieverAgent(top_k=top_k).run(company, ctx)
+    CaseRetrieverAgent(top_k=top_k, semantic_timeout=semantic_timeout).run(company, ctx)
     return asdict(ctx)
 
 
@@ -69,7 +109,7 @@ def cases_dataframe(cases: list[dict]) -> pd.DataFrame:
 
 
 st.title("案例匹配 Agent")
-st.caption("基于 1483 份历史监管问询函案例库，对目标公司风险画像做 RRF 融合检索（语义向量 + 标签重合），带时间穿越控制与防泄漏过滤。")
+st.caption("基于 4785 份历史监管问询函案例库，对目标公司风险画像做 RRF 融合检索（语义向量 + 标签重合），带时间穿越控制与防泄漏过滤。")
 
 with st.sidebar:
     st.subheader("运行设置")
@@ -79,13 +119,16 @@ with st.sidebar:
     use_finbert = st.toggle("启用 FinBERT", value=False)
     use_llm = st.toggle("启用 LLM 精细抽取", value=False, help="需要 DEEPSEEK_API_KEY。")
     top_k = st.slider("返回相似案例数", min_value=1, max_value=20, value=5)
+    semantic_timeout = st.slider(
+        "BGE 语义查询超时（秒）", min_value=30, max_value=300, value=60, step=10,
+        help="独立页面冷启动加载 BGE(1.3GB) 可能超 60s；完整流水线中公告研读已加载，无需调大。")
     st.caption("端口约定：8505（独立运行：streamlit run 案例匹配agent.py --server.port 8505）")
 
 with st.form("company_query_form", border=True):
     company_input = st.text_input(
         "公司代码或准确名称",
-        value="000004.SZ",
-        placeholder="例如：000004.SZ、国华网安",
+        value="000063.SZ",
+        placeholder="例如：000063.SZ、中兴通讯",
     )
     submitted = st.form_submit_button("开始匹配", type="primary", icon=":material/search:")
 
@@ -141,6 +184,7 @@ if submitted:
                     use_finbert,
                     use_llm,
                     top_k,
+                    semantic_timeout,
                 )
 
                 st.write("✅ 步骤 4/5：历史案例检索完成")
@@ -174,6 +218,25 @@ if result:
     semantic = result.get("semantic", {})
     financial = result.get("financial", {})
     trace = result.get("trace_log", [])
+    # ---- 降级确认：BGE 语义通道超时/不可用时，需用户确认是否接受"仅标签检索" ----
+    choice_entry = next((t for t in trace if t.get("status") == "needs_choice"), None)
+    if choice_entry:
+        reason = choice_entry.get("reason", "BGE 语义检索不可用")
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            st.warning(
+                f"⚠️ **BGE 语义检索降级**\n\n原因：{reason}\n\n"
+                f"当前结果仅基于**标签匹配**通道（未包含语义余弦相似度）。"
+                f"完整流水线中公告研读已加载 BGE，不会触发；独立页面冷启动加载 1.3GB 权重可能超时。",
+                icon=":material/warning:",
+            )
+        with c2:
+            if st.button("🔄 重试（延长等待）", use_container_width=True,
+                         key="retry_semantic"):
+                st.session_state["retry_semantic"] = True
+        if st.session_state.pop("retry_semantic", False):
+            st.session_state.pop("case_analysis", None)
+            st.rerun()
     # 案例库规模动态读取（backend/data/vector_db/case_meta.json）
     try:
         import json as _json
@@ -184,20 +247,20 @@ if result:
         library_size = len(cases)
 
     # =========================
-    # Agent执行流程展示 v1.1（队员新增）
+    # Agent执行流程展示 v1.1（队员新增，设计规范金融蓝主题）
     # =========================
-    st.subheader("🤖 Agent智能分析流程")
-    st.caption("上市公司输入 → 风险画像构建 → 历史案例检索 → 融合决策输出")
+    _pipeline_flow()
 
     st.markdown(
         """
         <div style="
             text-align:center;
             padding:12px;
-            border:1px solid #444;
+            border:1px solid var(--border,#334);
             border-radius:10px;
-            background:#151922;
+            background:linear-gradient(135deg,#0b1b3a,#12285c);
             font-size:18px;
+            color:#e6f0ff;
             ">
             🏢 目标上市公司风险输入
         </div>
@@ -209,29 +272,12 @@ if result:
         unsafe_allow_html=True
     )
 
-    modules = [
-        ("📊 风险画像 Agent", ["📄 公告解析", "📈 财务异常检测", "🏷️ 风险标签抽取"]),
-        ("🔍 案例匹配 Agent", ["🧠 BGE语义检索", "🏷️ 标签联合匹配", "⏳ 时间穿越过滤"]),
-        ("⚖️ 决策输出 Agent", ["🔗 RRF融合排序", "📋 Top-K案例生成", "🔎 审计轨迹记录"]),
-    ]
-    for idx, (title, items) in enumerate(modules):
-        with st.container(border=True):
-            st.markdown(f"### {title}")
-            cols = st.columns(len(items))
-            for col, item in zip(cols, items):
-                with col:
-                    st.info(item)
-        if idx < len(modules) - 1:
-            st.markdown(
-                "<div style='text-align:center;font-size:25px;'>⬇️</div>",
-                unsafe_allow_html=True
-            )
-
-    with st.container(horizontal=True):
-        st.metric("相似案例", len(cases), border=True)
-        st.metric("公告风险要素", len(semantic.get("risk_factors", [])), border=True)
-        st.metric("财务异常", len(financial.get("anomaly_list", [])), border=True)
-        st.metric("案例库规模", library_size, border=True)
+    _metric_cards([
+        ("相似案例", str(len(cases)), "RRF 融合 Top-K"),
+        ("公告风险要素", str(len(semantic.get("risk_factors", []))), "规则 + FinBERT + LLM"),
+        ("财务异常", str(len(financial.get("anomaly_list", []))), "异常信号数"),
+        ("案例库规模", str(library_size), "历史监管问询函"),
+    ])
 
     st.subheader("相似历史问询案例（Top 综合匹配）")
     if cases:
@@ -321,4 +367,4 @@ else:
     with st.container(border=True):
         st.subheader("页面会展示什么")
         st.write("目标公司风险画像（公告 + 财务）→ RRF 融合检索 → Top 相似历史问询函（公司/类型/日期/综合匹配度/关注点）。")
-        st.caption("先使用默认示例 000004.SZ，点击“开始匹配”即可。首次运行需下载公告 PDF，可能等待数分钟（已缓存后秒级）。")
+        st.caption("先使用默认示例 000063.SZ（中兴通讯），点击“开始匹配”即可。首次运行需下载公告 PDF，可能等待数分钟（已缓存后秒级）。")

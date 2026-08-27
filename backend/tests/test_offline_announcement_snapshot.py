@@ -102,6 +102,32 @@ def test_cninfo_source_returns_snapshot_without_network_request(tmp_path):
     assert announcements[0]["text"] == "公司发生重大诉讼。"
 
 
+def test_cninfo_source_keeps_offline_mode_when_ocr_is_disabled(tmp_path):
+    payload = {
+        "schema_version": SNAPSHOT_SCHEMA,
+        "company": {"code": "000004", "secucode": "000004.SZ", "company_name": "国华退"},
+        "aliases": ["000004SZ"],
+        "coverage": {"query_start": "2025-08-25", "query_end": "2026-08-24"},
+        "announcements": [{"id": "a1", "date": "2026-08-20", "title": "公告一", "text": "原文"}],
+    }
+    _write(tmp_path / "000004_SZ_announcements_2026-08-24.json.gz", payload)
+
+    class NoNetworkSession:
+        def request(self, *args, **kwargs):
+            raise AssertionError("OCR disabled must not disable offline snapshot")
+
+    source = CninfoAnnouncementSource(
+        session=NoNetworkSession(),
+        offline_snapshot_dir=tmp_path,
+        prefer_offline=True,
+        ocr_enabled=False,
+    )
+    company, announcements = source.search("000004SZ", as_of="2026-08-24")
+
+    assert company["retrieval_mode"] == "offline_official_snapshot"
+    assert announcements[0]["id"] == "a1"
+
+
 def test_analysis_snapshot_requires_exact_runtime_options(tmp_path):
     payload = {
         "schema_version": ANALYSIS_SCHEMA,

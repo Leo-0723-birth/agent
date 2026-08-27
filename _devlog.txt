@@ -1,0 +1,8 @@
+2026-08-27 01:37:05.444 Uvicorn server started on :::8610
+
+  You can now view your Streamlit app in your browser.
+
+  Local URL: http://localhost:8610
+  Network URL: http://192.168.1.9:8610
+  External URL: http://111.33.225.35:8610
+

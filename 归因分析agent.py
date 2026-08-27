@@ -26,12 +26,14 @@ from backend.agents.predictor import PredictorAgent
 from backend.config import ANNOUNCE_SOURCE
 from backend.context import Context
 from backend.skills.announcement_search import CninfoAnnouncementSource
+from ui.theme import apply_scan_theme
 
 st.set_page_config(
     page_title="归因分析 Agent",
     page_icon=":material/psychology:",
     layout="wide",
 )
+apply_scan_theme()
 
 
 @st.cache_data(ttl="6h", max_entries=10, show_spinner=False)
@@ -44,6 +46,7 @@ def analyze_company(
     use_llm: bool,
     top_k: int,
     shap_threshold: float,
+    use_semantic_cases: bool,
 ) -> dict:
     """公告研读 → 财务检测 → 预测建模(SHAP) → 归因解释（SHAP + 证据白名单 + validate_narrative 防幻觉）。"""
     # 离线（ANNOUNCE_SOURCE=local）时不传 source，AnnouncementReaderAgent 自动走本地 PDF 扫描
@@ -51,10 +54,15 @@ def analyze_company(
     if ANNOUNCE_SOURCE != "local":
         source = CninfoAnnouncementSource(max_documents=max_documents, ocr_enabled=use_ocr)
     ctx = Context(company=company, as_of=as_of)
-    AnnouncementReaderAgent(source=source, use_finbert=use_finbert, use_llm=use_llm).run(company, ctx)
+    AnnouncementReaderAgent(
+        source=source,
+        max_documents=max_documents,
+        use_finbert=use_finbert,
+        use_llm=use_llm,
+    ).run(company, ctx)
     FinancialDetectorAgent(use_llm=False).run(company, ctx)
     PredictorAgent().run(company, ctx)
-    CaseRetrieverAgent().run(company, ctx)
+    CaseRetrieverAgent(use_semantic=use_semantic_cases).run(company, ctx)
     AttributorAgent(top_k=top_k, shap_threshold=shap_threshold, use_llm=use_llm).run(company, ctx)
     return asdict(ctx)
 
@@ -86,7 +94,8 @@ with st.sidebar:
     st.subheader("运行设置")
     as_of_value = st.date_input("数据截止日", value=date.today(), max_value=date.today())
     max_documents = st.slider("最多解析 PDF 数量", min_value=5, max_value=120, value=30, step=5)
-    use_ocr = st.toggle("启用扫描 PDF OCR", value=True)
+    use_ocr = st.toggle("启用扫描 PDF OCR", value=False)
+    use_semantic_cases = st.toggle("启用 BGE 语义案例检索", value=True, key="attribution_use_semantic_cases")
     use_finbert = st.toggle("启用 FinBERT", value=False)
     use_llm = st.toggle("启用 LLM 归因叙事", value=False, help="需要 DEEPSEEK_API_KEY。")
     top_k = st.slider("Top 诱因数", min_value=1, max_value=15, value=5)
@@ -96,8 +105,8 @@ with st.sidebar:
 with st.form("company_query_form", border=True):
     company_input = st.text_input(
         "公司代码或准确名称",
-        value="000004.SZ",
-        placeholder="例如：000004.SZ、国华网安",
+        value="000063.SZ",
+        placeholder="例如：000063.SZ、中兴通讯",
     )
     submitted = st.form_submit_button("开始归因", type="primary", icon=":material/search:")
 
@@ -117,6 +126,7 @@ if submitted:
                     use_llm,
                     top_k,
                     shap_threshold,
+                    use_semantic_cases,
                 )
                 st.session_state["attribution_analysis"] = result
                 status.update(label="归因分析完成", state="complete", expanded=False)
@@ -129,6 +139,11 @@ if result:
     att = result.get("attribution", {})
     pred = result.get("prediction", {})
     trace = result.get("trace_log", [])
+    if any(t.get("status") == "needs_choice" for t in trace):
+        st.warning("BGE 语义检索未完成，本次暂使用标签检索。")
+        if st.button("切换为快速标签检索并重新运行", key="attribution_fast_cases"):
+            st.session_state["attribution_use_semantic_cases"] = False
+            st.rerun()
     factors = att.get("top_risk_factors", [])
     citations = att.get("evidence_citations", [])
     case_links = att.get("case_links", [])
@@ -172,4 +187,4 @@ else:
     with st.container(border=True):
         st.subheader("页面会展示什么")
         st.write("归因叙事、Top 风险诱因（SHAP 贡献 + 标签引用）、原文证据白名单与完整推理追踪。")
-        st.caption("先使用默认示例 000004.SZ，点击“开始归因”即可。首次运行需下载公告 PDF，可能等待数分钟。")
+        st.caption("先使用默认示例 000063.SZ（中兴通讯），点击“开始归因”即可。首次运行需下载公告 PDF，可能等待数分钟。")
