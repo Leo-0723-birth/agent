@@ -1,0 +1,518 @@
+{
+  "report_id": "000001_SZ_2026-08-23_20260826_213944",
+  "company": "000001.SZ",
+  "name": "平安银行",
+  "window": 60,
+  "as_of": "2026-08-23",
+  "generated_at": "2026-08-26T21:39:44",
+  "data_source": "realtime",
+  "executive_summary": "经评估，平安银行（000001.SZ）未来60日风险概率约7.50%，风险等级为低，置信度92.5%。主要风险诱因包括最新查询间隔天数异常、股吧负面情绪占比上升及12个月查询次数等指标波动。同类案例中，002146.SZ、000918.SZ及000711.SZ曾因年报或半年报问询函引发关注。建议对相关风险指标开展专项核查，持续跟踪信息披露质量。",
+  "profile": {
+    "industry": "金融业-货币金融服务",
+    "report_period": 20260630,
+    "coverage": {
+      "realtime": 30,
+      "filled": 98,
+      "total": 128,
+      "ratio": 0.2344
+    },
+    "announcement_count": 0
+  },
+  "scorecard": {
+    "probability_30d": 0.04023486920280156,
+    "probability_60d": 0.07499218497926309,
+    "probability_90d": 0.10835746217212744,
+    "risk_level": "低",
+    "confidence": 0.925,
+    "feature_anchor": "20260630",
+    "shap_features": [
+      [
+        "f6_last_inquiry_interval_days",
+        0.35064
+      ],
+      [
+        "sent_guba_negative_ratio_30d",
+        0.21449
+      ],
+      [
+        "f6_inquiry_count_12m",
+        -0.21301
+      ],
+      [
+        "mkt_market_cap",
+        -0.17474
+      ],
+      [
+        "f2_p_roa",
+        -0.14692
+      ],
+      [
+        "f6_first_inquiry_interval_days",
+        0.14586
+      ],
+      [
+        "f6_attention_letter_count",
+        -0.14442
+      ],
+      [
+        "mkt_pe_ratio",
+        -0.1415
+      ]
+    ]
+  },
+  "financial": {
+    "risk_level": "中",
+    "skip": false,
+    "skip_reason": "",
+    "anomaly_list": [
+      {
+        "type": "高负债",
+        "severity": 3,
+        "indicator": "debt_to_assets_ratio",
+        "value": 90.9067249869,
+        "threshold": "> 70.0%",
+        "evidence": "资产负债率 = 90.9% > 70.0%",
+        "label_ref": "偿债能力"
+      },
+      {
+        "type": "盈余操纵嫌疑",
+        "severity": 4,
+        "indicator": "f2_beneish_m",
+        "value": -1.9634118498492712,
+        "threshold": "> -2.22（Beneish M-Score 可疑线）",
+        "evidence": "Beneish M-Score = -1.96 > -2.22，存在盈余操纵嫌疑",
+        "label_ref": "盈利能力"
+      }
+    ],
+    "features_count": 142,
+    "llm_analysis": ""
+  },
+  "semantic": {
+    "announcement_count": 0,
+    "risk_factor_count": 0,
+    "risk_factors": [],
+    "f1_features": {}
+  },
+  "similar_cases": [
+    {
+      "case_id": "IC-002146.SZ-20230510",
+      "company": "002146.SZ",
+      "inquiry_type": "年报问询函",
+      "publish_date": "2023-05-10",
+      "topics": [
+        "解释营业收入下滑和亏损扩大的原因。",
+        "分析毛利率下降的原因及风险。",
+        "说明第四季度毛利率大幅下降的原因。",
+        "解释货币资金减少和有息负债高的原因，评估短期及长期偿债能力。",
+        "披露美元债违约的影响及最新进展。"
+      ],
+      "similarity": 0.031099,
+      "rrf_score": 0.031099,
+      "cosine_similarity": 0.6218,
+      "semantic_rank": 1,
+      "label_rank": 8,
+      "taxonomy_labels": [
+        "A01",
+        "A02",
+        "A06",
+        "C01",
+        "C02",
+        "C06",
+        "D03",
+        "D04"
+      ],
+      "matched_taxonomy_labels": [
+        "D03"
+      ],
+      "match_reason": [
+        "命中监管关注标签：债务结构与偿债能力",
+        "当前风险与历史案例均涉及盈利能力或经营业绩变化",
+        "当前风险与历史案例均涉及资产质量或减值事项"
+      ],
+      "letter_excerpt": ""
+    },
+    {
+      "case_id": "IC-000918.SZ-20200525",
+      "company": "000918.SZ",
+      "inquiry_type": "年报问询函",
+      "publish_date": "2020-05-25",
+      "topics": [
+        "说明非流动资产处置损益的具体构成及可持续性",
+        "分析未来改善经营、提高主业盈利能力的措施",
+        "详细说明资产出售事项对净利润的影响并核查确认依据",
+        "解释拆入资金使用期限和费率合理性",
+        "说明应收款项大幅增长的原因及坏账准备计提情况"
+      ],
+      "similarity": 0.026023,
+      "rrf_score": 0.026023,
+      "cosine_similarity": 0.6144,
+      "semantic_rank": 5,
+      "label_rank": 34,
+      "taxonomy_labels": [
+        "A06",
+        "B05",
+        "C01",
+        "C02",
+        "C06",
+        "D03",
+        "D06",
+        "E04"
+      ],
+      "matched_taxonomy_labels": [
+        "D03"
+      ],
+      "match_reason": [
+        "命中监管关注标签：债务结构与偿债能力",
+        "当前风险与历史案例均涉及盈利能力或经营业绩变化",
+        "当前风险与历史案例均涉及资产质量或减值事项"
+      ],
+      "letter_excerpt": ""
+    },
+    {
+      "case_id": "IC-000711.SZ-20221010",
+      "company": "000711.SZ",
+      "inquiry_type": "半年报问询函",
+      "publish_date": "2022-10-10",
+      "topics": [
+        "净利润持续为负、收入大幅下滑的原因及主营业务持续盈利能力的不确定性",
+        "资金情况说明及短期长期偿债能力",
+        "新增逾期债务的具体情况和信息披露",
+        "失信被执行人对公司的影响及应对措施",
+        "应收款项占营业收入比例高的原因及坏账准备计提"
+      ],
+      "similarity": 0.024752,
+      "rrf_score": 0.024752,
+      "cosine_similarity": 0.6081,
+      "semantic_rank": 17,
+      "label_rank": 25,
+      "taxonomy_labels": [
+        "A03",
+        "C01",
+        "D03",
+        "D04",
+        "D05"
+      ],
+      "matched_taxonomy_labels": [
+        "D03"
+      ],
+      "match_reason": [
+        "命中监管关注标签：债务结构与偿债能力",
+        "当前风险与历史案例均涉及盈利能力或经营业绩变化"
+      ],
+      "letter_excerpt": ""
+    },
+    {
+      "case_id": "IC-000711.SZ-20201011",
+      "company": "000711.SZ",
+      "inquiry_type": "半年报问询函",
+      "publish_date": "2020-10-11",
+      "topics": [
+        "货币资金受限的具体原因、时间及用途。",
+        "主要息负债的金额和到期期限，以及债务偿付能力。",
+        "计提应收款项减值准备的具体内容、依据及合理性。",
+        "预付款项期末余额增长的原因。",
+        "提高主营业务盈利能力的措施。"
+      ],
+      "similarity": 0.024723,
+      "rrf_score": 0.024723,
+      "cosine_similarity": 0.62,
+      "semantic_rank": 3,
+      "label_rank": 53,
+      "taxonomy_labels": [
+        "A06",
+        "C01",
+        "C06",
+        "D02",
+        "D03",
+        "D05"
+      ],
+      "matched_taxonomy_labels": [
+        "D03"
+      ],
+      "match_reason": [
+        "命中监管关注标签：债务结构与偿债能力",
+        "当前风险与历史案例均涉及盈利能力或经营业绩变化",
+        "当前风险与历史案例均涉及资产质量或减值事项"
+      ],
+      "letter_excerpt": ""
+    },
+    {
+      "case_id": "IC-000020.SZ-20220513",
+      "company": "000020.SZ",
+      "inquiry_type": "年报问询函",
+      "publish_date": "2022-05-13",
+      "topics": [
+        "分析长期微利或亏损原因及应对措施",
+        "解释经营活动现金流大幅减少和净利润差异的原因",
+        "说明关联交易占比波动的原因及合理性",
+        "解释票据结算比重与行业特点相符性及坏账准备计提情况",
+        "披露短期负债偿还情况及货币资金对偿债能力的影响"
+      ],
+      "similarity": 0.022296,
+      "rrf_score": 0.022296,
+      "cosine_similarity": 0.5983,
+      "semantic_rank": 39,
+      "label_rank": 22,
+      "taxonomy_labels": [
+        "A03",
+        "C01",
+        "D01",
+        "D03",
+        "D05",
+        "E02"
+      ],
+      "matched_taxonomy_labels": [
+        "D03"
+      ],
+      "match_reason": [
+        "命中监管关注标签：债务结构与偿债能力",
+        "当前风险与历史案例均涉及盈利能力或经营业绩变化"
+      ],
+      "letter_excerpt": ""
+    }
+  ],
+  "attribution": {
+    "top_risk_factors": [
+      {
+        "feature": "f6_last_inquiry_interval_days",
+        "shap": 0.35064,
+        "description": "距最近问询天数",
+        "label_ref": "历史问询",
+        "source": "financial",
+        "taxonomy_l1": "HIST",
+        "taxonomy_l2": "HIST",
+        "theme_name": "历史问询（强度/时点/节奏）",
+        "evidence_id": null,
+        "is_fallback": false,
+        "no_evidence": true
+      },
+      {
+        "feature": "sent_guba_negative_ratio_30d",
+        "shap": 0.21449,
+        "description": "近30日股吧负面占比",
+        "label_ref": "市场情绪",
+        "source": "financial",
+        "taxonomy_l1": "H",
+        "taxonomy_l2": "H02",
+        "theme_name": "市场传闻、媒体报道与澄清",
+        "evidence_id": null,
+        "is_fallback": false,
+        "no_evidence": true
+      },
+      {
+        "feature": "f6_inquiry_count_12m",
+        "shap": -0.21301,
+        "description": "近12个月被问询次数",
+        "label_ref": "历史问询",
+        "source": "financial",
+        "taxonomy_l1": "HIST",
+        "taxonomy_l2": "HIST",
+        "theme_name": "历史问询（强度/时点/节奏）",
+        "evidence_id": null,
+        "is_fallback": false,
+        "no_evidence": true
+      },
+      {
+        "feature": "mkt_market_cap",
+        "shap": -0.17474,
+        "description": "总市值",
+        "label_ref": "市场估值",
+        "source": "financial",
+        "taxonomy_l1": "H",
+        "taxonomy_l2": "H01",
+        "theme_name": "股价、成交量与市场交易异常",
+        "evidence_id": null,
+        "is_fallback": false,
+        "no_evidence": true
+      },
+      {
+        "feature": "f2_p_roa",
+        "shap": -0.14692,
+        "description": "ROA 异常分位（F-Score）",
+        "label_ref": "盈利能力",
+        "source": "financial",
+        "taxonomy_l1": "A",
+        "taxonomy_l2": "A03",
+        "theme_name": "利润、扣非利润与业绩波动",
+        "evidence_id": "fin_001",
+        "is_fallback": false,
+        "no_evidence": false
+      }
+    ],
+    "evidence_citations": [
+      {
+        "evidence_id": "fin_000",
+        "source": "财务异常检测",
+        "label_ref": "偿债能力",
+        "snippet": "资产负债率 = 90.9% > 70.0%"
+      },
+      {
+        "evidence_id": "fin_001",
+        "source": "财务异常检测",
+        "label_ref": "盈利能力",
+        "snippet": "Beneish M-Score = -1.96 > -2.22，存在盈余操纵嫌疑"
+      }
+    ],
+    "case_links": [
+      {
+        "case_id": "IC-000918.SZ-20200525",
+        "company": "000918.SZ",
+        "inquiry_type": "年报问询函",
+        "publish_date": "2020-05-25",
+        "topics": [
+          "说明非流动资产处置损益的具体构成及可持续性",
+          "分析未来改善经营、提高主业盈利能力的措施",
+          "详细说明资产出售事项对净利润的影响并核查确认依据",
+          "解释拆入资金使用期限和费率合理性",
+          "说明应收款项大幅增长的原因及坏账准备计提情况"
+        ],
+        "similarity": 0.026023,
+        "rrf_score": 0.026023,
+        "cosine_similarity": 0.6144,
+        "semantic_rank": 5,
+        "label_rank": 34,
+        "taxonomy_labels": [
+          "A06",
+          "B05",
+          "C01",
+          "C02",
+          "C06",
+          "D03",
+          "D06",
+          "E04"
+        ],
+        "matched_taxonomy_labels": [
+          "D03"
+        ],
+        "match_reason": [
+          "命中监管关注标签：债务结构与偿债能力",
+          "当前风险与历史案例均涉及盈利能力或经营业绩变化",
+          "当前风险与历史案例均涉及资产质量或减值事项"
+        ],
+        "letter_excerpt": ""
+      },
+      {
+        "case_id": "IC-000711.SZ-20221010",
+        "company": "000711.SZ",
+        "inquiry_type": "半年报问询函",
+        "publish_date": "2022-10-10",
+        "topics": [
+          "净利润持续为负、收入大幅下滑的原因及主营业务持续盈利能力的不确定性",
+          "资金情况说明及短期长期偿债能力",
+          "新增逾期债务的具体情况和信息披露",
+          "失信被执行人对公司的影响及应对措施",
+          "应收款项占营业收入比例高的原因及坏账准备计提"
+        ],
+        "similarity": 0.024752,
+        "rrf_score": 0.024752,
+        "cosine_similarity": 0.6081,
+        "semantic_rank": 17,
+        "label_rank": 25,
+        "taxonomy_labels": [
+          "A03",
+          "C01",
+          "D03",
+          "D04",
+          "D05"
+        ],
+        "matched_taxonomy_labels": [
+          "D03"
+        ],
+        "match_reason": [
+          "命中监管关注标签：债务结构与偿债能力",
+          "当前风险与历史案例均涉及盈利能力或经营业绩变化"
+        ],
+        "letter_excerpt": ""
+      },
+      {
+        "case_id": "IC-000020.SZ-20220513",
+        "company": "000020.SZ",
+        "inquiry_type": "年报问询函",
+        "publish_date": "2022-05-13",
+        "topics": [
+          "分析长期微利或亏损原因及应对措施",
+          "解释经营活动现金流大幅减少和净利润差异的原因",
+          "说明关联交易占比波动的原因及合理性",
+          "解释票据结算比重与行业特点相符性及坏账准备计提情况",
+          "披露短期负债偿还情况及货币资金对偿债能力的影响"
+        ],
+        "similarity": 0.022296,
+        "rrf_score": 0.022296,
+        "cosine_similarity": 0.5983,
+        "semantic_rank": 39,
+        "label_rank": 22,
+        "taxonomy_labels": [
+          "A03",
+          "C01",
+          "D01",
+          "D03",
+          "D05",
+          "E02"
+        ],
+        "matched_taxonomy_labels": [
+          "D03"
+        ],
+        "match_reason": [
+          "命中监管关注标签：债务结构与偿债能力",
+          "当前风险与历史案例均涉及盈利能力或经营业绩变化"
+        ],
+        "letter_excerpt": ""
+      }
+    ],
+    "narrative": "最可能触发监管问询的诱因是财务报表层面的盈余操纵嫌疑：证据[fin_001]显示Beneish M-Score为-1.96，高于-2.22的警戒阈值，提示公司存在利润操纵风险，这类信号通常直接引发监管机构对财务真实性的关注。此外，公司资产负债率高达90.9%（[fin_000]），反映偿债压力较大，进一步加剧了问询概率。历史先例可佐证：相似案例中，000918.SZ、000711.SZ等均因净利润异常、偿债能力及应收款项等问题被交易所下发年报或半年报问询函，且监管关注点普遍集中在资产处置对利润的影响、现金流与净利润差异、坏账准备计提等财务质量议题，与本样本的财务异常特征高度吻合。"
+  },
+  "trace_log": [
+    {
+      "agent": "AnnouncementReader",
+      "status": "timeout",
+      "reason": "节点执行超过 420s（网络异常），后续环节继续",
+      "trace_complete": true
+    },
+    {
+      "run_id": "fbed7b65",
+      "agent": "FinancialDetector",
+      "company": "000001.SZ",
+      "timestamp": "2026-08-26T21:39:24.305574",
+      "output_summary": {},
+      "latency_ms": 7093,
+      "trace_complete": true
+    },
+    {
+      "run_id": "b1c29ded",
+      "agent": "Predictor",
+      "company": "000001.SZ",
+      "timestamp": "2026-08-26T21:39:29.253764",
+      "output_summary": {},
+      "latency_ms": 4944,
+      "trace_complete": true
+    },
+    {
+      "run_id": "7e7e740c",
+      "agent": "CaseRetriever",
+      "company": "000001.SZ",
+      "timestamp": "2026-08-26T21:39:38.218925",
+      "output_summary": {},
+      "latency_ms": 8894,
+      "trace_complete": true
+    },
+    {
+      "run_id": "278a6e91",
+      "agent": "ChunkRetriever",
+      "company": "000001.SZ",
+      "timestamp": "2026-08-26T21:39:38.302322",
+      "output_summary": {},
+      "latency_ms": 1,
+      "trace_complete": true
+    },
+    {
+      "run_id": "883d8ec0",
+      "agent": "Attributor",
+      "company": "000001.SZ",
+      "timestamp": "2026-08-26T21:39:41.278788",
+      "output_summary": {},
+      "latency_ms": 2971,
+      "trace_complete": true
+    }
+  ],
+  "disclaimer": "本报告由自动化 Agent 流水线生成，仅供研究演示，不构成任何投资建议或事实认定。"
+}

@@ -36,7 +36,7 @@ def _scan_css() -> str:
       --shadow-lg:0 12px 24px -8px rgba(30,64,175,0.15); --radius-lg:12px; --radius-xl:16px;
     }}
     .stApp {{ background:linear-gradient(180deg,#FAFBFD 0%,var(--bg-page) 100%); color:var(--text-primary); }}
-    .block-container {{ padding-top:1.2rem; padding-bottom:3rem; max-width:1400px; }}
+    .block-container {{ padding:1.2rem 24px 3rem; max-width:1400px; }}
     [data-testid="stSidebar"] {{ background:#fff; border-right:1px solid var(--border); }}
     [data-testid="stMetricValue"] {{ font-family:"SF Mono",Consolas,monospace; font-variant-numeric:tabular-nums; color:var(--text-primary); }}
     /* 按钮三级 */
@@ -97,35 +97,66 @@ def _scan_css() -> str:
     .factor-score {{ font-family:"SF Mono",Consolas,monospace; font-size:12px; }}
     /* 摘要 / 报告卡 */
     .summary-card {{ background:#fff; border:1px solid var(--border); border-left:4px solid var(--brand-primary); border-radius:12px; padding:14px 16px; margin-top:16px; }}
-    .report-card {{ background:#fff; border:1px solid var(--border); border-radius:12px; padding:14px 16px; transition:transform .3s,box-shadow .3s,border-color .3s; margin-top:12px; }}
-    .report-card:hover {{ transform:translateY(-4px); box-shadow:var(--shadow-lg); border-color:var(--brand-lighter); }}
-    .report-card.featured {{ border:2px solid #BFDBFE; background:linear-gradient(180deg,#F8FAFF,#fff); }}
-    .report-head {{ display:flex; justify-content:space-between; align-items:center; }}
     .report-title {{ font-weight:600; font-size:14px; }}
     .report-meta {{ color:var(--text-muted); font-size:11px; margin-top:4px; }}
     .mono {{ font-family:"SF Mono",Consolas,monospace; font-variant-numeric:tabular-nums; }}
     .status-dot {{ display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--risk-low); box-shadow:0 0 0 4px rgba(16,185,129,0.15); animation:scan-pulse 2s infinite; }}
-    /* 顶栏（设计稿 ui_preview_主控页.html） */
-    .app-header {{ background:rgba(255,255,255,0.92); border:1px solid var(--border); border-radius:12px;
-      padding:10px 18px; display:flex; align-items:center; justify-content:space-between; }}
+    /* 顶栏：通栏吸顶 60px（对齐设计稿 .app-header，含品牌/在线状态/切换按钮） */
+    div[data-testid="stHorizontalBlock"]:has(.app-header) {{
+      position:sticky; top:0; z-index:120;
+      background:rgba(255,255,255,0.92); backdrop-filter:blur(12px);
+      border-bottom:1px solid var(--border);
+      margin-left:calc(50% - 50vw); margin-right:calc(50% - 50vw);
+      padding:0 24px; min-height:60px; align-items:center;
+    }}
+    div[data-testid="stHorizontalBlock"]:has(.app-header) [data-testid="stElementContainer"] {{ margin:0; }}
+    .app-header {{ background:transparent; border:none; border-radius:0; padding:8px 4px;
+      display:flex; align-items:center; justify-content:space-between; width:100%; }}
     .header-left {{ display:flex; align-items:center; gap:12px; }}
-    .logo {{ width:34px; height:34px; background:linear-gradient(135deg,#1E40AF,#3B82F6); border-radius:10px;
-      display:grid; place-items:center; color:#fff; font-weight:700; font-size:15px; }}
-    .brand-name {{ font-size:16px; font-weight:700; }}
+    .logo {{ width:36px; height:36px; background:linear-gradient(135deg,#1E40AF,#3B82F6); border-radius:10px;
+      display:grid; place-items:center; color:#fff; font-weight:700; font-size:16px; flex-shrink:0; }}
+    .brand-name {{ font-size:17px; font-weight:700; white-space:nowrap; }}
     .brand-name span {{ background:linear-gradient(135deg,#1E40AF,#3B82F6 60%,#06B6D4);
       -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }}
-    .header-right {{ display:flex; align-items:center; gap:12px; }}
-    .agent-status {{ display:flex; align-items:center; gap:8px; padding:5px 12px; background:var(--brand-light);
-      border-radius:999px; color:var(--brand-primary); font-weight:500; font-size:12px; }}
-    .switch-btn {{ display:inline-flex; align-items:center; gap:6px; padding:7px 14px; border-radius:8px;
-      border:1px solid var(--brand-secondary); background:#fff; color:var(--brand-primary);
-      font-size:13px; font-weight:500; cursor:pointer; transition:all .2s; }}
-    .switch-btn:hover {{ background:var(--brand-light); transform:translateY(-1px); box-shadow:var(--shadow-lg); }}
-    /* 主控页两栏布局（设计稿 .layout / .sidebar / .main） */
+    .header-right {{ display:flex; align-items:center; gap:16px; font-size:13px; color:var(--text-secondary); }}
+    .agent-status {{ display:flex; align-items:center; gap:8px; padding:6px 12px; background:var(--brand-light);
+      border-radius:999px; color:var(--brand-primary); font-weight:500; white-space:nowrap; }}
+    div[data-testid="stHorizontalBlock"]:has(.app-header) .stButton > button {{
+      padding:6px 14px; border:1px solid var(--brand-secondary); color:var(--brand-secondary);
+      background:#fff; border-radius:8px; font-size:13px; font-weight:500; white-space:nowrap;
+    }}
+    div[data-testid="stHorizontalBlock"]:has(.app-header) .stButton > button:hover {{ background:var(--brand-light); }}
+    /* 主控页两栏布局（设计稿 .layout / .sidebar 260px / .main） */
     .app-layout {{ display:flex; gap:20px; align-items:flex-start; }}
-    .app-sidebar {{ width:255px; flex-shrink:0; background:#fff; border:1px solid var(--border);
-      border-radius:12px; padding:14px 10px; }}
+    .app-sidebar {{ width:100%; box-sizing:border-box; background:#fff; border:1px solid var(--border);
+      border-radius:12px; padding:16px 12px; }}
     .app-main {{ flex:1; min-width:0; }}
+    /* 侧栏内页面导航（隐藏原生侧栏后承接跳转） */
+    .sidebar-nav-title {{ font-size:11px; font-weight:700; color:var(--text-muted);
+      letter-spacing:.06em; text-transform:uppercase; margin:16px 4px 8px; }}
+    a[href*="page="] {{ display:flex; align-items:center; gap:8px; padding:8px 12px;
+      border:1px solid var(--border); border-radius:8px; color:var(--text-primary);
+      font-size:13px; font-weight:500; text-decoration:none; margin:6px 0; transition:all .2s; }}
+    a[href*="page="]:hover {{ border-color:var(--brand-secondary); color:var(--brand-primary); background:var(--brand-light); }}
+    /* 报告卡（直接类样式，避免 :has 误匹配外层 stHorizontalBlock 容器） */
+    .report-card {{ background:#fff; border:1px solid var(--border); border-radius:12px;
+      padding:14px 16px; margin-top:12px;
+      transition:transform .3s,box-shadow .3s,border-color .3s; }}
+    .report-card:hover {{ transform:translateY(-4px); box-shadow:var(--shadow-lg); border-color:var(--brand-lighter); }}
+    .report-card.featured {{ border:2px solid #BFDBFE; background:linear-gradient(180deg,#F8FAFF,#fff); }}
+    /* 报告底部操作行（HTML 自包含，避免 :has 误匹配 outer 容器） */
+    .action-row {{ display:flex; gap:10px; margin-top:16px; flex-wrap:wrap; align-items:center; }}
+    .act-btn {{ display:inline-flex; align-items:center; justify-content:center; gap:4px;
+      padding:6px 14px; border-radius:8px; font-size:13px; font-weight:500;
+      text-decoration:none; cursor:pointer; border:1px solid transparent; white-space:nowrap; }}
+    .act-primary {{ background:var(--brand-primary); color:#fff; border-color:var(--brand-primary); }}
+    .act-secondary {{ background:#fff; color:var(--brand-secondary); border-color:var(--brand-secondary); }}
+    .act-ghost {{ background:transparent; color:var(--text-secondary); border-color:var(--border); }}
+    .act-details {{ position:relative; }}
+    .act-details > summary {{ list-style:none; }}
+    .act-details > summary::-webkit-details-marker {{ display:none; }}
+    .trace-pre {{ background:#0F172A; color:#E2E8F0; padding:12px 14px; border-radius:8px;
+      font-size:11px; line-height:1.5; max-height:320px; overflow:auto; margin-top:8px; white-space:pre-wrap; }}
     @media (max-width:1024px) {{ .app-layout {{ flex-direction:column; }} .app-sidebar {{ width:100%; }} }}
     @media (max-width:1024px) {{ .tech-grid{{grid-template-columns:repeat(2,1fr);}} .risk-dashboard{{grid-template-columns:1fr 1fr;}} }}
     @media (max-width:768px) {{ .risk-dashboard{{grid-template-columns:1fr;}} .factor-grid{{grid-template-columns:1fr;}} }}
