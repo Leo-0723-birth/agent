@@ -394,7 +394,7 @@ class CninfoAnnouncementSource:
     def search(self, user_input, days=365, as_of=None, pdf_budget_seconds=180):
         cutoff = str(as_of or date.today().isoformat())[:10]
         offline_store = getattr(self, "offline_store", None)
-        if offline_store is not None and bool(getattr(self, "ocr_enabled", True)):
+        if offline_store is not None:
             self._emit_progress("offline_snapshot_started", query=str(user_input), as_of=cutoff)
             cached = offline_store.lookup(user_input, days=days, as_of=cutoff)
             self.last_snapshot_info = cached

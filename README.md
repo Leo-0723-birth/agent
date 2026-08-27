@@ -66,6 +66,8 @@ docs/竞赛技能包/    开发技能包（领域知识/数据特征/建模评�
 
 ## 快速开始
 
+官方要求交付包集中在 [`官方要求交付物/`](官方要求交付物/)，包含 API、批量结果脚本、审计日志规范、典型案例、算法架构、评估和部署说明；技术答辩 PPT 后续放入其中的 `00_技术答辩PPT/`。
+
 ```bash
 # 1. 安装依赖
 pip install -r requirements.txt        # 含 pandas/numpy/scipy/requests/pymupdf

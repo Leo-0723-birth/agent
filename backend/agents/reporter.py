@@ -77,6 +77,12 @@ class ReporterAgent(AgentBase):
                         manifest = []
                 except Exception:
                     manifest = []
+            manifest = [
+                item for item in manifest
+                if isinstance(item, dict)
+                and (REPORTS_DIR / str(item.get("md_file", ""))).is_file()
+                and (REPORTS_DIR / str(item.get("json_file", ""))).is_file()
+            ]
             pred = ctx.prediction or {}
             manifest.insert(0, {
                 "report_id": rid,

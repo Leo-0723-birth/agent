@@ -1,0 +1,2639 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>监管问询扫雷预警系统 · 高保真 Demo</title>
+<style>
+  :root {
+    --brand-primary: #1E40AF;
+    --brand-secondary: #3B82F6;
+    --brand-light: #EFF6FF;
+    --brand-accent: #F59E0B;
+    --risk-low: #10B981;
+    --risk-mid: #F59E0B;
+    --risk-high: #EF4444;
+    --text-primary: #0F172A;
+    --text-secondary: #64748B;
+    --text-muted: #94A3B8;
+    --bg-page: #F1F5F9;
+    --bg-card: #FFFFFF;
+    --border: #E2E8F0;
+    --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+    --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.06);
+    --shadow-lg: 0 12px 24px -8px rgba(30, 64, 175, 0.15);
+    --shadow-modal: 0 24px 48px -12px rgba(15, 23, 42, 0.25);
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-xl: 16px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(180deg, #FAFBFD 0%, #F1F5F9 100%);
+    color: var(--text-primary);
+    min-height: 100vh;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  /* ============ 顶栏 ============ */
+  .app-header {
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo {
+    width: 36px;
+    height: 36px;
+    background: linear-gradient(135deg, #1E40AF 0%, #3B82F6 100%);
+    border-radius: 10px;
+    display: grid;
+    place-items: center;
+    color: white;
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: -0.5px;
+  }
+
+  .brand-name {
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+  }
+
+  .brand-name span {
+    background: linear-gradient(135deg, #1E40AF 0%, #3B82F6 60%, #06B6D4 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  .agent-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: var(--brand-light);
+    border-radius: 999px;
+    color: var(--brand-primary);
+    font-weight: 500;
+  }
+
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--risk-low);
+    box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.15);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  .header-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--brand-secondary);
+    background: white;
+    color: var(--brand-primary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .header-btn:hover { background: var(--brand-light); transform: translateY(-1px); box-shadow: var(--shadow-md); }
+
+  .icon-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: white;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: var(--text-secondary);
+    font-size: 14px;
+  }
+  .icon-btn:hover { background: var(--brand-light); color: var(--brand-primary); border-color: var(--brand-secondary); }
+
+  /* ============ 主体布局 ============ */
+  .app-body {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    min-height: calc(100vh - 60px);
+  }
+
+  /* ============ 左侧导航 ============ */
+  .sidebar {
+    background: white;
+    border-right: 1px solid var(--border);
+    padding: 20px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .sidebar-section {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 12px 0 6px;
+    padding-left: 8px;
+  }
+
+  .master-agent {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: linear-gradient(135deg, #1E40AF 0%, #3B82F6 100%);
+    border-radius: var(--radius-lg);
+    color: white;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: var(--shadow-md);
+  }
+  .master-agent:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+
+  .master-icon {
+    width: 40px;
+    height: 40px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 10px;
+    display: grid;
+    place-items: center;
+    font-size: 18px;
+  }
+
+  .master-info .master-title { font-weight: 600; font-size: 14px; }
+  .master-info .master-sub { font-size: 11px; opacity: 0.8; margin-top: 2px; }
+
+  .pipeline-step {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    position: relative;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: var(--text-secondary);
+  }
+
+  .pipeline-step::before {
+    content: '';
+    position: absolute;
+    left: 27px;
+    top: 100%;
+    width: 2px;
+    height: 8px;
+    background: var(--border);
+    z-index: 0;
+  }
+  .pipeline-step:last-child::before { display: none; }
+
+  .pipeline-step .step-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    background: #F1F5F9;
+    display: grid;
+    place-items: center;
+    font-size: 14px;
+    color: var(--text-muted);
+    position: relative;
+    z-index: 1;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+
+  .pipeline-step .step-title { font-weight: 500; font-size: 13px; }
+  .pipeline-step .step-status { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+
+  .pipeline-step:hover { background: #F8FAFC; }
+
+  .pipeline-step.active {
+    background: var(--brand-light);
+    color: var(--brand-primary);
+  }
+  .pipeline-step.active .step-icon {
+    background: var(--brand-primary);
+    color: white;
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
+  }
+
+  .pipeline-step.done .step-icon {
+    background: #ECFDF5;
+    color: var(--risk-low);
+  }
+
+  .pipeline-step.running .step-icon {
+    background: #FFF7ED;
+    color: var(--brand-accent);
+  }
+  .pipeline-step.running .step-icon::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 12px;
+    border: 2px solid var(--brand-accent);
+    animation: ring 1.5s ease-in-out infinite;
+  }
+  @keyframes ring {
+    0% { transform: scale(0.9); opacity: 1; }
+    100% { transform: scale(1.15); opacity: 0; }
+  }
+
+  /* ============ 参数抽屉触发按钮 ============ */
+  .params-trigger {
+    margin-top: auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: 13px;
+    transition: all 0.2s;
+  }
+  .params-trigger:hover { border-color: var(--brand-secondary); color: var(--brand-primary); background: var(--brand-light); }
+  .params-trigger .arrow { transition: transform 0.2s; }
+  .params-trigger.open .arrow { transform: rotate(180deg); }
+
+  .params-panel {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+  }
+  .params-panel.open { max-height: 600px; }
+
+  .params-content {
+    padding: 16px 12px;
+    background: #F8FAFC;
+    border-radius: var(--radius-md);
+    margin-top: 8px;
+    border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .param-row label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+    font-weight: 500;
+  }
+
+  .param-input, .param-select, .param-textarea {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+    background: white;
+    color: var(--text-primary);
+    outline: none;
+    transition: all 0.2s;
+  }
+  .param-input:focus, .param-select:focus, .param-textarea:focus {
+    border-color: var(--brand-secondary);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  }
+
+  .param-textarea {
+    min-height: 70px;
+    resize: vertical;
+    line-height: 1.5;
+    font-family: 'SF Mono', 'Consolas', monospace;
+  }
+
+  .param-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 0;
+  }
+
+  .switch {
+    width: 36px;
+    height: 20px;
+    background: #CBD5E1;
+    border-radius: 999px;
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .switch::after {
+    content: '';
+    position: absolute;
+    left: 2px;
+    top: 2px;
+    width: 16px;
+    height: 16px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.2s;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+  }
+  .switch.on { background: var(--risk-low); }
+  .switch.on::after { transform: translateX(16px); }
+
+  /* ============ 公司选择弹窗 ============ */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.25s ease;
+  }
+  .modal-overlay.open { opacity: 1; visibility: visible; }
+
+  .company-modal {
+    background: white;
+    border-radius: var(--radius-xl);
+    width: 720px;
+    max-width: calc(100% - 32px);
+    max-height: calc(100vh - 40px);
+    box-shadow: var(--shadow-modal);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transform: translateY(16px) scale(0.98);
+    transition: all 0.25s ease;
+  }
+  .modal-overlay.open .company-modal { transform: translateY(0) scale(1); }
+
+  .modal-header {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .modal-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .modal-subtitle {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+  .modal-close {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: white;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    color: var(--text-secondary);
+    font-size: 16px;
+  }
+  .modal-close:hover { background: #F8FAFC; color: var(--text-primary); }
+
+  .modal-body {
+    padding: 20px 24px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .search-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .search-input {
+    flex: 1;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 14px;
+    background: white;
+    outline: none;
+    transition: all 0.2s;
+  }
+  .search-input:focus {
+    border-color: var(--brand-secondary);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  }
+
+  .filter-badges {
+    display: flex;
+    gap: 8px;
+  }
+
+  .filter-badge {
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: white;
+    color: var(--text-secondary);
+    transition: all 0.2s;
+  }
+  .filter-badge.active { background: var(--brand-light); color: var(--brand-primary); border-color: var(--brand-secondary); }
+  .filter-badge:hover { border-color: var(--brand-secondary); }
+
+  .company-list {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  .company-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .company-item:hover {
+    border-color: var(--brand-secondary);
+    background: var(--brand-light);
+  }
+  .company-item.selected {
+    border-color: var(--brand-primary);
+    background: var(--brand-light);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+  }
+
+  .company-item .check {
+    width: 20px;
+    height: 20px;
+    border-radius: 6px;
+    border: 2px solid var(--border);
+    display: grid;
+    place-items: center;
+    font-size: 12px;
+    color: transparent;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+  .company-item.selected .check {
+    background: var(--brand-primary);
+    border-color: var(--brand-primary);
+    color: white;
+  }
+
+  .company-item-info { flex: 1; }
+  .company-item-name { font-weight: 600; font-size: 13px; color: var(--text-primary); }
+  .company-item-code { font-size: 11px; color: var(--text-muted); font-family: 'SF Mono', 'Consolas', monospace; margin-top: 2px; }
+
+  .company-item-risk {
+    text-align: right;
+  }
+  .company-item-risk .risk-pct {
+    font-size: 16px;
+    font-weight: 700;
+    font-family: 'SF Mono', 'Consolas', monospace;
+  }
+  .company-item-risk .risk-level {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+
+  .batch-area {
+    background: #F8FAFC;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 16px;
+  }
+  .batch-area label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+  }
+  .batch-area .hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 6px;
+  }
+
+  .modal-footer {
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .modal-selected-count { font-size: 13px; color: var(--text-secondary); }
+
+  /* ============ 主内容区 ============ */
+  .main-content {
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    max-width: 1400px;
+    margin: 0 auto;
+    width: 100%;
+  }
+
+  /* ============ 主控大标题 ============ */
+  .dashboard-title {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 8px 4px 4px;
+  }
+  .dashboard-title-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #1E40AF 0%, #3B82F6 100%);
+    color: white;
+    display: grid;
+    place-items: center;
+    font-size: 24px;
+    box-shadow: var(--shadow-md);
+  }
+  .dashboard-title h1 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+    line-height: 1.2;
+  }
+  .dashboard-title p {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+  }
+
+  /* ============ 技术指标卡片区 ============ */
+  .tech-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+  }
+
+  .tech-metric-card {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 14px 16px;
+    text-align: left;
+    box-shadow: var(--shadow-sm);
+  }
+  .tech-metric-card .metric-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .tech-metric-card .metric-label .target {
+    font-size: 10px;
+    color: var(--text-muted);
+    padding: 2px 6px;
+    background: #F1F5F9;
+    border-radius: 4px;
+  }
+  .tech-metric-card .metric-value {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-family: 'SF Mono', 'Consolas', monospace;
+    letter-spacing: -0.02em;
+  }
+  .tech-metric-card .metric-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+
+  /* ============ 风险仪表盘 ============ */
+  .risk-dashboard {
+    background: linear-gradient(135deg, #EFF6FF 0%, #FFFFFF 60%, #FAFBFF 100%);
+    border: 1px solid #DBEAFE;
+    border-radius: var(--radius-xl);
+    padding: 24px 28px;
+    display: grid;
+    grid-template-columns: 1.2fr 1fr 1fr 1fr;
+    gap: 24px;
+    align-items: center;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .company-info .company-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: var(--brand-light);
+    color: var(--brand-primary);
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 500;
+    margin-bottom: 8px;
+  }
+
+  .company-info .company-name {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+  }
+
+  .company-info .company-code {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: 'SF Mono', 'Consolas', monospace;
+  }
+
+  .risk-main {
+    text-align: center;
+    position: relative;
+  }
+
+  .risk-main .risk-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+    font-weight: 500;
+  }
+
+  .risk-main .risk-value {
+    font-size: 44px;
+    font-weight: 700;
+    color: var(--risk-low);
+    font-family: 'SF Mono', 'Consolas', monospace;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    margin-bottom: 12px;
+  }
+
+  .risk-bar {
+    height: 10px;
+    background: #E2E8F0;
+    border-radius: 999px;
+    overflow: hidden;
+    position: relative;
+    margin-bottom: 8px;
+  }
+
+  .risk-bar-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 999px;
+    transition: width 1.5s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .risk-scale {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .risk-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-top: 8px;
+  }
+  .risk-badge.low { background: #D1FAE5; color: #065F46; }
+  .risk-badge.mid { background: #FEF3C7; color: #92400E; }
+  .risk-badge.high { background: #FEE2E2; color: #991B1B; }
+
+  .risk-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+  .metric-card {
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    text-align: left;
+  }
+  .metric-card .metric-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+  }
+  .metric-card .metric-value {
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-family: 'SF Mono', 'Consolas', monospace;
+    letter-spacing: -0.02em;
+  }
+  .metric-card .metric-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+
+  /* ============ 流水线执行进度 ============ */
+  .pipeline-status {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .pipe-node {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .pipe-node .node-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #CBD5E1;
+    flex-shrink: 0;
+  }
+  .pipe-node.done { color: var(--risk-low); }
+  .pipe-node.done .node-dot { background: var(--risk-low); }
+  .pipe-node.running { color: var(--brand-primary); font-weight: 600; }
+  .pipe-node.running .node-dot { background: var(--brand-primary); animation: pulse 1.5s infinite; }
+  .pipe-node.pending { color: var(--text-muted); }
+
+  .pipe-link {
+    flex: 1;
+    height: 2px;
+    background: var(--border);
+    margin: 0 12px;
+    min-width: 20px;
+    position: relative;
+  }
+  .pipe-link.done { background: var(--risk-low); }
+
+  /* ============ 标题区 ============ */
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .section-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .section-title::before {
+    content: '';
+    width: 4px;
+    height: 18px;
+    background: linear-gradient(180deg, #1E40AF, #3B82F6);
+    border-radius: 2px;
+  }
+
+  .section-sub {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+
+  /* ============ 关键因子卡片 ============ */
+  .factors-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+  }
+
+  .factor-card {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+  }
+  .factor-card:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--brand-secondary);
+  }
+
+  .factor-card .factor-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+
+  .factor-card .factor-name {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-primary);
+  }
+
+  .factor-tag {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 500;
+  }
+  .factor-tag.finance { background: #EEF2FF; color: #4338CA; }
+  .factor-tag.text { background: #ECFDF5; color: #047857; }
+  .factor-tag.market { background: #FFF7ED; color: #C2410C; }
+
+  .factor-card .factor-desc {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+    line-height: 1.5;
+  }
+
+  .factor-contribution {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .factor-bar {
+    flex: 1;
+    height: 6px;
+    background: #F1F5F9;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .factor-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 1s ease;
+  }
+
+  .factor-score {
+    font-size: 13px;
+    font-weight: 600;
+    font-family: 'SF Mono', 'Consolas', monospace;
+    color: var(--text-primary);
+  }
+
+  /* ============ 报告卡片 ============ */
+  .reports-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+  }
+
+  .report-card {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
+  }
+  .report-card:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--brand-secondary);
+  }
+
+  .report-card.featured {
+    border: 2px solid #BFDBFE;
+    background: linear-gradient(135deg, #F8FAFF 0%, #FFFFFF 100%);
+  }
+
+  .report-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+
+  .report-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .report-meta {
+    display: flex;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .report-summary {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin-bottom: 16px;
+  }
+
+  .report-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .btn-primary {
+    background: var(--brand-primary);
+    color: white;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-weight: 500;
+    border: none;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .btn-primary:hover { background: #1D4ED8; transform: translateY(-1px); box-shadow: var(--shadow-md); }
+
+  .btn-secondary {
+    background: white;
+    color: var(--brand-primary);
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--brand-secondary);
+    font-weight: 500;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .btn-secondary:hover { background: var(--brand-light); }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--text-secondary);
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .btn-ghost:hover { background: #F8FAFC; color: var(--text-primary); }
+
+  .btn-danger {
+    background: #FEE2E2;
+    color: #991B1B;
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: none;
+    font-weight: 500;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .btn-danger:hover { background: #FECACA; }
+
+  /* ============ 报告预览区 ============ */
+  .report-preview {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .report-preview-header {
+    padding: 16px 24px;
+    background: #F8FAFC;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .report-preview-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .report-preview-body {
+    padding: 24px;
+    max-height: 520px;
+    overflow-y: auto;
+  }
+
+  .report-section {
+    margin-bottom: 24px;
+  }
+
+  .report-section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--brand-primary);
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .report-section-title .num {
+    width: 20px;
+    height: 20px;
+    background: var(--brand-light);
+    border-radius: 6px;
+    display: grid;
+    place-items: center;
+    font-size: 11px;
+    color: var(--brand-primary);
+    font-weight: 600;
+  }
+
+  .report-section p {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.8;
+    margin-bottom: 8px;
+  }
+
+  .highlight-box {
+    background: #FFFBEB;
+    border-left: 3px solid var(--brand-accent);
+    padding: 12px 16px;
+    border-radius: 0 8px 8px 0;
+    font-size: 13px;
+    color: #92400E;
+    line-height: 1.7;
+    margin: 12px 0;
+  }
+
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    margin-top: 8px;
+  }
+
+  .data-table th {
+    text-align: left;
+    padding: 8px 12px;
+    background: #F8FAFC;
+    color: var(--text-secondary);
+    font-weight: 500;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .data-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-primary);
+  }
+
+  .data-table tr:last-child td { border-bottom: none; }
+
+  .num-pos { color: #059669; font-weight: 600; font-family: 'SF Mono', 'Consolas', monospace; }
+  .num-neg { color: #DC2626; font-weight: 600; font-family: 'SF Mono', 'Consolas', monospace; }
+
+  /* ============ 内容分区（公告研读 / 案例 / 归因） ============ */
+  .content-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .evidence-table-card {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    box-shadow: var(--shadow-sm);
+    overflow-x: auto;
+  }
+
+  .evidence-table th {
+    white-space: nowrap;
+    font-size: 12px;
+  }
+  .evidence-table td {
+    font-size: 12px;
+    vertical-align: top;
+  }
+  .evidence-table td .risk-level-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .evidence-table td .risk-level-tag.high { background: #FEE2E2; color: #991B1B; }
+  .evidence-table td .risk-level-tag.mid { background: #FEF3C7; color: #92400E; }
+  .evidence-table td .risk-level-tag.low { background: #D1FAE5; color: #065F46; }
+  .evidence-table td .l-tag {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: #F1F5F9;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .evidence-table td .evidence-text {
+    color: var(--text-secondary);
+    font-style: italic;
+    max-width: 320px;
+  }
+  .evidence-table td .desc-text {
+    color: var(--text-primary);
+    font-weight: 500;
+  }
+  .evidence-table td .title-text {
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  .cases-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 12px;
+  }
+
+  .case-card {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    box-shadow: var(--shadow-sm);
+    transition: all 0.2s;
+  }
+  .case-card:hover {
+    border-color: var(--brand-secondary);
+    box-shadow: var(--shadow-md);
+  }
+  .case-card .case-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .case-card .case-company {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-primary);
+  }
+  .case-card .case-date {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .case-card .case-type {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--brand-light);
+    color: var(--brand-primary);
+    font-size: 11px;
+    font-weight: 500;
+    margin-bottom: 10px;
+  }
+  .case-card .case-topics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .case-card .case-topics span {
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: #F1F5F9;
+    color: var(--text-secondary);
+    font-size: 11px;
+  }
+  .case-card .case-reason {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+  .case-card .case-reason li {
+    margin-bottom: 4px;
+  }
+  .case-card .case-similarity {
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .case-card .case-similarity b {
+    color: var(--brand-primary);
+    font-family: 'SF Mono', 'Consolas', monospace;
+  }
+
+  .attribution-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .attribution-item {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    box-shadow: var(--shadow-sm);
+    transition: all 0.2s;
+    scroll-margin-top: 80px;
+  }
+  .attribution-item.highlight {
+    border-color: var(--brand-secondary);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12), var(--shadow-md);
+    background: #F8FAFF;
+  }
+  .attribution-item .attr-factor {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .attribution-item .attr-factor::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--brand-primary);
+  }
+  .attribution-item .attr-source {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+  .attribution-item .attr-evidence {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    padding: 10px 12px;
+    background: #F8FAFC;
+    border-radius: 8px;
+    border-left: 3px solid var(--brand-secondary);
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-muted);
+    font-size: 13px;
+    background: white;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-lg);
+  }
+
+  /* ============ 底部 ============ */
+  .footer {
+    text-align: center;
+    padding: 24px;
+    color: var(--text-muted);
+    font-size: 12px;
+    border-top: 1px solid var(--border);
+    margin-top: auto;
+  }
+
+  /* ============ 响应式 ============ */
+  @media (max-width: 1024px) {
+    .app-body { grid-template-columns: 220px 1fr; }
+    .risk-dashboard { grid-template-columns: 1fr 1fr; }
+    .tech-metrics { grid-template-columns: repeat(2, 1fr); }
+    .company-list { grid-template-columns: 1fr; }
+  }
+
+  @media (max-width: 768px) {
+    .app-body { grid-template-columns: 1fr; }
+    .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
+    .risk-dashboard { grid-template-columns: 1fr; }
+    .tech-metrics { grid-template-columns: 1fr; }
+    .pipeline-status { flex-wrap: wrap; gap: 8px; }
+    .pipe-link { display: none; }
+    .header-right .agent-status span { display: none; }
+  }
+
+  /* 滚动条美化 */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+
+  /* ========== Loading 骨架屏 ========== */
+  .loading-overlay {
+    position: fixed; inset: 0; background: rgba(255,255,255,0.7);
+    backdrop-filter: blur(4px); z-index: 500;
+    display: none; align-items: center; justify-content: center;
+    flex-direction: column; gap: 16px;
+  }
+  .loading-overlay.show { display: flex; }
+  .loading-spinner {
+    width: 48px; height: 48px; border: 4px solid #E2E8F0;
+    border-top-color: #1E40AF; border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { font-size: 14px; color: #64748B; }
+  .loading-agent { font-size: 12px; color: #94A3B8; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-text" id="loadingText">Agent 流水线执行中...</div>
+  <div class="loading-agent" id="loadingAgent">公告研读 Agent 启动</div>
+  <div class="loading-progress" id="loadingProgress" style="display:none; width:280px; height:6px; background:#E2E8F0; border-radius:3px; margin-top:16px; overflow:hidden;">
+    <div id="loadingProgressBar" style="width:0%; height:100%; background:var(--brand-primary); transition:width 0.3s;"></div>
+  </div>
+  <div class="loading-status" id="loadingStatus" style="display:none; margin-top:10px; font-size:12px; color:var(--text-secondary);">0 / 7</div>
+</div>
+
+<header class="app-header">
+  <div class="header-left">
+    <div class="logo">◎</div>
+    <div>
+      <div class="brand-name">监管问询扫雷预警系统</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="agent-status">
+      <div class="status-dot"></div>
+      <span>Agent 运行中 · 6/6 在线</span>
+    </div>
+    <button class="header-btn" id="realtimeBtn" onclick="toggleRealtimeMode()">
+      <span>⚡</span> <span id="realtimeBtnText">实时扫雷：关</span>
+    </button>
+    <button class="header-btn" onclick="openCompanyModal()">
+      <span>🔍</span> 切换公司
+    </button>
+    <span id="clock">2026-08-26 22:30:00</span>
+    <button class="icon-btn" title="深色模式（预留）">◐</button>
+  </div>
+</header>
+
+<!-- 公司选择弹窗 -->
+<div class="modal-overlay" id="companyModalOverlay" onclick="closeCompanyModal(event)">
+  <div class="company-modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">🎯 选择目标公司</div>
+        <div class="modal-subtitle">用于评委演示 · 支持单选快速切换与批量扫雷</div>
+      </div>
+      <button class="modal-close" onclick="closeCompanyModal()">×</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="search-row">
+        <input type="text" class="search-input" id="companySearch" placeholder="搜索公司代码或简称，如 600162 / 国华" oninput="filterCompanyList()">
+        <div class="filter-badges">
+          <button class="filter-badge active" data-filter="all" onclick="setRiskFilter('all')">全部</button>
+          <button class="filter-badge" data-filter="low" onclick="setRiskFilter('low')">低风险</button>
+          <button class="filter-badge" data-filter="mid" onclick="setRiskFilter('mid')">中风险</button>
+          <button class="filter-badge" data-filter="high" onclick="setRiskFilter('high')">高风险</button>
+        </div>
+      </div>
+
+      <div class="company-list" id="companyList">
+        <!-- JS 填充 -->
+      </div>
+
+      <div class="batch-area">
+        <label>📋 批量扫雷名单</label>
+        <textarea class="param-textarea" id="batchCompanies" placeholder="粘贴多个公司代码，用空格、逗号或换行分隔&#10;例如：600162.SH 000XXX.SZ 300XXX.SZ"></textarea>
+        <div class="hint">支持单选演示或批量输入，确认后左侧 Pipeline 将自动重跑</div>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <span class="modal-selected-count" id="modalSelectedCount">已选 1 家公司</span>
+      <div style="display: flex; gap: 10px;">
+        <button class="btn-ghost" onclick="closeCompanyModal()">取消</button>
+        <button class="btn-danger" onclick="runBatchDemo()">⚡ 批量扫雷</button>
+        <button class="btn-primary" onclick="confirmCompanySelection()">确认切换</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 全部风险因子弹窗 -->
+<div class="modal-overlay" id="factorModalOverlay" onclick="closeFactorModal(event)">
+  <div class="company-modal" style="width: 880px;" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">📊 全部风险因子</div>
+        <div class="modal-subtitle">按模型贡献度排序，点击因子可定位到风险原文</div>
+      </div>
+      <button class="modal-close" onclick="closeFactorModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="factors-grid" id="factorModalGrid">
+        <!-- JS 填充 -->
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="app-body">
+  <aside class="sidebar">
+    <div class="sidebar-section">主控调度</div>
+    <div class="master-agent">
+      <div class="master-icon">◎</div>
+      <div class="master-info">
+        <div class="master-title">主控 Agent</div>
+        <div class="master-sub">任务编排 · 结果聚合</div>
+      </div>
+    </div>
+
+    <div class="sidebar-section">执行流水线</div>
+    <div class="pipeline-step done" data-section="section-announcement" onclick="selectStep(this, '公告研读')">
+      <div class="step-icon">📄</div>
+      <div>
+        <div class="step-title">公告研读 Agent</div>
+        <div class="step-status">✓ 完成 · 2.3s</div>
+      </div>
+    </div>
+    <div class="pipeline-step done" data-section="section-financial" onclick="selectStep(this, '财务异动')">
+      <div class="step-icon">📊</div>
+      <div>
+        <div class="step-title">财务异动 Agent</div>
+        <div class="step-status">✓ 完成 · 1.8s</div>
+      </div>
+    </div>
+    <div class="pipeline-step done" data-section="section-risk" onclick="selectStep(this, '预测建模')">
+      <div class="step-icon">🧮</div>
+      <div>
+        <div class="step-title">预测建模 Agent</div>
+        <div class="step-status">✓ 完成 · 0.9s</div>
+      </div>
+    </div>
+    <div class="pipeline-step done" data-section="section-cases" onclick="selectStep(this, '案例匹配')">
+      <div class="step-icon">🔍</div>
+      <div>
+        <div class="step-title">案例匹配 Agent</div>
+        <div class="step-status">✓ 完成 · 3.1s</div>
+      </div>
+    </div>
+    <div class="pipeline-step active" data-section="section-attribution" onclick="selectStep(this, '归因分析')">
+      <div class="step-icon">💡</div>
+      <div>
+        <div class="step-title">归因分析 Agent</div>
+        <div class="step-status">正在生成解释…</div>
+      </div>
+    </div>
+    <div class="pipeline-step running" data-section="section-report" onclick="selectStep(this, '报告生成')">
+      <div class="step-icon">📝</div>
+      <div>
+        <div class="step-title">报告生成 Agent</div>
+        <div class="step-status">排队中</div>
+      </div>
+    </div>
+
+    <div class="params-trigger" id="paramsTrigger" onclick="toggleParams()">
+      <span>⚙️ 参数设置</span>
+      <span class="arrow">▾</span>
+    </div>
+    <div class="params-panel" id="paramsPanel">
+      <div class="params-content">
+        <div class="param-row">
+          <label>公司代码</label>
+          <input class="param-input" id="paramCode" type="text" value="600162.SH" placeholder="如 600162.SH">
+        </div>
+        <div class="param-row">
+          <label>批量公司列表</label>
+          <textarea class="param-textarea" id="paramBatch" placeholder="多个代码用空格/逗号/换行分隔"></textarea>
+        </div>
+        <div class="param-row">
+          <label>预测窗口（天）</label>
+          <select class="param-select" id="paramWindow">
+            <option>30 天</option>
+            <option selected>60 天</option>
+            <option>90 天</option>
+          </select>
+        </div>
+        <div class="param-row">
+          <label>公告研读上限</label>
+          <select class="param-select" id="paramMaxDocs">
+            <option value="3" selected>3 份（极速）</option>
+            <option value="5">5 份（标准）</option>
+            <option value="10">10 份（完整）</option>
+          </select>
+        </div>
+        <div class="param-toggle">
+          <span style="font-size: 13px; color: var(--text-primary);">LLM 精细抽取</span>
+          <div class="switch" id="switchLLM" onclick="this.classList.toggle('on')"></div>
+        </div>
+        <div class="param-toggle">
+          <span style="font-size: 13px; color: var(--text-primary);">BGE 语义检索</span>
+          <div class="switch on" id="switchBGE" onclick="this.classList.toggle('on')"></div>
+        </div>
+        <div class="param-row" id="realtimeHint" style="display:none; margin-top:8px;">
+          <div style="font-size:12px;color:var(--text-secondary);background:#FEF3C7;padding:8px 10px;border-radius:6px;">
+            ⚡ 实时扫雷会真实调用 7 个 Agent，首次加载 BGE/OCR 模型约 15-30 秒，全程约 1-4 分钟。演示推荐默认使用离线快照。
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main-content">
+
+    <!-- 主控大标题 -->
+    <div class="dashboard-title" id="section-top">
+      <div class="dashboard-title-icon">◎</div>
+      <div>
+        <h1>监管问询扫雷预警系统</h1>
+        <p>多 Agent 协同 · 实时特征 · 可解释风控</p>
+      </div>
+    </div>
+
+    <!-- 赛题技术指标 -->
+    <div class="tech-metrics">
+      <div class="tech-metric-card">
+        <div class="metric-label">预测 AUC <span class="target">目标 ≥ 0.75</span></div>
+        <div class="metric-value">0.89</div>
+        <div class="metric-sub">60 天问询概率 · 5 折交叉验证</div>
+      </div>
+      <div class="tech-metric-card">
+        <div class="metric-label">Top 10% 覆盖率 <span class="target">目标 ≥ 35%</span></div>
+        <div class="metric-value">42%</div>
+        <div class="metric-sub">高风险公司命中真实问询样本比例</div>
+      </div>
+      <div class="tech-metric-card">
+        <div class="metric-label">二分类 F1-Score <span class="target">目标 ≥ 0.65</span></div>
+        <div class="metric-value">0.71</div>
+        <div class="metric-sub">问询 / 未问询 二分类</div>
+      </div>
+      <div class="tech-metric-card">
+        <div class="metric-label">可解释追踪率 <span class="target">目标 100%</span></div>
+        <div class="metric-value">100%</div>
+        <div class="metric-sub">Agent 链路 · 证据来源 · 模型判断</div>
+      </div>
+    </div>
+
+    <div class="risk-dashboard" id="section-risk">
+      <div class="company-info">
+        <div class="company-tag">
+          <span>⚡</span> 最新预测
+        </div>
+        <div class="company-name" id="companyName">国华退</div>
+        <div class="company-code" id="companyCode">600162.SH · 60 天窗口</div>
+      </div>
+
+      <div class="risk-main">
+        <div class="risk-label">问询概率预测</div>
+        <div class="risk-value" id="riskValue">7.4%</div>
+        <div class="risk-bar">
+          <div class="risk-bar-fill" id="riskBarFill"></div>
+        </div>
+        <div class="risk-scale">
+          <span>0%</span>
+          <span>50%</span>
+          <span>100%</span>
+        </div>
+        <div class="risk-badge low" id="riskBadge">
+          <span class="dot"></span>
+          低风险
+        </div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-label">预测置信度</div>
+        <div class="metric-value" id="confidenceValue">0.82</div>
+        <div class="metric-sub">AUC 0.89 · 5 折交叉验证</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-label">风险因子数</div>
+        <div class="metric-value" id="factorCount">12</div>
+        <div class="metric-sub">3 项财务 · 6 项文本 · 3 项市场</div>
+      </div>
+    </div>
+
+    <div class="pipeline-status" id="pipelineStatus">
+      <div class="pipe-node done"><div class="node-dot"></div>数据接入</div>
+      <div class="pipe-link done"></div>
+      <div class="pipe-node done"><div class="node-dot"></div>特征抽取</div>
+      <div class="pipe-link done"></div>
+      <div class="pipe-node done"><div class="node-dot"></div>模型推理</div>
+      <div class="pipe-link done"></div>
+      <div class="pipe-node running"><div class="node-dot"></div>归因分析</div>
+      <div class="pipe-link"></div>
+      <div class="pipe-node pending"><div class="node-dot"></div>报告生成</div>
+    </div>
+
+    <div class="section-header">
+      <div>
+        <div class="section-title">关键风险因子</div>
+        <div class="section-sub">模型贡献度 Top 5 · 点击因子可跳转到对应风险原文</div>
+      </div>
+      <button class="btn-ghost" id="viewAllFactorsBtn" onclick="openFactorModal()">查看全部 <span id="factorTotalCount">12</span> 项 →</button>
+    </div>
+
+    <div class="factors-grid" id="factorsGrid">
+      <!-- JS 填充 -->
+    </div>
+
+    <!-- 公告研读风险证据表 -->
+    <div class="content-section" id="section-announcement">
+      <div class="section-header">
+        <div>
+          <div class="section-title">公告研读风险证据</div>
+          <div class="section-sub">从最新公告中抽取的风险信号 · 含原文证据与 L1/L2 分类</div>
+        </div>
+      </div>
+      <div class="evidence-table-card">
+        <table class="data-table evidence-table" id="announcementRiskTable">
+          <thead>
+            <tr>
+              <th style="width: 90px;">日期</th>
+              <th style="width: 70px;">等级</th>
+              <th style="width: 60px;">L1</th>
+              <th style="width: 60px;">L2</th>
+              <th>风险描述</th>
+              <th>原文证据</th>
+              <th style="width: 160px;">公告标题</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- JS 填充 -->
+          </tbody>
+        </table>
+        <div class="empty-state" id="announcementEmpty" style="display:none;">
+          暂无公告风险证据
+        </div>
+      </div>
+    </div>
+
+    <!-- 相似监管案例 -->
+    <div class="content-section" id="section-cases">
+      <div class="section-header">
+        <div>
+          <div class="section-title">相似监管案例</div>
+          <div class="section-sub">BGE 语义检索匹配到的历史问询案例</div>
+        </div>
+      </div>
+      <div class="cases-grid" id="casesGrid">
+        <!-- JS 填充 -->
+      </div>
+      <div class="empty-state" id="casesEmpty" style="display:none;">
+        暂无相似案例数据
+      </div>
+    </div>
+
+    <!-- 风险归因原文 -->
+    <div class="content-section" id="section-attribution">
+      <div class="section-header">
+        <div>
+          <div class="section-title">风险归因原文</div>
+          <div class="section-sub">模型归因对应的风险原文证据</div>
+        </div>
+      </div>
+      <div class="attribution-list" id="attributionEvidenceList">
+        <!-- JS 填充 -->
+      </div>
+      <div class="empty-state" id="attributionEmpty" style="display:none;">
+        暂无归因原文
+      </div>
+    </div>
+
+    <div class="section-header">
+      <div>
+        <div class="section-title">已生成报告</div>
+        <div class="section-sub" id="reportCountSub">共 3 份 · 最近更新于 5 分钟前</div>
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <button class="btn-secondary">📊 导出 JSON</button>
+        <button class="btn-primary">⬇ 下载完整报告</button>
+      </div>
+    </div>
+
+    <div class="reports-grid" id="reportsGrid">
+      <!-- JS 填充 -->
+    </div>
+
+    <div class="report-preview" id="section-report">
+      <div class="report-preview-header">
+        <div class="report-preview-title">
+          📄 <span id="previewTitle">国华退 · 监管问询风险简报</span>
+          <span class="risk-badge low" id="previewBadge"><span class="dot"></span>低风险 · 7.4%</span>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn-ghost">复制</button>
+          <button class="btn-primary">⬇ 下载 PDF</button>
+        </div>
+      </div>
+      <div class="report-preview-body" id="previewBody">
+        <!-- JS 填充 -->
+      </div>
+    </div>
+
+    <div class="footer">
+      监管问询扫雷预警系统 · 研究生创新大赛"智能风控与量化建模"赛道 · Demo 演示版
+    </div>
+  </main>
+</div>
+
+<script>
+  // ==================== API 配置 ====================
+  const API_BASE = '';  // 同源部署时留空
+
+  // 缓存分析结果（key = 公司代码）
+  let resultCache = {};
+  // 公司列表（从 API 加载）
+  let companyList = [];
+  // companyData 保持兼容：按 level 分组的缓存
+  let companyData = {};
+
+  let currentLevel = '';
+  let currentFilter = 'all';
+  let selectedCompany = '';
+  let realtimeMode = false;
+  let wsConnection = null;
+  let lastResultIsRealtime = false;
+
+  // ==================== 调用后端 API ====================
+  async function fetchAnalysis(codes, window = 60, useLLM = false, useBGE = true) {
+    showLoading(true);
+    try {
+      const resp = await fetch(`${API_BASE}/api/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ codes, window, use_llm: useLLM, use_bge: useBGE })
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      lastResultIsRealtime = false;
+      data.forEach(item => {
+        resultCache[item.code] = item;
+        // 按 level 分组缓存
+        companyData[item.level] = item;
+      });
+      return data;
+    } catch (err) {
+      console.error('API 调用失败:', err);
+      alert('后端服务未启动或请求失败，请检查 FastAPI 是否运行在 http://localhost:8000');
+      return null;
+    } finally {
+      showLoading(false);
+    }
+  }
+
+  async function loadCompanyList() {
+    try {
+      const resp = await fetch(`${API_BASE}/api/companies`);
+      if (!resp.ok) return;
+      companyList = await resp.json();
+    } catch (e) {
+      console.warn('无法获取公司列表:', e);
+    }
+  }
+
+  // ==================== Loading ====================
+  const agentSteps = ['公告研读 Agent', '财务异动 Agent', '预测建模 Agent', '案例匹配 Agent', '段落召回 Agent', '归因分析 Agent', '报告生成 Agent'];
+  function showLoading(show, options = {}) {
+    const overlay = document.getElementById('loadingOverlay');
+    overlay.classList.toggle('show', show);
+    const progress = document.getElementById('loadingProgress');
+    const status = document.getElementById('loadingStatus');
+    const text = document.getElementById('loadingText');
+
+    if (show) {
+      if (options.realtime) {
+        progress.style.display = 'block';
+        status.style.display = 'block';
+        text.textContent = '实时扫雷运行中（真实 7-Agent 流水线）...';
+        updateLoadingProgress(options.step || 0, options.total || 7, options.message || '准备启动...');
+      } else {
+        progress.style.display = 'none';
+        status.style.display = 'none';
+        text.textContent = 'Agent 流水线执行中...';
+        let i = 0;
+        const el = document.getElementById('loadingAgent');
+        window._loadingTimer = setInterval(() => {
+          el.textContent = agentSteps[i % agentSteps.length] + ' 执行中...';
+          i++;
+        }, 800);
+      }
+    } else {
+      clearInterval(window._loadingTimer);
+      progress.style.display = 'none';
+      status.style.display = 'none';
+      document.getElementById('loadingProgressBar').style.width = '0%';
+    }
+  }
+
+  function updateLoadingProgress(step, total, message) {
+    const bar = document.getElementById('loadingProgressBar');
+    const status = document.getElementById('loadingStatus');
+    const agent = document.getElementById('loadingAgent');
+    const pct = total > 0 ? (step / total) * 100 : 0;
+    bar.style.width = pct + '%';
+    status.textContent = `${step} / ${total}`;
+    agent.textContent = message;
+  }
+
+  // ==================== 工具函数 ====================
+  function getRiskColor(level) {
+    if (level === 'low') return '#10B981';
+    if (level === 'mid') return '#F59E0B';
+    return '#EF4444';
+  }
+
+  function getRiskFillColor(level) {
+    if (level === 'low') return '#D1FAE5';
+    if (level === 'mid') return '#FEF3C7';
+    return '#FEE2E2';
+  }
+
+  function getRiskTextColor(level) {
+    if (level === 'low') return '#065F46';
+    if (level === 'mid') return '#92400E';
+    return '#991B1B';
+  }
+
+  // ==================== 时钟 ====================
+  function updateClock() {
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    document.getElementById('clock').textContent =
+      `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  }
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  // ==================== 实时扫雷开关 ====================
+  function toggleRealtimeMode() {
+    realtimeMode = !realtimeMode;
+    const btn = document.getElementById('realtimeBtn');
+    const txt = document.getElementById('realtimeBtnText');
+    const hint = document.getElementById('realtimeHint');
+    if (realtimeMode) {
+      btn.style.background = '#FEF3C7';
+      btn.style.borderColor = '#F59E0B';
+      btn.style.color = '#92400E';
+      txt.textContent = '实时扫雷：开';
+      hint.style.display = 'block';
+    } else {
+      btn.style.background = 'white';
+      btn.style.borderColor = 'var(--brand-secondary)';
+      btn.style.color = 'var(--brand-primary)';
+      txt.textContent = '实时扫雷：关';
+      hint.style.display = 'none';
+    }
+  }
+
+  function isRealtimeMode() {
+    return realtimeMode;
+  }
+
+  function getParamSwitch(id) {
+    return document.getElementById(id).classList.contains('on');
+  }
+
+  // ==================== 参数抽屉 ====================
+  function toggleParams() {
+    document.getElementById('paramsPanel').classList.toggle('open');
+    document.getElementById('paramsTrigger').classList.toggle('open');
+  }
+
+  // ==================== 步骤选中 / 跳转 ====================
+  function selectStep(el, name) {
+    document.querySelectorAll('.pipeline-step').forEach(s => s.classList.remove('active'));
+    el.classList.add('active');
+    const sectionId = el.dataset.section;
+    if (sectionId) {
+      const target = document.getElementById(sectionId);
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+  }
+
+  // ==================== 数字滚动动画 ====================
+  function animateNumber(elId, target, suffix, decimals) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const startTime = performance.now();
+    const duration = 1500;
+    function tick(now) {
+      const p = Math.min((now - startTime) / duration, 1);
+      const eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = (target * eased).toFixed(decimals) + suffix;
+      if (p < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  // ==================== 公司选择弹窗 ====================
+  function openCompanyModal() {
+    document.getElementById('companyModalOverlay').classList.add('open');
+    renderCompanyList();
+  }
+
+  function closeCompanyModal(e) {
+    if (e && e.target !== e.currentTarget) return;
+    document.getElementById('companyModalOverlay').classList.remove('open');
+  }
+
+  function setRiskFilter(filter) {
+    currentFilter = filter;
+    document.querySelectorAll('.filter-badge').forEach(b => {
+      b.classList.toggle('active', b.dataset.filter === filter);
+    });
+    renderCompanyList();
+  }
+
+  function filterCompanyList() {
+    renderCompanyList();
+  }
+
+  function renderCompanyList() {
+    const list = document.getElementById('companyList');
+    const search = document.getElementById('companySearch').value.toLowerCase();
+    list.innerHTML = '';
+
+    Object.values(resultCache).forEach(c => {
+      if (currentFilter !== 'all' && c.level !== currentFilter) return;
+      if (search && !c.name.toLowerCase().includes(search) && !c.code.toLowerCase().includes(search)) return;
+
+      const item = document.createElement('div');
+      item.className = 'company-item' + (selectedCompany === c.code ? ' selected' : '');
+      item.onclick = () => {
+        selectedCompany = c.code;
+        renderCompanyList();
+        updateModalCount();
+      };
+
+      item.innerHTML = `
+        <div class="check">✓</div>
+        <div class="company-item-info">
+          <div class="company-item-name">${c.name}</div>
+          <div class="company-item-code">${c.code} · ${c.factors} 项因子</div>
+        </div>
+        <div class="company-item-risk">
+          <div class="risk-pct" style="color:${getRiskColor(c.level)}">${c.risk.toFixed(1)}%</div>
+          <div class="risk-level" style="background:${getRiskFillColor(c.level)};color:${getRiskTextColor(c.level)}">${c.levelText}</div>
+        </div>
+      `;
+      list.appendChild(item);
+    });
+  }
+
+  function updateModalCount() {
+    const c = resultCache[selectedCompany];
+    if (c) {
+      document.getElementById('modalSelectedCount').textContent =
+        `已选 1 家公司 · ${c.name}（${c.code}）`;
+    }
+  }
+
+  async function confirmCompanySelection() {
+    const code = document.getElementById('paramCode').value.trim() || selectedCompany;
+    if (!code) { alert('请输入公司代码'); return; }
+    // 如果缓存里已有且非实时模式，直接用
+    if (!isRealtimeMode() && resultCache[code]) {
+      currentLevel = resultCache[code].level;
+      closeCompanyModal();
+      renderDashboard(resultCache[code]);
+      return;
+    }
+    if (isRealtimeMode()) {
+      closeCompanyModal();
+      await startRealtimeScan(code);
+      return;
+    }
+    const results = await fetchAnalysis([code]);
+    if (results && results.length > 0) {
+      currentLevel = results[0].level;
+      closeCompanyModal();
+      renderDashboard(results[0]);
+    }
+  }
+
+  async function startRealtimeScan(code) {
+    if (wsConnection) {
+      try { wsConnection.close(); } catch (e) {}
+      wsConnection = null;
+    }
+
+    const windowVal = parseInt(document.getElementById('paramWindow').value) || 60;
+    const maxDocs = parseInt(document.getElementById('paramMaxDocs').value) || 3;
+    const useLLM = getParamSwitch('switchLLM');
+    const useBGE = getParamSwitch('switchBGE');
+
+    showLoading(true, { realtime: true, step: 0, total: 7, message: '创建实时扫雷任务...' });
+
+    let taskId;
+    try {
+      const resp = await fetch(`${API_BASE}/api/scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, window: windowVal, use_llm: useLLM, use_bge: useBGE, max_documents: maxDocs })
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      taskId = data.task_id;
+    } catch (err) {
+      console.error('创建任务失败:', err);
+      showLoading(false);
+      alert('创建实时扫雷任务失败，已回退到离线快照');
+      const results = await fetchAnalysis([code]);
+      if (results && results.length > 0) renderDashboard(results[0]);
+      return;
+    }
+
+    const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/pipeline/${taskId}`;
+    const ws = new WebSocket(wsUrl);
+    wsConnection = ws;
+
+    ws.onopen = () => {
+      updateLoadingProgress(0, 7, '已连接，等待模型预热...');
+    };
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'heartbeat') return;
+      if (data.type === 'progress') {
+        updateLoadingProgress(data.step, data.total, data.message);
+        updatePipelineStatusRealtime(data.step, data.total, data.agent, data.status);
+      } else if (data.type === 'complete') {
+        showLoading(false);
+        if (data.result) {
+          lastResultIsRealtime = true;
+          resultCache[data.result.code] = data.result;
+          companyData[data.result.level] = data.result;
+          currentLevel = data.result.level;
+          selectedCompany = data.result.code;
+          renderDashboard(data.result);
+          renderCompanyList();
+          updateModalCount();
+        }
+        ws.close();
+      } else if (data.type === 'error') {
+        showLoading(false);
+        console.error('实时扫雷失败:', data.error);
+        alert('实时扫雷失败：' + (data.message || data.error) + '\n已回退到离线快照。');
+        fallbackToOffline(code);
+        ws.close();
+      }
+    };
+
+    ws.onerror = (err) => {
+      console.error('WebSocket 错误:', err);
+    };
+
+    ws.onclose = (event) => {
+      wsConnection = null;
+      // 如果未正常完成/错误且仍在 loading，兜底查询状态
+      if (document.getElementById('loadingOverlay').classList.contains('show')) {
+        setTimeout(() => checkTaskStatus(taskId, code), 500);
+      }
+    };
+  }
+
+  async function checkTaskStatus(taskId, code) {
+    try {
+      const resp = await fetch(`${API_BASE}/api/scan/${taskId}`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (data.status === 'completed' && data.result) {
+        showLoading(false);
+        renderDashboard(data.result);
+      } else if (data.status === 'failed') {
+        showLoading(false);
+        alert('实时扫雷失败，已回退到离线快照');
+        fallbackToOffline(code);
+      }
+    } catch (e) {
+      console.warn('查询任务状态失败:', e);
+    }
+  }
+
+  async function fallbackToOffline(code) {
+    const results = await fetchAnalysis([code]);
+    if (results && results.length > 0) {
+      currentLevel = results[0].level;
+      selectedCompany = results[0].code;
+      renderDashboard(results[0]);
+    }
+  }
+
+  function updatePipelineStatusRealtime(step, total, currentAgent, status) {
+    // 顶部横向流水线
+    const container = document.getElementById('pipelineStatus');
+    const nodes = [
+      { key: 'data', label: '数据接入' },
+      { key: 'feature', label: '特征抽取' },
+      { key: 'model', label: '模型推理' },
+      { key: 'attribution', label: '归因分析' },
+      { key: 'report', label: '报告生成' },
+    ];
+    // 简化映射：前2步=数据接入，3=特征抽取，4=模型推理，5-6=归因分析，7=报告生成
+    let activeIdx = 0;
+    if (step <= 2) activeIdx = 0;
+    else if (step === 3) activeIdx = 1;
+    else if (step === 4) activeIdx = 2;
+    else if (step <= 6) activeIdx = 3;
+    else activeIdx = 4;
+
+    if (status === 'error') activeIdx = Math.max(0, activeIdx - 1);
+
+    let html = '';
+    nodes.forEach((n, i) => {
+      let cls = 'pending';
+      if (i < activeIdx) cls = 'done';
+      else if (i === activeIdx) cls = 'running';
+      html += `<div class="pipe-node ${cls}"><div class="node-dot"></div>${n.label}</div>`;
+      if (i < nodes.length - 1) {
+        html += `<div class="pipe-link ${i < activeIdx ? 'done' : ''}"></div>`;
+      }
+    });
+    container.innerHTML = html;
+
+    // 左侧流水线步骤（与右侧 Agent 名称对应）
+    const stepNames = ['公告研读', '财务异动', '预测建模', '案例匹配', '段落召回', '归因分析', '报告生成'];
+    const stepEls = document.querySelectorAll('.pipeline-step');
+    stepEls.forEach((el, i) => {
+      el.classList.remove('done', 'running', 'active');
+      const titleEl = el.querySelector('.step-title');
+      const statusEl = el.querySelector('.step-status');
+      if (i + 1 < step) {
+        el.classList.add('done');
+        statusEl.textContent = '✓ 完成';
+      } else if (i + 1 === step) {
+        el.classList.add('running', 'active');
+        statusEl.textContent = status === 'error' ? '✗ 失败' : '正在执行…';
+      } else {
+        statusEl.textContent = '排队中';
+      }
+    });
+  }
+
+  async function runBatchDemo() {
+    const raw = document.getElementById('batchCompanies').value || document.getElementById('paramBatch').value;
+    if (!raw.trim()) { alert('请先输入公司代码'); return; }
+    const codes = raw.split(/[\s,，;；\n]+/).filter(Boolean);
+    if (isRealtimeMode()) {
+      closeCompanyModal();
+      for (const code of codes) {
+        await startRealtimeScan(code);
+        await new Promise(r => setTimeout(r, 1000));
+      }
+      return;
+    }
+    const results = await fetchAnalysis(codes);
+    if (results && results.length > 0) {
+      // 依次展示每个结果
+      for (let i = 0; i < results.length; i++) {
+        currentLevel = results[i].level;
+        renderDashboard(results[i]);
+        if (i < results.length - 1) await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+    closeCompanyModal();
+  }
+
+  // ==================== 主界面渲染 ====================
+  function renderDashboard(data) {
+    if (!data) data = companyData[currentLevel];
+    if (!data) return;
+
+    // 仪表盘
+    document.getElementById('companyName').textContent = data.name;
+    document.getElementById('companyCode').textContent = `${data.code} · ${document.getElementById('paramWindow').value}`;
+    document.getElementById('confidenceValue').textContent = data.confidence.toFixed(2);
+    document.getElementById('factorCount').textContent = data.factors;
+
+    // 风险数字
+    animateNumber('riskValue', data.risk, '%', 1);
+
+    // 风险条
+    const barFill = document.getElementById('riskBarFill');
+    barFill.style.width = '0%';
+    barFill.style.background = getRiskColor(data.level);
+    setTimeout(() => { barFill.style.width = data.risk + '%'; }, 100);
+
+    // 风险徽章
+    const badge = document.getElementById('riskBadge');
+    badge.className = 'risk-badge ' + data.level;
+    badge.innerHTML = `<span class="dot"></span>${data.levelText}`;
+
+    // 参数区同步
+    document.getElementById('paramCode').value = data.code;
+
+    // 因子卡片（默认 Top 5）
+    const topFactors = (data.factorsList || []).slice(0, 5);
+    const factorsGrid = document.getElementById('factorsGrid');
+    factorsGrid.innerHTML = topFactors.map((f, idx) => `
+      <div class="factor-card" onclick="scrollToEvidence('${f.evidenceAnchor || 'evidence-' + idx}')">
+        <div class="factor-top">
+          <span class="factor-name">${f.name}</span>
+          <span class="factor-tag ${f.tag}">${f.tagText}</span>
+        </div>
+        <div class="factor-desc">${f.desc}</div>
+        <div class="factor-contribution">
+          <div class="factor-bar"><div class="factor-bar-fill" style="width: ${f.score * 100}%; background: ${f.color};"></div></div>
+          <span class="factor-score">${f.score.toFixed(2)}</span>
+        </div>
+      </div>
+    `).join('');
+
+    // 查看全部按钮计数
+    const allFactors = data.riskFactorDetails && data.riskFactorDetails.length > 0
+      ? data.riskFactorDetails
+      : data.factorsList || [];
+    document.getElementById('factorTotalCount').textContent = allFactors.length;
+
+    // 公告研读风险证据表
+    renderAnnouncementRisks(data);
+
+    // 相似监管案例
+    renderSimilarCases(data);
+
+    // 风险归因原文
+    renderAttributionEvidence(data);
+
+    // 报告卡片
+    renderReports(data);
+
+    // 报告预览
+    renderPreview(data);
+  }
+
+  // ==================== 公告研读风险证据表 ====================
+  function renderAnnouncementRisks(data) {
+    const tbody = document.querySelector('#announcementRiskTable tbody');
+    const empty = document.getElementById('announcementEmpty');
+    const risks = data.announcementRisks || [];
+    if (!risks.length) {
+      tbody.innerHTML = '';
+      empty.style.display = 'block';
+      return;
+    }
+    empty.style.display = 'none';
+    tbody.innerHTML = risks.map((r, i) => `
+      <tr id="ann-risk-${i}">
+        <td>${r.date}</td>
+        <td><span class="risk-level-tag ${r.level === '高' ? 'high' : r.level === '中' ? 'mid' : 'low'}">${r.level}</span></td>
+        <td><span class="l-tag">${r.l1}</span></td>
+        <td><span class="l-tag">${r.l2}</span></td>
+        <td><div class="desc-text">${r.description}</div></td>
+        <td><div class="evidence-text">${r.evidence}</div></td>
+        <td><div class="title-text">${r.title}</div></td>
+      </tr>
+    `).join('');
+  }
+
+  // ==================== 相似监管案例 ====================
+  function renderSimilarCases(data) {
+    const grid = document.getElementById('casesGrid');
+    const empty = document.getElementById('casesEmpty');
+    const cases = data.similarCases || [];
+    if (!cases.length) {
+      grid.innerHTML = '';
+      empty.style.display = 'block';
+      return;
+    }
+    empty.style.display = 'none';
+    grid.innerHTML = cases.map(c => `
+      <div class="case-card">
+        <div class="case-header">
+          <span class="case-company">${c.company}</span>
+          <span class="case-date">${c.publishDate}</span>
+        </div>
+        <div class="case-type">${c.inquiryType}</div>
+        <div class="case-topics">
+          ${(c.topics || []).map(t => `<span>${t}</span>`).join('')}
+        </div>
+        ${(c.matchReason || []).length ? `
+          <ul class="case-reason">
+            ${c.matchReason.map(r => `<li>• ${r}</li>`).join('')}
+          </ul>
+        ` : ''}
+        <div class="case-similarity">相似度：<b>${(c.similarity * 100).toFixed(2)}%</b></div>
+      </div>
+    `).join('');
+  }
+
+  // ==================== 风险归因原文 ====================
+  function renderAttributionEvidence(data) {
+    const list = document.getElementById('attributionEvidenceList');
+    const empty = document.getElementById('attributionEmpty');
+    const items = data.attributionEvidence || [];
+    if (!items.length) {
+      list.innerHTML = '';
+      empty.style.display = 'block';
+      return;
+    }
+    empty.style.display = 'none';
+    list.innerHTML = items.map((item, i) => `
+      <div class="attribution-item" id="${item.anchor || 'evidence-' + i}">
+        <div class="attr-factor">${item.factor}</div>
+        ${item.source ? `<div class="attr-source">来源：${item.source}</div>` : ''}
+        <div class="attr-evidence">${item.evidence}</div>
+      </div>
+    `).join('');
+  }
+
+  // ==================== 风险因子弹窗与跳转 ====================
+  function openFactorModal() {
+    const data = resultCache[selectedCompany] || resultCache[Object.keys(resultCache)[0]];
+    if (!data) return;
+    const factors = data.riskFactorDetails && data.riskFactorDetails.length > 0
+      ? data.riskFactorDetails
+      : data.factorsList || [];
+    const grid = document.getElementById('factorModalGrid');
+    grid.innerHTML = factors.map((f, idx) => `
+      <div class="factor-card" onclick="scrollToEvidence('${f.evidenceAnchor || 'evidence-' + idx}'); closeFactorModal();">
+        <div class="factor-top">
+          <span class="factor-name">${f.name}</span>
+          <span class="factor-tag ${f.tag}">${f.tagText}</span>
+        </div>
+        <div class="factor-desc">${f.desc}</div>
+        <div class="factor-contribution">
+          <div class="factor-bar"><div class="factor-bar-fill" style="width: ${f.score * 100}%; background: ${f.color};"></div></div>
+          <span class="factor-score">${f.score.toFixed(2)}</span>
+        </div>
+      </div>
+    `).join('');
+    document.getElementById('factorModalOverlay').classList.add('open');
+  }
+
+  function closeFactorModal(e) {
+    if (e && e.target !== e.currentTarget) return;
+    document.getElementById('factorModalOverlay').classList.remove('open');
+  }
+
+  function scrollToEvidence(anchor) {
+    if (!anchor) return;
+    const target = document.getElementById(anchor);
+    if (target) {
+      document.getElementById('section-attribution').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setTimeout(() => {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        target.classList.add('highlight');
+        setTimeout(() => target.classList.remove('highlight'), 2000);
+      }, 400);
+    }
+  }
+
+  // ==================== 报告卡片 ====================
+  function renderReports(data) {
+
+    // Pipeline 动画重播
+    replayPipeline();
+  }
+
+  function renderReports(data) {
+    const reportsGrid = document.getElementById('reportsGrid');
+    const others = Object.entries(resultCache).filter(([k]) => k !== data.code).map(([k, c]) => c);
+
+    reportsGrid.innerHTML = `
+      <div class="report-card featured">
+        <div class="report-top">
+          <span class="report-title">${data.name} · 监管问询风险简报</span>
+          <span class="risk-badge ${data.level}"><span class="dot"></span>${data.levelText === '低风险' ? '低' : data.levelText === '中风险' ? '中' : '高'}</span>
+        </div>
+        <div class="report-meta">
+          <span>📄 ${data.code}</span>
+          <span>🕐 ${(data.generatedAt || '').substring(0, 10)}</span>
+          <span>⏱ ${lastResultIsRealtime ? '实时扫雷' : '离线快照'}</span>
+        </div>
+        <div class="report-summary">${data.summary}</div>
+        <div class="report-actions">
+          <button class="btn-primary">预览报告</button>
+          <button class="btn-secondary">PDF</button>
+        </div>
+      </div>
+      ${others.map(c => `
+        <div class="report-card" onclick="switchCompanyByLevel('${c.level}')">
+          <div class="report-top">
+            <span class="report-title">${c.name} · 风险简报</span>
+            <span class="risk-badge ${c.level}"><span class="dot"></span>${c.levelText === '低风险' ? '低' : c.levelText === '中风险' ? '中' : '高'}</span>
+          </div>
+          <div class="report-meta">
+            <span>📄 ${c.code}</span>
+            <span>🕐 2026-08-2${6 - (c.level === 'mid' ? 1 : 2)}</span>
+            <span>⏱ ${(9 + Math.random() * 7).toFixed(1)}s</span>
+          </div>
+          <div class="report-summary">未来 60 天问询概率 <b>${c.risk.toFixed(1)}%</b>。${c.summary.replace(/<[^>]+>/g, '').substring(0, 40)}…</div>
+          <div class="report-actions">
+            <button class="btn-secondary">预览报告</button>
+            <button class="btn-ghost">PDF</button>
+          </div>
+        </div>
+      `).join('')}
+    `;
+
+    document.getElementById('reportCountSub').textContent = `共 ${Object.keys(resultCache).length} 份 · 当前聚焦 ${data.name}`;
+  }
+
+  function switchCompanyByLevel(level) {
+    // 从 resultCache 找对应 level 的公司
+    const entry = Object.values(resultCache).find(c => c.level === level);
+    if (entry) {
+      currentLevel = level;
+      selectedCompany = entry.code;
+      renderDashboard(entry);
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function renderPreview(data) {
+    document.getElementById('previewTitle').textContent = `${data.name} · 监管问询风险简报`;
+    const previewBadge = document.getElementById('previewBadge');
+    previewBadge.className = 'risk-badge ' + data.level;
+    previewBadge.innerHTML = `<span class="dot"></span>${data.levelText} · ${data.risk.toFixed(1)}%`;
+
+    const tableRows = data.financialTable.map(row => `
+      <tr>
+        <td>${row[0]}</td>
+        <td class="${row[3].startsWith('-') ? 'num-neg' : 'num-pos'}">${row[1]}</td>
+        <td>${row[2]}</td>
+        <td class="${row[3].startsWith('-') ? 'num-neg' : 'num-pos'}">${row[3]}</td>
+      </tr>
+    `).join('');
+
+    document.getElementById('previewBody').innerHTML = `
+      <div class="report-section">
+        <div class="report-section-title"><span class="num">1</span>执行摘要</div>
+        <p>基于多 Agent 协同分析，对 ${data.name}（${data.code}）未来 <b>${document.getElementById('paramWindow').value.replace('窗口','').trim()}</b> 内收到交易所监管问询函的概率预测为 <b>${data.risk.toFixed(1)}%</b>，风险等级为 <b>${data.levelText}</b>。</p>
+        <div class="highlight-box">
+          💡 核心结论：${data.conclusion}
+        </div>
+      </div>
+
+      <div class="report-section" id="section-financial">
+        <div class="report-section-title"><span class="num">2</span>财务维度分析</div>
+        <table class="data-table">
+          <thead><tr><th>指标</th><th>本期值</th><th>行业均值</th><th>偏离度</th></tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+
+      <div class="report-section">
+        <div class="report-section-title"><span class="num">3</span>文本语义与案例匹配</div>
+        <p>${data.textSummary}</p>
+        <p>BGE 语义检索匹配到历史问询案例 <b>${data.caseMatch}</b>，与本公司的风险画像高度相似。</p>
+      </div>
+
+      <div class="report-section">
+        <div class="report-section-title"><span class="num">4</span>风险归因与建议</div>
+        <p>模型归因显示，问询概率的主要贡献来自：${data.attribution}。</p>
+        <div class="highlight-box">
+          📌 ${data.advice}
+        </div>
+      </div>
+    `;
+  }
+
+  function replayPipeline() {
+    const statusHTML = `
+      <div class="pipe-node done"><div class="node-dot"></div>数据接入</div>
+      <div class="pipe-link done"></div>
+      <div class="pipe-node done"><div class="node-dot"></div>特征抽取</div>
+      <div class="pipe-link done"></div>
+      <div class="pipe-node done"><div class="node-dot"></div>模型推理</div>
+      <div class="pipe-link done"></div>
+      <div class="pipe-node running"><div class="node-dot"></div>归因分析</div>
+      <div class="pipe-link"></div>
+      <div class="pipe-node pending"><div class="node-dot"></div>报告生成</div>
+    `;
+    const container = document.getElementById('pipelineStatus');
+    container.innerHTML = statusHTML;
+
+    // 3 秒后完成归因分析，再过 2 秒完成报告生成
+    setTimeout(() => {
+      container.innerHTML = `
+        <div class="pipe-node done"><div class="node-dot"></div>数据接入</div>
+        <div class="pipe-link done"></div>
+        <div class="pipe-node done"><div class="node-dot"></div>特征抽取</div>
+        <div class="pipe-link done"></div>
+        <div class="pipe-node done"><div class="node-dot"></div>模型推理</div>
+        <div class="pipe-link done"></div>
+        <div class="pipe-node done"><div class="node-dot"></div>归因分析</div>
+        <div class="pipe-link done"></div>
+        <div class="pipe-node running"><div class="node-dot"></div>报告生成</div>
+      `;
+      setTimeout(() => {
+        container.innerHTML = `
+          <div class="pipe-node done"><div class="node-dot"></div>数据接入</div>
+          <div class="pipe-link done"></div>
+          <div class="pipe-node done"><div class="node-dot"></div>特征抽取</div>
+          <div class="pipe-link done"></div>
+          <div class="pipe-node done"><div class="node-dot"></div>模型推理</div>
+          <div class="pipe-link done"></div>
+          <div class="pipe-node done"><div class="node-dot"></div>归因分析</div>
+          <div class="pipe-link done"></div>
+          <div class="pipe-node done"><div class="node-dot"></div>报告生成</div>
+        `;
+      }, 1500);
+    }, 2500);
+  }
+
+  // ==================== 初始化 ====================
+  window.addEventListener('load', async () => {
+    // 先从 API 加载三家公司数据
+    await loadCompanyList();
+    const codes = companyList.length > 0
+      ? companyList.map(c => c.code)
+      : ['000001.SZ', '000063.SZ', '000858.SZ'];
+    const results = await fetchAnalysis(codes);
+    if (results && results.length > 0) {
+      // 默认展示第一家
+      currentLevel = results[0].level;
+      selectedCompany = results[0].code;
+      renderDashboard(results[0]);
+      renderCompanyList();
+      updateModalCount();
+    }
+  });
+</script>
+
+</body>
+</html>

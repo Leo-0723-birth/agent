@@ -119,7 +119,8 @@ def _tolerant_node(agent_factory, timeout=120):
 # ================= 图构建 =================
 
 def build_graph(use_llm=False, use_finbert=False, use_rule=True,
-                rate_limit=0.5, checkpointer=None):
+                rate_limit=0.5, checkpointer=None, use_semantic_cases=True,
+                max_documents=120):
     """构建并编译 7 节点流水线图。
 
     参数：
@@ -142,14 +143,22 @@ def build_graph(use_llm=False, use_finbert=False, use_rule=True,
 
     g = StateGraph(SweepState)
 
+    # 公告研读节点超时自适应：开 FinBERT/LLM 时显著放大（全开关演示可到 ~1300s）
+    ann_timeout = 420 + (300 if use_finbert else 0) + (600 if use_llm else 0)
     g.add_node("announcement", _node_factory(
-        lambda: AnnouncementReaderAgent(use_finbert=use_finbert, use_llm=use_llm, use_rule=use_rule),
-        timeout=420, name="AnnouncementReader"))
+        lambda: AnnouncementReaderAgent(
+            max_documents=max_documents,
+            use_finbert=use_finbert,
+            use_llm=use_llm,
+            use_rule=use_rule,
+        ),
+        timeout=ann_timeout, name="AnnouncementReader"))
     g.add_node("financial", _node_factory(
         lambda: FinancialDetectorAgent(use_llm=False, rate_limit=rate_limit),
         timeout=240, name="FinancialDetector"))
     g.add_node("predictor", _tolerant_node(PredictorAgent, timeout=120))
-    g.add_node("case", _tolerant_node(CaseRetrieverAgent, timeout=180))
+    g.add_node("case", _tolerant_node(
+        lambda: CaseRetrieverAgent(use_semantic=use_semantic_cases), timeout=180))
     g.add_node("chunk", _tolerant_node(ChunkRetrieverAgent, timeout=60))
     g.add_node("attribution", _node_factory(
         lambda: AttributorAgent(use_llm=use_llm), timeout=60, name="Attributor"))

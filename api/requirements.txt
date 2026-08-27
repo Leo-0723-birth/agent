@@ -1,0 +1,7 @@
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.0.0
+
+# 开发/测试 WebSocket 客户端用（生产可选）
+websockets>=12.0
+aiohttp>=3.9.0
