@@ -20,12 +20,14 @@
 设计：纯规则 + 可选 LLM 解读（backend/llm.py，模型 deepseek-v4-flash）。
 参考：底层建模方案 2.3/2.4 + 桌面《财务异常agent》已有实现（已跑通）。
 """
-import re
+import logging
 import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+_logger = logging.getLogger(__name__)
 
 if sys.platform == "win32":
     try:
@@ -44,6 +46,7 @@ from ..config import (
 from ..llm import chat, chat_json
 from ..skills import f2_calc, market_fetch
 from ..skills.financial_data_fetch import DataFetcher
+from ..skills.stock_code import StockCodeError, normalize_stock_code
 from .base import AgentBase
 
 # 特殊行业的财务特点（高杠杆/金融属性；仍参与常规检测，供审计参考）
@@ -332,7 +335,7 @@ class FinancialDetectorAgent(AgentBase):
         """把名称/简称/代码解析为标准 secucode（用共享 LLM）。失败返回空 dict。"""
         prompt = f"""你是A股上市公司识别助手。请识别用户输入所指的公司，输出 JSON：
 {{"secucode": "6位代码.交易所后缀", "company_name": "公司简称", "matched": true/false}}
-规则：6/9开头→.SH，0/3开头→.SZ，4/8开头→.BJ；无法识别 matched=false。
+规则：6/9开头（92除外）→.SH，0/2/3开头→.SZ，4/8/92开头→.BJ；无法识别 matched=false。
 用户输入：{user_input}"""
         try:
             return chat_json("", prompt, max_tokens=200)
@@ -361,11 +364,18 @@ class FinancialDetectorAgent(AgentBase):
     # ================= 主入口（统一签名） =================
     def execute(self, company, ctx):
         """统一签名：读 ctx（company/name/window），写回 ctx.financial。"""
-        code = company
-        # 1. 输入解析：若传入的是名称/简称，用 LLM 解析为代码
-        if self.use_llm and not re.match(r"^\d{6}", code):
-            resolved = self._resolve_company(code)
-            code = resolved.get("secucode") or code
+        raw_company = str(company or "").strip()
+        # 1. 输入解析：股票代码统一规范；纯名称仅在启用 LLM 时解析。
+        try:
+            code = normalize_stock_code(raw_company)
+        except StockCodeError:
+            if not self.use_llm or any(character.isdigit() for character in raw_company):
+                raise
+            resolved = self._resolve_company(raw_company)
+            # 兼容只返回 secucode 的旧模型响应；只有明确 matched=false 才拒绝。
+            if resolved.get("matched") is False or not resolved.get("secucode"):
+                raise StockCodeError(f"无法把公司名称“{raw_company}”解析为上市公司股票代码。")
+            code = normalize_stock_code(resolved["secucode"])
             ctx.name = resolved.get("company_name") or ctx.name
         ctx.company = code
 
@@ -401,7 +411,7 @@ class FinancialDetectorAgent(AgentBase):
                 f2_features = {k: _safe_float(v) for k, v in
                                f2_latest.iloc[-1][f2_calc.F2_FEATURE_NAMES].items()}
         except Exception as e:
-            print(f"  [F2 计算失败] {code}: {e}")
+            _logger.warning("[F2 计算失败] %s: %s", code, e)
 
         # 3.6 F3 市场特征（35 维在线，队友 crawl_market 迁移；失败降级空）
         mkt_features = {}
@@ -409,7 +419,7 @@ class FinancialDetectorAgent(AgentBase):
             mkt_features = {k: _safe_float(v) for k, v in
                             market_fetch.crawl_market_features(code).items()}
         except Exception as e:
-            print(f"  [F3 抓取失败] {code}: {e}")
+            _logger.warning("[F3 抓取失败] %s: %s", code, e)
 
         # 3.7 F4/F5 特征（在线爬取优先 → 离线预处理表兜底，在线带超时保护）
         #     在线：股吧舆情(F4)/股东治理(F5)，保证拿到近日最新数据；
@@ -436,18 +446,18 @@ class FinancialDetectorAgent(AgentBase):
                 try:
                     feats = _run_with_timeout(crawler, code, timeout=30)   # 在线：近日最新数据
                 except FutTimeout:
-                    print(f"  [{fam} 在线抓取超时(30s)，回退离线表] {code}")
+                    _logger.warning("[%s 在线抓取超时(30s)，回退离线表] %s", fam, code)
                 except Exception as e:
-                    print(f"  [{fam} 在线抓取失败，回退离线表] {code}: {e}")
+                    _logger.warning("[%s 在线抓取失败，回退离线表] %s: %s", fam, code, e)
                 if feats is None:
                     try:
                         feats = load_latest_features(code, fam)             # 离线表兜底
                     except Exception as e:
-                        print(f"  [{fam} 离线表加载失败] {code}: {e}")
+                        _logger.warning("[%s 离线表加载失败] %s: %s", fam, code, e)
                         feats = {}
                 f456_features.update({k: _safe_float(v) for k, v in (feats or {}).items()})
         except Exception as e:
-            print(f"  [F4/F5 加载失败] {code}: {e}")
+            _logger.warning("[F4/F5 加载失败] %s: %s", code, e)
 
         # 4. 行业对标 Z-Score（可选）
         benchmarks = self.industry_benchmark(code, indicators)
@@ -488,7 +498,7 @@ class FinancialDetectorAgent(AgentBase):
             ctx.financial.risk_factors = generate_risk_factors(
                 ctx.financial.features, code, str(indicators.get("report_period", "")))
         except Exception as e:
-            print(f"  [风险因素生成失败] {code}: {e}")
+            _logger.warning("[风险因素生成失败] %s: %s", code, e)
         return ctx
 
     def _industry_characteristics(self, industry):

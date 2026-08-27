@@ -27,13 +27,24 @@ from fastapi.staticfiles import StaticFiles
 
 from .models import AnalyzeRequest, AnalyzeResponse, ProgressMessage, ScanRequest, ScanResponse
 from .pipeline import (
+    AGENT_TOTAL,
+    TERMINAL_STATUSES,
+    active_tasks,
+    agent_metadata,
+    bind_task_handle,
+    cancel_task,
     create_task,
+    get_cached_result,
+    get_offline_result,
     get_task,
     list_available_companies,
     offline_to_response,
     run_pipeline,
     run_scan_task,
+    subscribe_task,
+    unsubscribe_task,
 )
+from backend.skills.stock_code import StockCodeError, normalize_stock_code
 
 app = FastAPI(title="监管问询扫雷预警系统 API", version="2.0")
 
@@ -45,6 +56,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 可选 API 鉴权：设置环境变量 API_KEY 后，/api/* 需携带 X-API-Key 头；
+# 未配置时默认关闭，不影响本地演示。
+API_KEY = os.getenv("API_KEY", "").strip()
+
+
+@app.middleware("http")
+async def api_key_middleware(request, call_next):
+    if API_KEY and request.url.path.startswith("/api/") and request.url.path != "/api/health":
+        if request.headers.get("x-api-key", "") != API_KEY:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=401, content={"detail": "invalid or missing api key"})
+    return await call_next(request)
+
+
 # 静态文件目录
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -55,31 +80,37 @@ async def root():
 
 
 @app.post("/api/analyze", response_model=list[AnalyzeResponse])
-async def analyze(req: AnalyzeRequest):
+def analyze(req: AnalyzeRequest):
     """核心接口：输入公司代码列表，返回风险分析结果（离线数据）。"""
-    return await run_pipeline(req.codes, req.window, req.use_llm, req.use_bge)
+    return run_pipeline(req.codes, req.window, req.use_llm, req.use_bge)
 
 
 @app.get("/api/company/{code}", response_model=AnalyzeResponse)
-async def get_company(code: str):
+def get_company(code: str):
     """单公司查询（离线）。"""
-    results = await run_pipeline([code], 60, False, True)
+    results = run_pipeline([code], 60, False, True)
     if not results:
         raise HTTPException(status_code=404, detail=f"未找到 {code} 的离线报告")
     return results[0]
 
 
 @app.get("/api/companies")
-async def companies():
+def companies():
     """返回所有有离线报告的公司列表。"""
     return list_available_companies()
+
+
+@app.get("/api/agents")
+def agents():
+    """返回 7 个 Agent 的元数据（前端流水线清单的单一来源）。"""
+    return agent_metadata()
 
 
 @app.get("/api/health")
 async def health():
     return {
         "status": "ok",
-        "agents": 7,
+        "agents": AGENT_TOTAL,
         "online": True,
         "mode": "hybrid",           # 支持离线 + 实时
         "realtime_ready": True,
@@ -90,17 +121,54 @@ async def health():
 
 @app.post("/api/scan", response_model=ScanResponse)
 async def scan(req: ScanRequest):
-    """创建实时扫雷任务，返回 task_id。前端用 task_id 连接 WebSocket。"""
-    state = create_task(req.code)
-    # 启动后台任务（不 await，立即返回 task_id）
-    import asyncio
-    asyncio.create_task(run_scan_task(state, req))
+    """默认秒返离线快照；realtime=true 时创建实时 Agent 任务。"""
+    try:
+        code = normalize_stock_code(req.code)
+    except StockCodeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    req = req.model_copy(update={"code": code})
+
+    if not req.realtime:
+        result = get_offline_result(code, req.window)
+        if result is None:
+            raise HTTPException(status_code=404, detail=f"未找到 {code} 的离线报告")
+        return ScanResponse(
+            task_id="cached", code=code, status="completed", cached=True,
+            message="已返回离线快照", result=result,
+        )
+
+    running = active_tasks()
+    if running and not req.force:
+        current = running[0]
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "当前有实时扫雷任务正在执行，请先取消或使用 force=true 切换。",
+                "task_id": current.task_id,
+                "code": current.code,
+            },
+        )
+    if running and req.force:
+        for current in running:
+            await cancel_task(current.task_id)
+
+    state = create_task(code)
+    handle = asyncio.create_task(run_scan_task(state, req), name=state.task_id)
+    bind_task_handle(state.task_id, handle)
     return ScanResponse(
         task_id=state.task_id,
-        code=req.code,
+        code=code,
         status=state.status,
-        message=f"任务已创建，请连接 ws://host/ws/pipeline/{state.task_id}",
+        message=f"任务已创建，请连接 /ws/pipeline/{state.task_id}",
     )
+
+
+@app.delete("/api/scan/{task_id}")
+async def delete_scan(task_id: str):
+    state = await cancel_task(task_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return {"task_id": state.task_id, "code": state.code, "status": state.status}
 
 
 @app.get("/api/scan/{task_id}")
@@ -115,12 +183,33 @@ async def scan_status(task_id: str):
         "status": state.status,
         "error": state.error,
         "progress": [p.model_dump(exclude_none=True) for p in state.progress],
+        "result": state.result.model_dump() if state.result else None,
     }
+
+
+@app.get("/api/mock/{code}", response_model=AnalyzeResponse)
+async def mock_company(code: str):
+    """前端联调用固定结构数据；有离线快照时优先返回真实快照。"""
+    try:
+        normalized = normalize_stock_code(code)
+    except StockCodeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    result = get_offline_result(normalized, 60)
+    if result is None:
+        companies = list_available_companies()
+        result = get_offline_result(companies[0]["code"], 60) if companies else None
+    if result is None:
+        raise HTTPException(status_code=404, detail="仓库中没有可用的 mock/离线报告")
+    return result.model_copy(update={"code": normalized})
 
 
 @app.websocket("/ws/pipeline/{task_id}")
 async def pipeline_websocket(websocket: WebSocket, task_id: str):
     """WebSocket 实时推送扫雷进度。"""
+    # 可选鉴权：API_KEY 非空时，握手需带 ?token=<API_KEY>（浏览器 WS 无法自定义 header）
+    if API_KEY and websocket.query_params.get("token", "") != API_KEY:
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     state = get_task(task_id)
     if not state:
@@ -131,56 +220,28 @@ async def pipeline_websocket(websocket: WebSocket, task_id: str):
         await websocket.close(code=1008)
         return
 
-    # 先把已有进度补发（断线重连场景）
+    # 先把生产端已记录的进度补发（断线重连场景）
     for p in state.progress:
         await websocket.send_json(p.model_dump(exclude_none=True))
+    queue = subscribe_task(state)
+    terminal_since = time.monotonic() if state.status in TERMINAL_STATUSES else None
 
-    # 如果任务已经完成/失败，直接发送结果后关闭
-    if state.status == "completed" and state.result:
-        await websocket.send_json(ProgressMessage(
-            type="complete",
-            step=7,
-            total=7,
-            agent="Reporter",
-            status="done",
-            message="报告生成完成",
-            elapsed_ms=0,
-            result=state.result,
-        ).model_dump(exclude_none=True))
-        await websocket.close(code=1000)
-        return
-
-    if state.status == "failed":
-        await websocket.send_json(ProgressMessage(
-            type="error",
-            step=0,
-            total=7,
-            agent="SweepingOrchestrator",
-            status="error",
-            message=state.error or "任务失败",
-            elapsed_ms=0,
-            error=state.error,
-        ).model_dump(exclude_none=True))
-        await websocket.close(code=1000)
-        return
-
-    # 实时从 queue 读取新进度
+    # 结束后保持 30 秒，给断线重连留窗口。
     try:
-        while state.status in ("pending", "running"):
+        while True:
+            if state.status in TERMINAL_STATUSES and terminal_since is None:
+                terminal_since = time.monotonic()
+            if terminal_since is not None and time.monotonic() - terminal_since >= 30:
+                break
             try:
-                msg = await asyncio.wait_for(state.queue.get(), timeout=1.0)
-                state.progress.append(msg)
+                msg = await asyncio.wait_for(queue.get(), timeout=1.0)
                 await websocket.send_json(msg.model_dump(exclude_none=True))
-                if msg.type in ("complete", "error"):
-                    # 再读取一次，确保没有遗漏；随后优雅关闭
-                    await asyncio.sleep(0.3)
-                    break
             except asyncio.TimeoutError:
-                # 发送心跳保持连接
                 await websocket.send_json({"type": "heartbeat", "timestamp": time.time()})
     except WebSocketDisconnect:
         pass
     finally:
+        unsubscribe_task(state, queue)
         try:
             await websocket.close(code=1000)
         except Exception:

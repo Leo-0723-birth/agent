@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 from collections import Counter
@@ -30,6 +31,8 @@ from ..skills.announcement_context_filter import (
 )
 from ..skills.rule_risk_extract import RuleRiskExtractor
 from .base import AgentBase
+
+_logger = logging.getLogger(__name__)
 
 
 SEVERITY_NUMBER = {"critical": 5, "high": 5, "medium": 3, "low": 2}
@@ -584,7 +587,10 @@ class AnnouncementReaderAgent(AgentBase):
             for item in evidence
         ]
         ctx.semantic.per_announcement = per_announcement
-        ctx.semantic.f1_features = f1
+        retrieval_mode = identity.get("retrieval_mode", "online")
+        current_data_available = retrieval_mode != "online_unavailable"
+        # 实时源不可达时，不能把“未取得公告”当作“公告数为 0”送入模型。
+        ctx.semantic.f1_features = f1 if current_data_available else {}
         ctx.semantic.f1_vector = f1_vector
         ctx.semantic.f1_vector_backend = f1_vector_backend
         # F6 监管问询函特征：由本 Agent 的公告列表（巨潮官方源）计算，
@@ -592,11 +598,15 @@ class AnnouncementReaderAgent(AgentBase):
         try:
             from datetime import date as _date
             from ..skills.inquiry_features import compute_f6_from_announcements
-            ctx.semantic.f6_features = compute_f6_from_announcements(
-                announcements, _date.fromisoformat(str(as_of)[:10])
+            ctx.semantic.f6_features = (
+                compute_f6_from_announcements(
+                    announcements, _date.fromisoformat(str(as_of)[:10])
+                )
+                if current_data_available
+                else {}
             )
         except Exception as e:
-            print(f"  [F6 问询特征计算失败] {e}")
+            _logger.warning("[F6 问询特征计算失败] %s", e)
             ctx.semantic.f6_features = {}
         ctx.semantic.channel_summary = {
             "rule": {
@@ -623,13 +633,18 @@ class AnnouncementReaderAgent(AgentBase):
         }
         ctx.semantic.historical_context = historical_context
         ctx.semantic.query_trace = query_trace
-        retrieval_mode = identity.get("retrieval_mode", "online")
         offline_snapshot = retrieval_mode == "offline_official_snapshot"
-        current_source_policy = (
-            f"本次命中仓库内巨潮官方公告离线快照，数据锚点为{identity.get('snapshot_as_of')}；"
-            if offline_snapshot
-            else "本次联网访问巨潮并读取截止日以前的最新公告；"
-        )
+        if offline_snapshot:
+            current_source_policy = (
+                f"本次命中仓库内巨潮官方公告离线快照，数据锚点为{identity.get('snapshot_as_of')}；"
+            )
+        elif not current_data_available:
+            current_source_policy = (
+                "本次巨潮实时接口连接失败，未取得当前公告；公告相关特征按缺失处理，"
+                "零条公告不表示公司没有风险；"
+            )
+        else:
+            current_source_policy = "本次联网访问巨潮并读取截止日以前的最新公告；"
         ctx.semantic.source_policy = (
             "查询先检查比赛历史库，再读取巨潮官方公告。"
             + current_source_policy
@@ -642,9 +657,15 @@ class AnnouncementReaderAgent(AgentBase):
             "source": (
                 "巨潮官方公告（仓库离线快照）"
                 if offline_snapshot
-                else ("巨潮资讯网" if self.source is not None else "本地官方公告副本")
+                else (
+                    "巨潮资讯网（本次连接失败）"
+                    if not current_data_available
+                    else ("巨潮资讯网" if self.source is not None else "本地官方公告副本")
+                )
             ),
             "retrieval_mode": retrieval_mode,
+            "current_data_available": current_data_available,
+            "network_error": identity.get("network_error", ""),
             "offline_snapshot_used": offline_snapshot,
             "snapshot_id": identity.get("snapshot_id", ""),
             "snapshot_as_of": identity.get("snapshot_as_of", ""),

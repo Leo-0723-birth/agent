@@ -28,9 +28,12 @@
     ctx = orchestrator.sweep_one("000004.SZ", window=60)   # 单公司
     reports = orchestrator.sweep_batch(["000004.SZ", "000005.SZ"])  # 批量
 """
+import logging
 import sys
 from datetime import date
 from pathlib import Path
+
+_logger = logging.getLogger(__name__)
 
 if sys.platform == "win32":
     try:
@@ -39,6 +42,7 @@ if sys.platform == "win32":
         pass
 
 from ..context import Context
+from ..skills.stock_code import normalize_company_input
 from .base import AgentBase
 
 
@@ -46,8 +50,9 @@ class SweepingOrchestrator(AgentBase):
     name = "SweepingOrchestrator"
 
     def __init__(self, use_llm=True, use_finbert=True, use_rule=True, rate_limit=0.5,
-                 use_checkpointer=False, use_semantic_cases=True, max_documents=20):
-        super().__init__()
+                 use_checkpointer=False, use_semantic_cases=True, max_documents=20,
+                 progress_callback=None):
+        super().__init__(progress_callback=progress_callback)
         self.use_llm = use_llm          # 公告研读/归因的 LLM 开关
         self.use_finbert = use_finbert  # FinBERT 门控开关
         self.use_rule = use_rule        # 规则抽取通道（官方词典）
@@ -57,6 +62,8 @@ class SweepingOrchestrator(AgentBase):
         self.max_documents = None if max_documents is None else int(max_documents)
         self._graph = None
         try:
+            if progress_callback is not None:
+                raise RuntimeError("细粒度进度回调使用确定性串行编排")
             # LangGraph 编排（首选）：7 节点图，见 backend/agents/graph.py
             from .graph import build_graph, memory_checkpointer
             checkpointer = memory_checkpointer() if use_checkpointer else None
@@ -68,8 +75,15 @@ class SweepingOrchestrator(AgentBase):
             )
         except Exception as e:
             self._graph = None
-            print(f"[orchestrator] LangGraph 不可用，回落确定性串行编排: "
-                  f"{type(e).__name__}: {e}")
+            _logger.warning("LangGraph 不可用，回落确定性串行编排: %s: %s", type(e).__name__, e)
+
+    def _agent_callback(self, agent_key):
+        if self.progress_callback is None:
+            return None
+
+        def callback(payload):
+            self.progress_callback({"agent_key": agent_key, **(payload or {})})
+        return callback
 
     # ============ Plan：固定流水线（确定性 ReAct） ============
     def execute(self, company, ctx):
@@ -86,6 +100,7 @@ class SweepingOrchestrator(AgentBase):
             return ctx
         # 兜底：确定性串行编排（langgraph 未安装/导入失败时）
         self._run_announcement(company, ctx)   # Phase 1
+        company = ctx.company or company       # 公告研读解析名称后向下游传播标准代码
         self._run_financial(company, ctx)      # Phase 2
         self._run_predict(company, ctx)        # Phase 3（占位，待填充）
         self._run_cases(company, ctx)          # Phase 4
@@ -99,6 +114,7 @@ class SweepingOrchestrator(AgentBase):
 
         use_llm_summary：报告执行摘要是否用 DeepSeek 生成（默认关，演示时勾选）。
         """
+        company = normalize_company_input(company, allow_name=True)
         ctx = Context(company=company, window=window,
                       as_of=as_of or str(date.today()))
         ctx.use_llm_summary = bool(use_llm_summary)
@@ -120,12 +136,14 @@ class SweepingOrchestrator(AgentBase):
             use_finbert=self.use_finbert,
             use_llm=self.use_llm,
             use_rule=self.use_rule,
+            progress_callback=self._agent_callback("announcement"),
         )
         agent.run(company, ctx)      # base.run 自动把 trace 追加进 ctx.trace_log
 
     def _run_financial(self, company, ctx):
         from .financial_detector import FinancialDetectorAgent
         agent = FinancialDetectorAgent(use_llm=False, rate_limit=self.rate_limit)
+        agent.progress_callback = self._agent_callback("financial")
         agent.run(company, ctx)
 
     def _run_predict(self, company, ctx):
@@ -133,6 +151,7 @@ class SweepingOrchestrator(AgentBase):
         try:
             from .predictor import PredictorAgent
             agent = PredictorAgent()
+            agent.progress_callback = self._agent_callback("prediction")
             agent.run(company, ctx)
         except Exception as e:
             ctx.prediction = {"probability_60d": None, "risk_level": "未预测",
@@ -142,13 +161,21 @@ class SweepingOrchestrator(AgentBase):
                                   "trace_complete": True})
 
     def _run_cases(self, company, ctx):
-        from .case_retriever import CaseRetrieverAgent
-        agent = CaseRetrieverAgent(use_semantic=self.use_semantic_cases)
-        agent.run(company, ctx)
+        try:
+            from .case_retriever import CaseRetrieverAgent
+            agent = CaseRetrieverAgent(use_semantic=self.use_semantic_cases)
+            agent.progress_callback = self._agent_callback("case")
+            agent.run(company, ctx)
+        except Exception as e:
+            ctx.cases = []
+            ctx.trace_log.append({"agent": "CaseRetriever", "status": "skipped",
+                                  "reason": f"案例检索不可用: {type(e).__name__}: {e}",
+                                  "trace_complete": True})
 
     def _run_attribution(self, company, ctx):
         from .attributor import AttributorAgent
         agent = AttributorAgent(use_llm=self.use_llm)
+        agent.progress_callback = self._agent_callback("attribution")
         agent.run(company, ctx)
 
     def _run_chunks(self, company, ctx):
@@ -156,6 +183,7 @@ class SweepingOrchestrator(AgentBase):
         try:
             from .chunk_retriever import ChunkRetrieverAgent
             agent = ChunkRetrieverAgent()
+            agent.progress_callback = self._agent_callback("chunk")
             agent.run(company, ctx)
         except Exception as e:
             ctx.trace_log.append({"agent": "ChunkRetriever", "status": "skipped",
@@ -165,6 +193,7 @@ class SweepingOrchestrator(AgentBase):
     def _run_report(self, company, ctx):
         from .reporter import ReporterAgent
         agent = ReporterAgent()
+        agent.progress_callback = self._agent_callback("report")
         agent.run(company, ctx)
 
     # ============ Aggregate：摘要 ============

@@ -21,10 +21,13 @@
 使用前：在项目根 .env 填入 DEEPSEEK_API_KEY=sk-xxx
 """
 import json
+import logging
 import os
 from pathlib import Path
 
 import requests
+
+_logger = logging.getLogger(__name__)
 
 # 默认值（会被 .env / 环境变量覆盖）
 DEFAULT_MODEL = "deepseek-v4-flash"
@@ -121,7 +124,7 @@ def chat(system: str = "", prompt: str = "", temperature: float = DEFAULT_TEMPER
         try:
             return _langchain_chat(system, prompt, temperature, max_tokens)
         except Exception as e:
-            print(f"[llm] LangChain 通道异常，回落 requests 直连: {type(e).__name__}: {e}")
+            _logger.warning("LangChain 通道异常，回落 requests 直连: %s: %s", type(e).__name__, e)
     return get_client().chat(system, prompt, temperature, max_tokens, json_mode=False)
 
 
@@ -150,7 +153,7 @@ def chat_structured(model_class, system: str = "", prompt: str = "",
         f = chat_structured(RiskFactor, "抽取风险", "……")
     """
     if not LANGCHAIN_AVAILABLE:
-        print("[llm] LangChain 不可用，chat_structured 返回 None")
+        _logger.warning("LangChain 不可用，chat_structured 返回 None")
         return None
     try:
         schema = model_class.model_json_schema()
@@ -163,7 +166,7 @@ def chat_structured(model_class, system: str = "", prompt: str = "",
             return None
         return model_class.model_validate_json(text)
     except Exception as e:
-        print(f"[llm] chat_structured 失败: {type(e).__name__}: {e}")
+        _logger.warning("chat_structured 失败: %s: %s", type(e).__name__, e)
         return None
 
 

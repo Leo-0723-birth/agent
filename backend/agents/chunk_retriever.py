@@ -16,6 +16,7 @@ chunk 级检索 Agent (ChunkRetrieverAgent) —— 段落粒度先例/证据召�
 
 依赖：skills/chunk_store.py + build_chunk_index.py 先构建索引。
 """
+import logging
 import sys
 from pathlib import Path
 
@@ -23,6 +24,8 @@ from ..config import CHUNK_TOP_K
 from ..skills import chunk_store
 from ..skills.embedding import embed_one
 from .base import AgentBase
+
+_logger = logging.getLogger(__name__)
 
 
 class ChunkRetrieverAgent(AgentBase):
@@ -64,8 +67,8 @@ class ChunkRetrieverAgent(AgentBase):
 
         query_vec = embed_one(profile)
         if query_vec.shape[0] != vectors.shape[1]:
-            print(f"[chunk_retriever] 向量维度不匹配：query={query_vec.shape[0]} vs 库={vectors.shape[1]}，"
-                  f"请用相同 embedding 后端重建（python build_chunk_index.py）")
+            _logger.warning("向量维度不匹配：query=%s vs 库=%s，请用相同 embedding 后端重建（python build_chunk_index.py）",
+                            query_vec.shape[0], vectors.shape[1])
             ctx.chunks = []
             return ctx
 

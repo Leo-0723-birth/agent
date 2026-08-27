@@ -3,6 +3,8 @@
 import gzip
 import json
 
+import requests
+
 from backend.agents.announcement_reader import AnnouncementReaderAgent
 from backend.context import Context
 from backend.skills.competition_history import (
@@ -145,3 +147,37 @@ def test_missing_history_store_fails_open_for_online_query(tmp_path):
     assert len(announcements) == 1
     assert source.last_history["match_status"] == "unavailable"
     assert source.last_query_trace[-1]["status"] == "current_only"
+
+
+class _TimeoutOnlineSource:
+    def search(self, user_input, days=365, as_of=None):
+        raise requests.ConnectTimeout("fixture timeout")
+
+
+def test_online_timeout_degrades_for_exact_code_without_claiming_zero_risk(tmp_path):
+    store = CompetitionHistoryStore(tmp_path / "missing.jsonl", tmp_path / "missing.parquet")
+    source = CompetitionAwareAnnouncementSource(_TimeoutOnlineSource(), store)
+
+    identity, announcements = source.search("000001.SZ", as_of="2026-08-26")
+
+    assert identity["secucode"] == "000001.SZ"
+    assert identity["retrieval_mode"] == "online_unavailable"
+    assert identity["current_data_available"] is False
+    assert announcements == []
+    assert source.last_query_trace[1]["status"] == "unavailable"
+    assert source.last_query_trace[-1]["status"] == "no_current_announcement_data"
+
+
+def test_announcement_agent_marks_timeout_features_as_missing(tmp_path):
+    store = CompetitionHistoryStore(tmp_path / "missing.jsonl", tmp_path / "missing.parquet")
+    source = CompetitionAwareAnnouncementSource(_TimeoutOnlineSource(), store)
+    agent = AnnouncementReaderAgent(source=source, use_finbert=False, use_llm=False)
+
+    context = agent.execute("000001.SZ", Context(as_of="2026-08-26"))
+
+    assert context.company == "000001.SZ"
+    assert context.semantic.data_quality["current_data_available"] is False
+    assert context.semantic.data_quality["retrieval_mode"] == "online_unavailable"
+    assert context.semantic.f1_features == {}
+    assert context.semantic.f6_features == {}
+    assert "零条公告不表示公司没有风险" in context.semantic.source_policy

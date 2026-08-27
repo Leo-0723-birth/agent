@@ -28,10 +28,13 @@
 """
 from __future__ import annotations
 
+import logging
 import sys
 from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable
+
+_logger = logging.getLogger(__name__)
 
 from ..config import CASE_TOP_K, RRF_K
 from ..skills import vector_store
@@ -246,7 +249,7 @@ class CaseRetrieverAgent(AgentBase):
                 eligible.append(i)
 
         if bad_dates:
-            print(f"[CaseRetriever] 警告：{bad_dates} 条案例日期无法解析，已排除。")
+            _logger.warning("案例检索：%s 条案例日期无法解析，已排除", bad_dates)
 
         return eligible
 
@@ -411,10 +414,7 @@ class CaseRetrieverAgent(AgentBase):
         )
 
         if resolved_cutoff is None:
-            print(
-                "[CaseRetriever] 警告：未取得 cutoff_date，"
-                "本次未执行时间过滤。正式回测必须传入预测截点。"
-            )
+            _logger.warning("案例检索：未取得 cutoff_date，本次未执行时间过滤；正式回测必须传入预测截点")
 
         eligible_indices = self._eligible_indices(
             entries,
@@ -438,6 +438,21 @@ class CaseRetrieverAgent(AgentBase):
             result = {}
             error = {}
 
+            def record_semantic_fallback(reason):
+                """兼容网页审计追踪，并保留 API 的回退选择提示。"""
+                ctx.trace_log.append({
+                    "agent": "CaseRetriever.Semantic",
+                    "status": "skipped",
+                    "reason": reason,
+                    "trace_complete": True,
+                })
+                ctx.trace_log.append({
+                    "agent": self.name,
+                    "status": "needs_choice",
+                    "reason": reason,
+                    "trace_complete": True,
+                })
+
             def embed_worker():
                 try:
                     result["vector"] = embed_one(profile, is_query=True)
@@ -448,27 +463,19 @@ class CaseRetrieverAgent(AgentBase):
             worker.start()
             worker.join(self.semantic_timeout)
             if worker.is_alive():
-                ctx.trace_log.append({
-                    "agent": self.name,
-                    "status": "needs_choice",
-                    "reason": f"BGE 语义查询超过 {self.semantic_timeout:.0f}s，当前仅使用标签检索",
-                    "trace_complete": True,
-                })
+                record_semantic_fallback(
+                    f"BGE 语义查询超过 {self.semantic_timeout:.0f}s，当前仅使用标签检索"
+                )
             elif "value" in error:
                 exc = error["value"]
-                ctx.trace_log.append({
-                    "agent": self.name,
-                    "status": "needs_choice",
-                    "reason": f"BGE 语义检索不可用，当前仅使用标签检索: {type(exc).__name__}: {exc}",
-                    "trace_complete": True,
-                })
+                record_semantic_fallback(
+                    f"BGE 语义检索不可用，当前仅使用标签检索: {type(exc).__name__}: {exc}"
+                )
             elif result["vector"].shape[0] != vectors.shape[1]:
-                ctx.trace_log.append({
-                    "agent": self.name,
-                    "status": "needs_choice",
-                    "reason": f"BGE 向量维度不匹配 query={result['vector'].shape[0]} cases={vectors.shape[1]}，当前仅使用标签检索",
-                    "trace_complete": True,
-                })
+                record_semantic_fallback(
+                    f"BGE 向量维度不匹配 query={result['vector'].shape[0]} "
+                    f"cases={vectors.shape[1]}，当前仅使用标签检索"
+                )
             else:
                 semantic_ranks = self._semantic_rank(
                     result["vector"], entries, vectors, eligible_indices

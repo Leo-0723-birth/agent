@@ -15,7 +15,10 @@ from collections import Counter, defaultdict
 from functools import lru_cache
 from pathlib import Path
 
+import requests
+
 from ..config import COMPETITION_RULE_RISKS, COMPETITION_SEMANTIC_FEATURES
+from .stock_code import StockCodeError, normalize_stock_code
 
 
 _CODE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
@@ -279,7 +282,70 @@ class CompetitionAwareAnnouncementSource:
                 "detail": initial.get("message") or f"命中 {initial.get('document_count', 0)} 份历史公告",
             }
         ]
-        identity, announcements = self.online_source.search(user_input, days=days, as_of=as_of)
+        try:
+            identity, announcements = self.online_source.search(
+                user_input, days=days, as_of=as_of
+            )
+        except (requests.RequestException, TimeoutError, ConnectionError, OSError) as exc:
+            # 官方站点不可达时，精确股票代码仍可继续后续财务/预测/案例流程。
+            # 此处绝不把历史公告伪装成当前公告，当前公告列表保持为空。
+            candidate = initial.get("stock_code") or user_input
+            try:
+                secucode = normalize_stock_code(candidate)
+            except StockCodeError:
+                raise exc
+            code, suffix = secucode.split(".", 1)
+            exchange = {"SH": "SSE", "SZ": "SZSE", "BJ": "BSE"}[suffix]
+            aliases = initial.get("aliases") or []
+            identity = {
+                "code": code,
+                "secucode": secucode,
+                "company_name": aliases[0] if aliases else secucode,
+                "exchange": exchange,
+                "org_id": "",
+                "resolved_from": str(user_input),
+                "source_url": "https://www.cninfo.com.cn/",
+                "retrieval_mode": "online_unavailable",
+                "current_data_available": False,
+                "network_error": f"{type(exc).__name__}: {str(exc)[:240]}",
+            }
+            announcements = []
+            self.last_history = self.history_store.lookup(
+                secucode, include_semantic=True
+            )
+            self.last_query_trace.extend(
+                [
+                    {
+                        "step": 2,
+                        "source": "巨潮资讯网",
+                        "status": "unavailable",
+                        "detail": "官方实时接口连接超时；本次未取得当前公告。",
+                    },
+                    {
+                        "step": 3,
+                        "source": "降级运行",
+                        "status": (
+                            "history_only"
+                            if self.last_history.get("match_status") == "hit"
+                            else "no_current_announcement_data"
+                        ),
+                        "detail": "后续财务、模型与案例环节继续；公告零条不解释为无风险。",
+                    },
+                ]
+            )
+            self._emit_progress(
+                "online_source_unavailable",
+                secucode=secucode,
+                reason=identity["network_error"],
+            )
+            self._emit_progress(
+                "source_merge_completed",
+                history_status=self.last_history.get("match_status", "miss"),
+                historical_document_count=self.last_history.get("document_count", 0),
+                current_announcement_count=0,
+                current_data_available=False,
+            )
+            return identity, announcements
         offline_snapshot = identity.get("retrieval_mode") == "offline_official_snapshot"
         self.last_query_trace.append(
             {

@@ -78,7 +78,8 @@ def _node_factory(agent_factory, timeout=240, name="?"):
 
     def _run_agent(state: SweepState) -> dict:
         agent = agent_factory()
-        agent.run(state["company"], state["ctx"])
+        company = state["ctx"].company or state["company"]
+        agent.run(company, state["ctx"])
         return {"ctx": state["ctx"]}
     return node
 
@@ -102,7 +103,8 @@ def _tolerant_node(agent_factory, timeout=120):
     def _run_tolerant(state: SweepState) -> dict:
         agent = agent_factory()
         try:
-            agent.run(state["company"], state["ctx"])
+            company = state["ctx"].company or state["company"]
+            agent.run(company, state["ctx"])
         except Exception as e:
             state["ctx"].trace_log.append({
                 "agent": getattr(agent, "name", "?"),
@@ -155,9 +157,8 @@ def build_graph(use_llm=False, use_finbert=False, use_rule=True,
         lambda: FinancialDetectorAgent(use_llm=False, rate_limit=rate_limit),
         timeout=240, name="FinancialDetector"))
     g.add_node("predictor", _tolerant_node(PredictorAgent, timeout=120))
-    g.add_node("case", _node_factory(
-        lambda: CaseRetrieverAgent(use_semantic=use_semantic_cases),
-        timeout=180, name="CaseRetriever"))
+    g.add_node("case", _tolerant_node(
+        lambda: CaseRetrieverAgent(use_semantic=use_semantic_cases), timeout=180))
     g.add_node("chunk", _tolerant_node(ChunkRetrieverAgent, timeout=60))
     g.add_node("attribution", _node_factory(
         lambda: AttributorAgent(use_llm=use_llm), timeout=60, name="Attributor"))

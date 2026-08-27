@@ -23,6 +23,18 @@ def test_streamlit_app_initial_view_has_query_form():
     assert app.button[0].label == "开始研读"
 
 
+def test_predictor_page_reports_conflicting_exchange_without_crashing():
+    app_path = Path(__file__).resolve().parents[2] / "预测建模agent.py"
+    app = AppTest.from_file(str(app_path), default_timeout=30).run()
+    app.text_input[0].set_value("600000.SZ")
+    app.button[0].click()
+
+    app.run()
+
+    assert not app.exception
+    assert any("应使用 .SH" in item.value for item in app.error)
+
+
 def test_bundled_000004_snapshot_loads_as_audited_offline_result():
     app_path = Path(__file__).resolve().parents[2] / "公告研读agent.py"
     app = AppTest.from_file(str(app_path), default_timeout=15).run()

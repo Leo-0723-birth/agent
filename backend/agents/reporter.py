@@ -18,6 +18,7 @@
 依赖：skills/risk_report_render.py。
 """
 import json
+import logging
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +27,8 @@ from ..config import OUTPUT_DIR
 from ..llm import chat
 from ..skills import risk_report_render
 from .base import AgentBase
+
+_logger = logging.getLogger(__name__)
 
 REPORTS_DIR = Path(OUTPUT_DIR) / "reports"
 MANIFEST_PATH = REPORTS_DIR / "manifest.json"
@@ -99,7 +102,7 @@ class ReporterAgent(AgentBase):
             MANIFEST_PATH.write_text(
                 json.dumps(manifest[:200], ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as e:
-            print(f"[reporter] 报告落盘失败（不影响报告返回）: {type(e).__name__}: {e}")
+            _logger.warning("报告落盘失败（不影响报告返回）: %s: %s", type(e).__name__, e)
 
     # ================= 渲染 =================
     def render_markdown(self, ctx, executive_summary=""):

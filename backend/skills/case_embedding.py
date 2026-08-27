@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from pathlib import Path
 from typing import Iterable
 
 import numpy as np
@@ -26,6 +27,10 @@ import numpy as np
 import torch
 
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+os.environ.setdefault(
+    "HF_HOME",
+    str(Path(__file__).resolve().parent.parent / "models" / "embedding"),
+)
 
 from ..config import EMBEDDING_BACKEND, EMBEDDING_MODEL
 
@@ -61,8 +66,17 @@ def _bge_load():
         print(f"[embedding] 加载 BGE 模型: {EMBEDDING_MODEL}")
         print(f"[embedding] device = {device}")
 
-        tokenizer = AutoTokenizer.from_pretrained(EMBEDDING_MODEL)
-        model = AutoModel.from_pretrained(EMBEDDING_MODEL)
+        allow_download = os.getenv("EMBEDDING_ALLOW_DOWNLOAD", "false").lower() in {
+            "1", "true", "yes", "on"
+        }
+        tokenizer = AutoTokenizer.from_pretrained(
+            EMBEDDING_MODEL,
+            local_files_only=not allow_download,
+        )
+        model = AutoModel.from_pretrained(
+            EMBEDDING_MODEL,
+            local_files_only=not allow_download,
+        )
         model.eval()
         model.to(device)
 
