@@ -29,12 +29,18 @@ from ..skills.stock_code import normalize_stock_code
 from .base import AgentBase
 
 
+class ManifestMismatchError(RuntimeError):
+    """模型清单与训练数据/填充表不一致。"""
+    pass
+
+
 # 进程级单例缓存：多个 PredictorAgent 实例共享已加载的模型/数据集/清单，
 # 避免 orchestrator pool 中每个实例重复读取全量 CSV 与 9 个模型（内存成倍）。
 # 实时任务由 _scan_lock 串行，离线路径不实例化 Predictor，故无需额外加锁。
 _shared_df = None
 _shared_manifest = None
-_shared_models: dict = {}   # horizon -> {"rf", "lgb", "xgb"}
+_shared_models: dict = {}       # horizon -> {"rf", "lgb", "xgb"}
+_shared_calibrators: dict = {}  # horizon -> IsotonicRegression 校准器（或 None）
 
 
 class PredictorAgent(AgentBase):
@@ -71,6 +77,77 @@ class PredictorAgent(AgentBase):
             else:
                 _shared_df = pd.DataFrame()
         return _shared_df
+
+    def _validate_manifest(self, manifest):
+        """校验 manifest 与建模数据集、fill 表的一致性。
+
+        返回 (ok, messages)。当缺失列过多时通过 logging 警告，但不阻断推理
+        （避免旧模型在新数据上完全不可用）；若 manifest 完全无法解析则返回 False。
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        messages = []
+
+        windows = manifest.get("windows", {})
+        if not windows:
+            messages.append("manifest 中无 windows 配置")
+            return False, messages
+
+        df = self._load_df()
+        if df.empty:
+            messages.append(f"建模数据集不存在或为空：{MODELING_DATASET}")
+            return False, messages
+
+        dataset_cols = set(df.columns)
+        all_ok = True
+        for h in self.horizons:
+            w = h.replace("d", "")
+            cfg = windows.get(w)
+            if not cfg or "features" not in cfg:
+                messages.append(f"窗口 {h} 缺少 features 配置")
+                all_ok = False
+                continue
+            feats = cfg["features"]
+            missing_in_dataset = [f for f in feats if f not in dataset_cols]
+            if missing_in_dataset:
+                messages.append(
+                    f"窗口 {h}: manifest 中有 {len(missing_in_dataset)} 列不在建模数据集中 "
+                    f"（示例：{missing_in_dataset[:5]}）"
+                )
+                all_ok = False
+
+            # fill 表校验
+            fill_path = self.model_dir.parent.parent / "data" / "modeling" / "fill" / f"fill_median_{w}d.csv"
+            if fill_path.exists():
+                try:
+                    fill = pd.read_csv(fill_path, encoding="utf-8-sig", index_col=0)
+                    fill_cols = set(fill.index.astype(str))
+                    missing_in_fill = [f for f in feats if f not in fill_cols]
+                    if missing_in_fill:
+                        messages.append(
+                            f"窗口 {h}: manifest 中有 {len(missing_in_fill)} 列不在 fill_median_{w}d 中 "
+                            f"（示例：{missing_in_fill[:5]}）"
+                        )
+                        all_ok = False
+                except Exception as e:
+                    messages.append(f"窗口 {h}: 读取 fill_median_{w}d 失败：{e}")
+                    all_ok = False
+            else:
+                messages.append(f"窗口 {h}: 未找到 fill_median_{w}d.csv")
+                all_ok = False
+
+        # 元信息校验（只警告，不阻断）
+        meta = manifest.get("metadata", {})
+        if not meta:
+            messages.append("manifest 缺少 metadata（建议重新训练生成版本信息）")
+        elif meta.get("data_hash") is None:
+            messages.append("manifest metadata 缺少 data_hash")
+
+        if messages:
+            level = "error" if not all_ok else "warning"
+            for m in messages:
+                getattr(logger, level)("[manifest 校验] %s", m)
+        return all_ok, messages
 
     # ================= XGBoost-Cox 生存模型接口（可选，预留） =================
     def _load_survival(self):
@@ -150,10 +227,68 @@ class PredictorAgent(AgentBase):
             import xgboost as xgb
             loaded["xgb"] = xgb.Booster(
                 model_file=str(self.model_dir / f"model_xgb_{w}d.json"))
+            # 校验 booster feature_names 与 manifest 一致
+            manifest = self._load_manifest()
+            feats = manifest.get("windows", {}).get(w, {}).get("features", [])
+            if feats:
+                xgb_names = loaded["xgb"].feature_names or []
+                if xgb_names and xgb_names != feats:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "XGBoost %s feature_names 与 manifest 不一致（booster=%d, manifest=%d）",
+                        horizon, len(xgb_names), len(feats)
+                    )
         except Exception:
             loaded["xgb"] = None
         _shared_models[horizon] = loaded
         return loaded
+
+    def _risk_thresholds(self, horizon):
+        """获取风险阈值。优先使用 manifest 中该窗口的最优 F1 阈值；
+        否则回退到 backend.config.RISK_THRESHOLDS。"""
+        w = horizon.replace("d", "")
+        manifest = self._load_manifest()
+        thr = manifest.get("windows", {}).get(w, {}).get("metrics", {}).get("threshold")
+        if thr is not None:
+            return {"high": float(thr), "medium": float(thr) * 0.5}
+        return RISK_THRESHOLDS
+
+    def _risk_level_from_prob(self, prob, horizon):
+        """基于概率与窗口阈值输出风险等级。"""
+        if prob is None:
+            return "未预测"
+        thr = self._risk_thresholds(horizon)
+        if prob >= thr["high"]:
+            return "高"
+        if prob >= thr["medium"]:
+            return "中"
+        return "低"
+
+    def _load_calibrator(self, horizon):
+        """加载概率校准器（训练时用验证集拟合的 isotonic 校准）。
+
+        训练脚本对 ensemble 概率做校准后才定阈值、报指标，因此推理必须走同一校准，
+        否则线上概率与训练报告指标口径不一致。文件缺失时返回 None，调用方降级为
+        未校准概率（并记录一次警告日志）。
+        """
+        if horizon in _shared_calibrators:
+            return _shared_calibrators[horizon]
+        w = horizon.replace("d", "")
+        cal = None
+        p = self.model_dir / f"calibrator_{w}d.joblib"
+        try:
+            import joblib
+            if p.exists():
+                cal = joblib.load(p)
+            else:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "未找到校准器 %s，将返回未校准概率（与训练指标口径不一致）", p)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("加载校准器 %s 失败：%s", p, e)
+        _shared_calibrators[horizon] = cal
+        return cal
 
     # ================= 查表（as-of） =================
     def _lookup(self, code, as_of):
@@ -174,30 +309,57 @@ class PredictorAgent(AgentBase):
 
     # ================= 模型推理（两条路径共享） =================
     def _infer(self, X, feats, horizon):
-        """三模型集成推理 + SHAP。X: (1, n) float32；feats: 与 X 列对应。"""
+        """三模型集成推理 + 概率校准 + SHAP。X: (1, n) float32；feats: 与 X 列对应。"""
         models = self._load_models(horizon)
         if not any(models.values()):
             return None, None, []
-        probs = []
+
+        # 集成权重从 manifest 读取（与训练脚本 ENSEMBLE_W 对齐），缺省兜底为历史权重
+        manifest = self._load_manifest()
+        weights = manifest.get("ensemble_weights") or {"rf": 0.30, "lgb": 0.35, "xgb": 0.35}
+
+        raw_probs = []
+        used_weights = []
         # 每个模型单独 try/except：单个模型推理失败（如环境缺依赖）不打断整窗口
         if models.get("rf") is not None:
             try:
-                probs.append(0.30 * models["rf"].predict_proba(X)[0][1])
+                raw_probs.append(models["rf"].predict_proba(X)[0][1])
+                used_weights.append(float(weights.get("rf", 0.0)))
             except Exception:
                 pass
         if models.get("lgb") is not None:
             try:
-                probs.append(0.35 * models["lgb"].predict(X)[0])
+                raw_probs.append(models["lgb"].predict(X)[0])
+                used_weights.append(float(weights.get("lgb", 0.0)))
             except Exception:
                 pass
         if models.get("xgb") is not None:
             try:
-                probs.append(0.35 * models["xgb"].predict(xgb_dmatrix(X, feats))[0])
+                raw_probs.append(models["xgb"].predict(xgb_dmatrix(X, feats))[0])
+                used_weights.append(float(weights.get("xgb", 0.0)))
             except Exception:
                 pass
-        if not probs:
+        if not raw_probs:
             return None, None, []
-        p = float(sum(probs))
+
+        # 权重归一化：当某个模型推理失败时，剩余模型权重按比例放大，保证概率仍为 [0,1] 加权平均
+        wsum = sum(used_weights)
+        if wsum <= 0:
+            wsum = 1.0
+            used_weights = [1.0 / len(raw_probs)] * len(raw_probs)
+        p_raw = float(sum(p * w for p, w in zip(raw_probs, used_weights)) / wsum)
+
+        # 概率校准：与训练脚本口径一致（isotonic，验证集拟合）
+        p = p_raw
+        calibrator = self._load_calibrator(horizon)
+        if calibrator is not None:
+            try:
+                p = float(calibrator.predict([[p_raw]])[0])
+                p = max(0.0, min(1.0, p))
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "校准器 %s 推理失败，回退未校准概率", horizon)
 
         # SHAP：用 LightGBM pred_contrib 作集成贡献代理
         shap_features = []
@@ -233,7 +395,7 @@ class PredictorAgent(AgentBase):
         if not cfg:
             return None, None, []
         feats = cfg["features"]
-        fill = load_fill_dict(w)
+        fill = load_fill_dict(w, expected_features=feats)
         vec = compose_realtime_features(ctx, feats, fill)
         X = np.asarray([vec[f] for f in feats], dtype=np.float32).reshape(1, -1)
         return self._infer(X, feats, horizon)
@@ -245,6 +407,12 @@ class PredictorAgent(AgentBase):
         ctx.company = code
 
         manifest = self._load_manifest()
+        ok, messages = self._validate_manifest(manifest)
+        if not ok:
+            import logging
+            logging.getLogger(__name__).warning(
+                "PredictorAgent manifest 校验未通过，仍尝试推理；问题：%s", "; ".join(messages)
+            )
         # 可选：XGBoost-Cox 生存模型已部署 → 单模型产出 30/60/90d（输出契约不变）
         if self._load_survival():
             return self._execute_survival(ctx, code, as_of)
@@ -264,7 +432,7 @@ class PredictorAgent(AgentBase):
         from ..skills.feature_composer import compose_realtime_features, load_fill_dict
         surv = self._load_survival()
         feats = list(surv["features"])
-        fill = load_fill_dict("60")
+        fill = load_fill_dict("60", expected_features=feats)
         realtime_ok = bool(getattr(getattr(ctx, "financial", None), "features", None))
         if realtime_ok:
             vec = compose_realtime_features(ctx, feats, fill)
@@ -297,9 +465,7 @@ class PredictorAgent(AgentBase):
                     conf = round(max(p60, 1 - p60), 4)
                     break
         pred["confidence"] = conf
-        pred["risk_level"] = "未预测" if p60 is None else (
-            "高" if p60 >= RISK_THRESHOLDS["high"] else
-            "中" if p60 >= RISK_THRESHOLDS["medium"] else "低")
+        pred["risk_level"] = self._risk_level_from_prob(p60, "60d")
         pred["shap_features"] = shap
         pred["feature_anchor"] = str(getattr(ctx, "as_of", "") or "")[:10]
         ctx.prediction = pred
@@ -325,9 +491,7 @@ class PredictorAgent(AgentBase):
                     break
 
         pred["confidence"] = conf
-        pred["risk_level"] = "未预测" if p60 is None else (
-            "高" if p60 >= RISK_THRESHOLDS["high"] else
-            "中" if p60 >= RISK_THRESHOLDS["medium"] else "低")
+        pred["risk_level"] = self._risk_level_from_prob(p60, "60d")
         pred["shap_features"] = shap
         # 审计：特征锚点（财务最新报告期）+ 实时覆盖率
         fp = getattr(ctx.financial, "indicators", {}) or {}
@@ -364,9 +528,7 @@ class PredictorAgent(AgentBase):
                     break
 
         pred["confidence"] = conf
-        pred["risk_level"] = "未预测" if p60 is None else (
-            "高" if p60 >= RISK_THRESHOLDS["high"] else
-            "中" if p60 >= RISK_THRESHOLDS["medium"] else "低")
+        pred["risk_level"] = self._risk_level_from_prob(p60, "60d")
         pred["shap_features"] = shap
         ctx.prediction = pred
         return ctx

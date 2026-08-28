@@ -1,49 +1,76 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-F1 语义特征 Top-50 选取（复现脚本）
+F1 语义特征 Top-K 选取（复现脚本）
 ==================================
-依据：训练集上 与 target_60d 的 Spearman 秩相关系数绝对值，取 Top-50。
+依据：训练集上与 target_60d 的 Spearman 秩相关系数绝对值，取 Top-K。
 
-为什么选 Top-50：
-  1. 300 维 PCA 主成分中大量维度与标签相关性极低（|corr| 普遍 <0.01），
-     属于"低效特征"，会稀释树模型的分裂收益并增加过拟合风险；
-  2. 保留 Top-50 后维度从 300 → 50，训练更快、可解释性更好；
-  3. 描述文档（semantic_feature_descriptions）给出了每维的业务含义
-     （如 semantic_001=合规与诉讼风险—经营与市场风险语义对比），
-     便于人工核对选取是否合理。
+输入：backend/data/modeling/processed_dataset.csv
+输出：backend/data/modeling/raw/f1_selection/F1_top50_features.csv
 
-用法：python select_f1_top50.py（需 F1_base_financial_full.csv 含 split 与 target_60d）
+说明：
+  - 该脚本用于复现/审计 build_modeling_dataset.py 内的 F1 筛选逻辑；
+  - 实际建模流程中 build_modeling_dataset.py 已内联完成同等筛选，无需单独运行；
+  - N_KEEP 默认与 build_modeling_dataset.py 保持一致（100）。
 """
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-# 加载含标签与 split 的 F1 全量表（本流程已由 build_dataset.py 内联完成同等逻辑）
-f1 = pd.read_csv("F1_base_financial_full.csv")  # 路径按需调整
-semantic_cols = [c for c in f1.columns if "semantic" in c]
-print(f"Total semantic features: {len(semantic_cols)}")
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from backend.config import FEATURE_FAMILY_PREFIXES, TRAIN_SPLIT_NAMES
 
-train_mask = (f1["split"] == "Train") & (f1["target_60d"] >= 0)
-y_train = f1.loc[train_mask, "target_60d"]
+BASE = Path(__file__).resolve().parent.parent.parent / "backend" / "data" / "modeling"
+DATA = BASE / "processed_dataset.csv"
+OUT = BASE / "raw" / "f1_selection" / "F1_top50_features.csv"
+N_KEEP = 100  # 与 build_modeling_dataset.py 保持一致
 
-corr_scores = {}
-for c in semantic_cols:
-    col = f1.loc[train_mask, c]
-    if col.nunique() > 1:
-        try:
-            corr, _ = spearmanr(col, y_train)
-            corr_scores[c] = abs(corr) if not np.isnan(corr) else 0
-        except Exception:
-            corr_scores[c] = 0
-    else:
-        corr_scores[c] = 0
 
-N_KEEP = 50
-top = sorted(corr_scores.items(), key=lambda x: x[1], reverse=True)[:N_KEEP]
-print(f"Selected {len(top)} features, |corr| range {top[0][1]:.4f} ~ {top[-1][1]:.4f}")
-pd.DataFrame({"rank": range(1, N_KEEP + 1), "feature": [c for c, _ in top],
-              "abs_corr": [round(c, 4) for _, c in top]}).to_csv(
-    "F1_top50_features.csv", index=False, encoding="utf-8-sig")
-for i, (c, corr) in enumerate(top, 1):
-    print(f"{i:3d}. {c}  |corr|={corr:.4f}")
+def main():
+    if not DATA.is_file():
+        raise FileNotFoundError(f"未找到建模数据集：{DATA}")
+
+    df = pd.read_csv(DATA, encoding="utf-8-sig")
+    f1_prefix = next((p for p in FEATURE_FAMILY_PREFIXES if "semantic" in p or p.startswith("f1_")), None)
+    if f1_prefix is None:
+        raise ValueError(f"config.FEATURE_FAMILY_PREFIXES 中未找到 F1 前缀：{FEATURE_FAMILY_PREFIXES}")
+
+    semantic_cols = [c for c in df.columns if c.startswith(f1_prefix)]
+    print(f"F1 特征前缀: {f1_prefix}，共 {len(semantic_cols)} 维")
+
+    train_mask = df["split"].isin(TRAIN_SPLIT_NAMES) & (df["target_60d"] >= 0)
+    y_train = df.loc[train_mask, "target_60d"]
+    print(f"训练集有效样本: {len(y_train)}，正样本 {y_train.sum()}")
+
+    corr_scores = {}
+    for c in semantic_cols:
+        col = df.loc[train_mask, c]
+        if col.nunique() > 1:
+            try:
+                corr, _ = spearmanr(col, y_train)
+                corr_scores[c] = abs(corr) if not np.isnan(corr) else 0.0
+            except Exception:
+                corr_scores[c] = 0.0
+        else:
+            corr_scores[c] = 0.0
+
+    top = sorted(corr_scores.items(), key=lambda x: x[1], reverse=True)[:N_KEEP]
+    print(f"Selected {len(top)} features, |corr| range {top[0][1]:.4f} ~ {top[-1][1]:.4f}")
+
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({
+        "rank": range(1, len(top) + 1),
+        "feature": [c for c, _ in top],
+        "abs_corr": [round(c, 4) for _, c in top],
+    }).to_csv(OUT, index=False, encoding="utf-8-sig")
+    print(f"已保存：{OUT}")
+
+    for i, (c, corr) in enumerate(top, 1):
+        print(f"{i:3d}. {c}  |corr|={corr:.4f}")
+
+
+if __name__ == "__main__":
+    main()

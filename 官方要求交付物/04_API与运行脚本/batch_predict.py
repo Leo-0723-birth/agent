@@ -15,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.agents import SweepingOrchestrator
+from backend.config import PREDICTOR_HORIZONS
 
 DELIVERY_ROOT = Path(__file__).resolve().parents[2] / "官方要求交付物"
 OUTPUT_DIR = DELIVERY_ROOT / "03_测试集结果"
@@ -23,7 +24,8 @@ OUTPUT_DIR = DELIVERY_ROOT / "03_测试集结果"
 def main() -> int:
     parser = argparse.ArgumentParser(description="批量生成上市公司扫雷预测结果")
     parser.add_argument("--companies", nargs="+", required=True, help="公司代码列表")
-    parser.add_argument("--window", type=int, choices=(30, 60, 90), default=60)
+    valid_windows = tuple(int(h.replace("d", "")) for h in PREDICTOR_HORIZONS)
+    parser.add_argument("--window", type=int, choices=valid_windows, default=60)
     parser.add_argument("--as-of", default=str(date.today()))
     parser.add_argument("--use-llm", action="store_true")
     args = parser.parse_args()

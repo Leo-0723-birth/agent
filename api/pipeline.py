@@ -24,9 +24,10 @@ from .models import (
     FinancialAnomalyItem,
     SimilarCaseItem,
 )
-from backend.config import RISK_THRESHOLDS
+from backend.config import PREDICTOR_HORIZONS, PREDICTOR_MODEL_DIR, RISK_THRESHOLDS
 
 REPORTS_DIR = PROJECT_ROOT / "backend" / "data" / "output" / "reports"
+MODELS_MANIFEST_PATH = PREDICTOR_MODEL_DIR / "models_manifest.json"
 
 # ---------- 公司代码 → 最新离线报告 ----------
 
@@ -71,6 +72,35 @@ def _latest_report_file(company: str) -> Path | None:
     # 按 generated_at 取最新
     entries.sort(key=lambda e: str(e.get("generated_at", "")), reverse=True)
     return REPORTS_DIR / entries[0]["json_file"]
+
+
+def get_model_metrics() -> dict:
+    """读取 models_manifest.json 中的模型评估指标。
+
+    返回 {"30d": {"AUC": ..., "F1": ..., "Top10%Recall": ...}, ...}，
+    找不到 manifest 或指标时返回空 dict。
+    """
+    if not MODELS_MANIFEST_PATH.is_file():
+        return {}
+    try:
+        manifest = json.loads(MODELS_MANIFEST_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    out = {}
+    for h in PREDICTOR_HORIZONS:
+        w = h.replace("d", "")
+        cfg = manifest.get("windows", {}).get(w, {})
+        metrics = cfg.get("metrics", {})
+        if metrics:
+            out[h] = {
+                "AUC": metrics.get("AUC"),
+                "F1": metrics.get("F1"),
+                "Top10%Recall": metrics.get("Top10%Recall"),
+                "threshold": metrics.get("threshold"),
+            }
+    if manifest.get("metadata"):
+        out["metadata"] = manifest["metadata"]
+    return out
 
 
 def get_report_download_path(company: str, fmt: str = "md") -> Path | None:

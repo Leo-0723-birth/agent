@@ -26,6 +26,20 @@ import joblib
 import numpy as np
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from backend.config import (
+    FEATURE_CORR_SAMPLE_SIZE,
+    FEATURE_CORR_THRESHOLD,
+    FEATURE_FAMILY_PREFIXES,
+    FEATURE_FILTER_MIN_FEATURES,
+    FEATURE_IMPORTANCE_THRESHOLD,
+    FEATURE_VARIANCE_THRESHOLD,
+    TARGET_INQUIRY_KIND,
+    TEST_SPLIT_NAMES,
+    TRAIN_SPLIT_NAMES,
+    VALIDATION_SPLIT_NAMES,
+)
+
 warnings.filterwarnings("ignore")
 SEED = 42
 np.random.seed(SEED)
@@ -55,13 +69,32 @@ print(f"输出: {MODEL_DIR}")
 print("=" * 70)
 
 df = pd.read_csv(DATA, encoding="utf-8-sig")
-ID_COLS = ["company_code", "report_period", "industry", "split"]
-feature_cols = [c for c in df.columns
-                if c not in ID_COLS and not c.startswith("target_")
-                and not c.startswith("future_") and not c.startswith("n_inq_")]
-# n_inq_* 为训练加权辅助列（sample_weight 用），绝不进模型特征（防标签泄漏）
-feature_cols = [c for c in feature_cols if pd.api.types.is_numeric_dtype(df[c])]
-print(f"特征数: {len(feature_cols)}")
+
+
+def _normalize_split(s):
+    """把 split 列归一化为 Train/Validation/Test，支持大小写混用。"""
+    if pd.isna(s):
+        return s
+    s = str(s).strip()
+    if s in TRAIN_SPLIT_NAMES:
+        return "Train"
+    if s in VALIDATION_SPLIT_NAMES:
+        return "Validation"
+    if s in TEST_SPLIT_NAMES:
+        return "Test"
+    return s
+
+
+df["split"] = df["split"].apply(_normalize_split)
+
+# 白名单特征：只保留 FEATURE_FAMILY_PREFIXES 前缀的数值列
+feature_cols = [
+    c for c in df.columns
+    if any(c.startswith(p) for p in FEATURE_FAMILY_PREFIXES)
+    and pd.api.types.is_numeric_dtype(df[c])
+]
+print(f"特征数（白名单）: {len(feature_cols)}")
+print(f"  家族分布: {', '.join(f'{p}:{sum(c.startswith(p) for c in feature_cols)}' for p in FEATURE_FAMILY_PREFIXES)}")
 
 summary = {}
 manifest = {"ensemble_weights": ENSEMBLE_W, "windows": {}}
@@ -86,27 +119,32 @@ for w in WINDOWS:
           f"Val {len(y_va)} | Test {len(y_te)}")
 
     # ---------- 2) 特征筛选 ----------
+    # 2a) 零/近零方差
     var = np.var(X_tr, axis=0)
-    m1 = var >= 1e-12
+    m1 = var >= FEATURE_VARIANCE_THRESHOLD
     X_tr, X_va, X_te = X_tr[:, m1], X_va[:, m1], X_te[:, m1]
     feats = [feature_cols[i] for i in range(len(feature_cols)) if m1[i]]
+    print(f"  方差筛选: {len(feature_cols)} -> {len(feats)}")
 
-    if X_tr.shape[1] > 50:
-        sn = min(5000, X_tr.shape[0])
+    # 2b) 高相关剔除
+    if len(feats) > FEATURE_FILTER_MIN_FEATURES:
+        sn = min(FEATURE_CORR_SAMPLE_SIZE, X_tr.shape[0])
         si = np.random.choice(X_tr.shape[0], sn, replace=False)
         cm = np.abs(np.corrcoef(X_tr[si], rowvar=False))
         ut = np.triu(np.ones(cm.shape), k=1).astype(bool)
-        hc = np.where((cm > 0.95) & ut)
+        hc = np.where((cm > FEATURE_CORR_THRESHOLD) & ut)
         drop = set(hc[1])
         keep = [i for i in range(X_tr.shape[1]) if i not in drop]
         X_tr, X_va, X_te = X_tr[:, keep], X_va[:, keep], X_te[:, keep]
         feats = [feats[i] for i in keep]
+        print(f"  相关筛选: 剔除高相关 {len(drop)} 维，剩余 {len(feats)}")
 
+    # 2c) LightGBM 重要性筛选
     pw = (1 - pos_rate) / max(pos_rate, 1e-6)
     scr = lgb.LGBMClassifier(n_estimators=200, max_depth=5, learning_rate=0.05,
                              scale_pos_weight=pw, random_state=SEED, verbose=-1, n_jobs=-1)
     scr.fit(X_tr, y_tr)
-    m2 = scr.feature_importances_ > 0
+    m2 = scr.feature_importances_ > FEATURE_IMPORTANCE_THRESHOLD
     X_tr, X_va, X_te = X_tr[:, m2], X_va[:, m2], X_te[:, m2]
     feats = [feats[i] for i in range(len(feats)) if m2[i]]
     print(f"特征筛选后: {len(feats)} 维")
@@ -226,7 +264,11 @@ for w in WINDOWS:
         models["lgb"].booster_.model_to_string(), encoding="utf-8")
     (MODEL_DIR / f"model_xgb_{w}d.json").write_bytes(
         models["xgb"].get_booster().save_raw(raw_format="json"))
-    manifest["windows"][str(w)] = {"features": feats}
+    manifest["windows"][str(w)] = {
+        "features": feats,
+        "metrics": {k: round(v, 6) for k, v in results["Ensemble_calibrated"].items()
+                    if isinstance(v, (int, float))},
+    }
 
     pd.DataFrame({"feature": feats, "importance_ensemble": np.mean(
         [models["rf"].feature_importances_, models["lgb"].feature_importances_,
@@ -262,9 +304,33 @@ for w in WINDOWS:
     gc.collect()
 
 # ---------- 汇总 ----------
+# 计算训练数据指纹（特征列 + 有效样本数）用于版本绑定
+def _data_fingerprint(df, feature_cols, windows):
+    import hashlib
+    h = hashlib.sha256()
+    h.update(",".join(sorted(feature_cols)).encode("utf-8"))
+    for w in windows:
+        tcol = f"target_{w}d"
+        valid = df[tcol] >= 0
+        h.update(f"{w}:{valid.sum()}:{df.loc[valid, tcol].sum()}".encode("utf-8"))
+    return h.hexdigest()[:16]
+
+
+generated_at = pd.Timestamp.now().isoformat()
+data_hash = _data_fingerprint(df, feature_cols, WINDOWS)
+manifest["metadata"] = {
+    "generated_at": generated_at,
+    "data_hash": data_hash,
+    "feature_count": len(feature_cols),
+    "feature_families": [p.rstrip("_") for p in FEATURE_FAMILY_PREFIXES],
+    "f1_source": "announcement_semantic_features",
+    "target_kind": TARGET_INQUIRY_KIND,
+    "data_path": str(DATA),
+}
 (MODEL_DIR / "models_manifest.json").write_text(
     json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-summary_json = {"generated_at": pd.Timestamp.now().isoformat(),
+summary_json = {"generated_at": generated_at,
+                "data_hash": data_hash,
                 "models": ["RandomForest", "LightGBM", "XGBoost"],
                 "ensemble_weights": ENSEMBLE_W,
                 "windows": {str(w): {m: {k: round(v, 4) for k, v in r.items()}

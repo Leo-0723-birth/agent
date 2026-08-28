@@ -22,6 +22,15 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from backend.config import (
+    TARGET_INQUIRY_KIND,
+    TEST_SPLIT_NAMES,
+    TRAIN_SPLIT_NAMES,
+    VALIDATION_SPLIT_NAMES,
+)
+
 # 训练原料从项目内读取（backend/data/modeling/raw/），输出到建模数据根目录
 _MODELING = Path(__file__).resolve().parent.parent.parent / "backend" / "data" / "modeling"
 RAW = _MODELING / "raw"
@@ -53,6 +62,20 @@ def keep_2021plus(df, period_col="report_period", year_col=None):
         format="%Y%m%d", errors="coerce")
     return df[rp.dt.year >= MIN_YEAR].copy()
 
+
+def _normalize_split(s):
+    """把 split 列归一化为 Train/Validation/Test，支持大小写混用。"""
+    if pd.isna(s):
+        return s
+    s = str(s).strip()
+    if s in TRAIN_SPLIT_NAMES:
+        return "Train"
+    if s in VALIDATION_SPLIT_NAMES:
+        return "Validation"
+    if s in TEST_SPLIT_NAMES:
+        return "Test"
+    return s
+
 # ============================================================
 # 1) F1 语义特征 Top-50 选取（训练集 Spearman |corr| vs target_60d）
 #    数据源：官方公告语义特征（announcement_semantic_*，20% 年报解析）
@@ -74,7 +97,7 @@ _f2_sel["company_code"] = _f2_sel["company_code"].astype(str)
 _f2_sel["report_period"] = _f2_sel["report_period"].astype(str).str.replace(".0", "", regex=False)
 _f2_sel = keep_2021plus(_f2_sel)                          # [插入点2] 选取骨架
 _events = pd.read_csv(RAW / "inquiry_events.csv", encoding="utf-8-sig")
-_events = _events[_events["kind"] == "letter"].copy()
+_events = _events[_events["kind"] == TARGET_INQUIRY_KIND].copy()
 _events = keep_2021plus(_events, year_col="year")         # [插入点3] 选取用事件
 _events["secucode"] = _events["secucode"].astype(str)
 _events["date"] = pd.to_datetime(_events["date"], errors="coerce")
@@ -157,6 +180,8 @@ for name, d in [("F3", f3), ("F4", f4), ("F5", f5), ("F6", f6)]:
 
 # 合并 F1（保留 split 骨架的全部行）
 df = split_df.merge(f1, on=["company_code", "report_period"], how="left")
+# split 大小写归一化（兼容不同数据源写法）
+df["split"] = df["split"].apply(_normalize_split)
 for name, d in [("F2", f2.drop(columns=["split"])), ("F3", f3.drop(columns=["split"])),
                 ("F4", f4.drop(columns=["split"])), ("F5", f5.drop(columns=["split"])),
                 ("F6", f6.drop(columns=["split"]))]:
@@ -168,12 +193,12 @@ print(f"合并后: {df.shape}")
 # 5) 构建 30/60/90 天标签（kind=='letter' 的未来问询事件）
 # ============================================================
 events = pd.read_csv(RAW / "inquiry_events.csv", encoding="utf-8-sig")
-events = events[events["kind"] == "letter"].copy()
+events = events[events["kind"] == TARGET_INQUIRY_KIND].copy()
 _n0 = len(events)
 events = keep_2021plus(events, year_col="year")           # [插入点5] 标签用事件
 events["secucode"] = events["secucode"].astype(str)
 events["date"] = pd.to_datetime(events["date"], errors="coerce")
-print(f"问询函事件: {_n0} -> {len(events)} 条（剔除 2020 后，kind==letter）")
+print(f"问询函事件: {_n0} -> {len(events)} 条（剔除 2020 后，kind=={TARGET_INQUIRY_KIND}）")
 
 event_map = {}
 for code, grp in events.groupby("secucode"):

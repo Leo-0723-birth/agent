@@ -155,6 +155,32 @@ MODELING_DATASET = Path(BASE_DIR) / "backend" / "data" / "modeling" / "processed
 PREDICTOR_HORIZONS = ("30d", "60d", "90d")   # 推理输出窗口
 PREDICTOR_TOP_SHAP = 8                        # SHAP 输出 Top-K 特征
 
+# 特征家族前缀（白名单）：训练/推理只使用这些前缀的列作为模型输入
+# 注意：F1 前缀会随数据源变更而调整；修改后须重新训练模型。
+FEATURE_FAMILY_PREFIXES = (
+    "announcement_semantic_",  # F1：公告语义特征
+    "f2_",                     # F2：财务异常特征
+    "mkt_",                    # F3：市场特征
+    "sent_",                   # F4：舆情特征
+    "gov_",                    # F5：治理特征
+    "f6_",                     # F6：问询历史特征
+)
+
+# 训练标签事件类型（build_modeling_dataset.py 中过滤 inquiry_events 的 kind 字段）
+TARGET_INQUIRY_KIND = os.getenv("TARGET_INQUIRY_KIND", "letter")
+
+# 样本切分名称（支持大小写归一化）
+TRAIN_SPLIT_NAMES = ("Train", "train", "TRAIN")
+VALIDATION_SPLIT_NAMES = ("Validation", "validation", "VALIDATION", "Val", "val", "VAL")
+TEST_SPLIT_NAMES = ("Test", "test", "TEST")
+
+# 训练脚本中的特征筛选阈值
+FEATURE_VARIANCE_THRESHOLD = float(os.getenv("FEATURE_VARIANCE_THRESHOLD", "1e-12"))
+FEATURE_CORR_THRESHOLD = float(os.getenv("FEATURE_CORR_THRESHOLD", "0.95"))
+FEATURE_CORR_SAMPLE_SIZE = int(os.getenv("FEATURE_CORR_SAMPLE_SIZE", "5000"))
+FEATURE_IMPORTANCE_THRESHOLD = float(os.getenv("FEATURE_IMPORTANCE_THRESHOLD", "0"))
+FEATURE_FILTER_MIN_FEATURES = int(os.getenv("FEATURE_FILTER_MIN_FEATURES", "50"))
+
 # ---------- XGBoost-Cox 生存模型接口（可选，预留） ----------
 # 训练后放置：model_survival_xgb.json（survival:cox Booster）
 #            survival_baseline_hazard.json（Breslow 累积基线风险 H0(t)）

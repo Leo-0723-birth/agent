@@ -35,6 +35,7 @@ from .pipeline import (
     cancel_task,
     create_task,
     get_cached_result,
+    get_model_metrics,
     get_offline_result,
     get_report_download_path,
     get_task,
@@ -132,6 +133,15 @@ async def health():
         "mode": "hybrid",           # 支持离线 + 实时
         "realtime_ready": True,
     }
+
+
+@app.get("/api/model-metrics")
+def model_metrics():
+    """返回当前训练好的模型在测试集上的官方指标（AUC / F1 / Top10%Recall）。"""
+    metrics = get_model_metrics()
+    if not metrics or all(metrics.get(h) is None for h in ("30d", "60d", "90d")):
+        raise HTTPException(status_code=404, detail="未找到模型指标，请先运行训练脚本")
+    return metrics
 
 
 # ==================== 方案 C：实时扫雷 ====================

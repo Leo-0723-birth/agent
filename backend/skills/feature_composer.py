@@ -28,8 +28,11 @@ FILL_DIR = Path(__file__).resolve().parent.parent / "data" / "modeling" / "fill"
 _fill_cache = {}
 
 
-def load_fill_dict(window: str, fill_dir=FILL_DIR) -> dict:
-    """加载某窗口的填充字典（训练集中位数），懒加载 + 缓存。"""
+def load_fill_dict(window: str, fill_dir=FILL_DIR, expected_features: list = None) -> dict:
+    """加载某窗口的填充字典（训练集中位数），懒加载 + 缓存。
+
+    若传入 expected_features，会校验 fill 表是否包含全部期望特征，并打印警告。
+    """
     if window not in _fill_cache:
         p = Path(fill_dir) / f"fill_median_{window}d.csv"
         if not p.exists():
@@ -37,7 +40,22 @@ def load_fill_dict(window: str, fill_dir=FILL_DIR) -> dict:
         else:
             ser = pd.read_csv(p, index_col=0, encoding="utf-8-sig").iloc[:, 0]
             _fill_cache[window] = {str(k): v for k, v in ser.items()}
-    return _fill_cache[window]
+
+    fill = _fill_cache[window]
+    if expected_features:
+        import logging
+        missing = [f for f in expected_features if f not in fill]
+        extra = [f for f in fill if f not in expected_features]
+        if missing:
+            logging.getLogger(__name__).warning(
+                "fill_median_%sd 缺少 %d 个 manifest 特征（示例：%s）",
+                window, len(missing), missing[:5]
+            )
+        if extra:
+            logging.getLogger(__name__).info(
+                "fill_median_%sd 包含 %d 个不在 manifest 中的特征", window, len(extra)
+            )
+    return fill
 
 
 def _clean(v):
