@@ -14,6 +14,7 @@
 说明：与上游版本相比仅更换 F1 数据源（问询函语义 → 官方公告语义，
       20% 年报解析；全量数据替换 raw/F1_announcement_semantic_features.parquet 后重跑即可）。
       标签口径、F2 骨架、合并逻辑保持不变。
+      年份口径：剔除 2020，序列自 2021Q1 起（MIN_YEAR=2021）。
 """
 from pathlib import Path
 
@@ -30,7 +31,27 @@ PROC.mkdir(parents=True, exist_ok=True)
 SEL.mkdir(parents=True, exist_ok=True)
 
 WINDOWS = [30, 60, 90]
-N_KEEP = 50
+N_KEEP = 100
+
+# ============================================================
+# 年份口径：剔除 2020，序列自 2021Q1 起
+# ------------------------------------------------------------
+# 依据：数据集 2020 年仅含 374 份公告（2021 年为 19,033 份），
+# 导致 2020 年样本在 180 天窗口内有公告的比例仅 13.5%，
+# 语义特征近乎全零，属噪声样本。
+# ============================================================
+MIN_YEAR = 2021
+
+
+def keep_2021plus(df, period_col="report_period", year_col=None):
+    """剔除 2020 及更早年份。report_period 形如 %Y%m%d，可能带 .0 后缀。"""
+    if year_col is not None and year_col in df.columns:
+        return df[pd.to_numeric(df[year_col], errors="coerce").fillna(0).astype(int)
+                  >= MIN_YEAR].copy()
+    rp = pd.to_datetime(
+        df[period_col].astype(str).str.replace(".0", "", regex=False),
+        format="%Y%m%d", errors="coerce")
+    return df[rp.dt.year >= MIN_YEAR].copy()
 
 # ============================================================
 # 1) F1 语义特征 Top-50 选取（训练集 Spearman |corr| vs target_60d）
@@ -43,12 +64,18 @@ f1["report_period"] = pd.to_datetime(f1["report_period"], errors="coerce").dt.st
 semantic_cols = [c for c in f1.columns if c.startswith("announcement_semantic_")]
 print(f"F1 公告语义特征: {len(semantic_cols)} 维（announcement_semantic_*）")
 
+_n0 = len(f1)
+f1 = keep_2021plus(f1)                                    # [插入点1] F1 主表
+print(f"[年份过滤] F1: {_n0:,} -> {len(f1):,} 行（剔除 {_n0 - len(f1):,} 行 2020 数据）")
+
 # 选取用骨架：公司级 split（F2）+ 每个 (公司, 报告期) 的 target_60d
 _f2_sel = pd.read_csv(RAW / "F2_financial_anomaly.csv", encoding="utf-8-sig")
 _f2_sel["company_code"] = _f2_sel["company_code"].astype(str)
 _f2_sel["report_period"] = _f2_sel["report_period"].astype(str).str.replace(".0", "", regex=False)
+_f2_sel = keep_2021plus(_f2_sel)                          # [插入点2] 选取骨架
 _events = pd.read_csv(RAW / "inquiry_events.csv", encoding="utf-8-sig")
 _events = _events[_events["kind"] == "letter"].copy()
+_events = keep_2021plus(_events, year_col="year")         # [插入点3] 选取用事件
 _events["secucode"] = _events["secucode"].astype(str)
 _events["date"] = pd.to_datetime(_events["date"], errors="coerce")
 _emap = {c: sorted(g["date"].dropna().tolist()) for c, g in _events.groupby("secucode")}
@@ -111,6 +138,9 @@ def norm(df):
     return df
 
 f2, f3, f4, f5, f6 = [norm(d) for d in (f2, f3, f4, f5, f6)]
+_n0 = len(f2)
+f2, f3, f4, f5, f6 = [keep_2021plus(d) for d in (f2, f3, f4, f5, f6)]   # [插入点4]
+print(f"[年份过滤] F2-F6: {_n0:,} -> {len(f2):,} 行")
 # split 以 F2 为主表
 split_df = f2[["company_code", "report_period", "split"]].copy()
 features = [f2, f3, f4, f5, f6]
@@ -139,9 +169,11 @@ print(f"合并后: {df.shape}")
 # ============================================================
 events = pd.read_csv(RAW / "inquiry_events.csv", encoding="utf-8-sig")
 events = events[events["kind"] == "letter"].copy()
+_n0 = len(events)
+events = keep_2021plus(events, year_col="year")           # [插入点5] 标签用事件
 events["secucode"] = events["secucode"].astype(str)
 events["date"] = pd.to_datetime(events["date"], errors="coerce")
-print(f"问询函事件: {len(events)} 条（含年报/关注/重组/其他）")
+print(f"问询函事件: {_n0} -> {len(events)} 条（剔除 2020 后，kind==letter）")
 
 event_map = {}
 for code, grp in events.groupby("secucode"):
@@ -173,6 +205,12 @@ df["n_inq_60d"] = [count_future((c, t), 60) for c, t in zip(df["company_code"], 
 # ============================================================
 df.to_csv(PROC / "processed_dataset.csv", index=False, encoding="utf-8-sig")
 print(f"\n已保存: {PROC / 'processed_dataset.csv'}（{df.shape}）")
+_yr = pd.to_datetime(df["report_period"], format="%Y%m%d", errors="coerce").dt.year
+assert (_yr >= MIN_YEAR).all(), f"仍存在 {MIN_YEAR} 年之前的记录"
+print(f"年份范围: {int(_yr.min())} ~ {int(_yr.max())}   "
+      f"最小 report_period: {df['report_period'].min()}")
+print("各 split 行数:", df["split"].value_counts().to_dict())
+
 print("\n正样本率（Train 集合）:")
 for w in WINDOWS:
     m = (df["split"] == "Train") & (df[f"target_{w}d"] >= 0)
