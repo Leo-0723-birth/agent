@@ -1126,6 +1126,9 @@
   ];
 
   let allCompanies = [];
+  let searchDebounceTimer = null;
+  let searchAbortController = null;
+  let lastSearchQuery = '';
 
   async function fetchCompanies() {
     try {
@@ -1260,15 +1263,34 @@
   // ==================== 公司切换 ====================
   async function switchToDemoCompany(code) {
     const found = allCompanies.find(c => c.code === code);
-    if (!found) return;
-    document.getElementById('paramCode').value = code;
-    await loadCompanyData(code, false);
+    if (!found) {
+      // 来自网络搜索的新公司不在本地演示列表，仍允许切换并加载
+      document.getElementById('paramCode').value = code;
+      AppState.set('currentCompany', { code, name: '' });
+    } else {
+      document.getElementById('paramCode').value = code;
+      // 立即同步刷新封面，避免后端/WS 慢或竞态时旧公司残留
+      document.getElementById('companyName').textContent = found.name;
+      document.getElementById('companyCode').textContent = `${code} · 切换中…`;
+    }
+    // 关闭可能残留的旧实时 WS，避免旧任务 complete 覆盖新公司渲染
+    if (typeof wsConnection !== 'undefined' && wsConnection) {
+      try { wsConnection.close(); } catch (e) { /* ignore */ }
+      wsConnection = null;
+    }
+    await loadCompanyData(code, AppState.realtimeMode);
   }
 
   async function loadCompanyData(code, realtime = false) {
-    AppState.set('currentCompany', { code });
+    const meta = allCompanies.find(c => c.code === code);
+    AppState.set('currentCompany', { code, name: meta && meta.name });
     AppState.set('scanStatus', realtime ? 'pending' : 'idle');
     resetAgentStates();
+    // 关闭可能残留的旧实时 WS（race condition 修复）
+    if (typeof wsConnection !== 'undefined' && wsConnection) {
+      try { wsConnection.close(); } catch (e) { /* ignore */ }
+      wsConnection = null;
+    }
 
     if (realtime) {
       await startRealtimeScan(code);
@@ -1390,11 +1412,17 @@
         AppState.set('scanStatus', 'completed');
         AppState.set('currentTaskId', null);
         if (data.result) {
-          lastResultIsRealtime = true;
-          AppState.resultCache.set(data.result.code, data.result);
-          markAllAgentsDone();
-          showDashboard();
-          renderDashboard(data.result);
+          // race condition 修复：丢弃用户已切换的过期任务结果
+          const curCode = AppState.currentCompany && AppState.currentCompany.code;
+          if (curCode && data.result.code && data.result.code !== curCode) {
+            console.log(`丢弃过期任务结果 ${data.result.code}（当前已切到 ${curCode}）`);
+          } else {
+            lastResultIsRealtime = true;
+            AppState.resultCache.set(data.result.code, data.result);
+            markAllAgentsDone();
+            showDashboard();
+            renderDashboard(data.result);
+          }
         }
         setTimeout(() => { try { ws.close(); } catch (e) {} }, 500);
       } else if (data.type === 'error') {
@@ -1413,10 +1441,16 @@
         AppState.set('currentTaskId', null);
         showFallback(data.message || '已切换离线快照');
         if (data.result) {
-          AppState.resultCache.set(data.result.code, data.result);
-          markAllAgentsDone();
-          showDashboard();
-          renderDashboard(data.result);
+          // race condition 修复：丢弃过期 fallback
+          const curCode = AppState.currentCompany && AppState.currentCompany.code;
+          if (curCode && data.result.code && data.result.code !== curCode) {
+            console.log(`丢弃过期 fallback ${data.result.code}（当前 ${curCode}）`);
+          } else {
+            AppState.resultCache.set(data.result.code, data.result);
+            markAllAgentsDone();
+            showDashboard();
+            renderDashboard(data.result);
+          }
         }
         setTimeout(() => { try { ws.close(); } catch (e) {} }, 500);
       } else if (data.type === 'cancelled') {
@@ -2323,7 +2357,12 @@
   function renderDashboard(data) {
     if (!data) return;
 
-    document.getElementById('companyName').textContent = data.name || '—';
+    // name/code 兜底：若后端 data 缺字段，回退到 AppState.currentCompany（allCompanies 来源）
+    const meta = AppState.currentCompany || {};
+    const displayName = data.name || meta.name || '—';
+    const displayCode = data.code || meta.code || '—';
+
+    document.getElementById('companyName').textContent = displayName;
     const healthScore = computeHealthScore(data);
     const healthEl = document.getElementById('healthScoreValue');
     if (healthEl) {
@@ -2333,7 +2372,7 @@
     const modeBadge = lastResultIsRealtime
       ? `<span class="snapshot-badge realtime">⚡ 实时扫雷</span>`
       : `<span class="snapshot-badge">📷 离线快照</span>`;
-    document.getElementById('companyCode').innerHTML = `${data.code || '—'} · ${parseWindow()} 天窗口${modeBadge}`;
+    document.getElementById('companyCode').innerHTML = `${displayCode} · ${parseWindow()} 天窗口${modeBadge}`;
     document.getElementById('confidenceValue').textContent = (data.confidence !== undefined ? data.confidence.toFixed(2) : '—');
     document.getElementById('factorCount').textContent = (data.factors !== undefined ? data.factors : '—');
 
@@ -2799,23 +2838,77 @@
   function renderSearchDropdown() {
     const input = document.getElementById('companySearch');
     const dd = document.getElementById('searchDropdown');
-    const q = input.value.trim().toLowerCase();
+    const raw = input.value.trim();
+    const q = raw.toLowerCase();
     if (!q) { dd.classList.remove('open'); return; }
+    lastSearchQuery = q;
 
-    const matches = allCompanies.filter(c =>
+    // 本地立即过滤（演示公司），用于快速响应
+    const localMatches = allCompanies.filter(c =>
       c.code.toLowerCase().includes(q) || c.name.toLowerCase().includes(q)
     ).slice(0, 8);
 
-    if (!matches.length) { dd.innerHTML = '<div class="search-dropdown-item"><span class="dd-name">无匹配公司</span></div>'; dd.classList.add('open'); return; }
+    // 若用户输入的是代码格式，补一个「代码直达」项，避免本地无缓存时直接显示无匹配
+    const normalizeLike = raw.replace(/\s+/g, '').toUpperCase();
+    const codeDirect = [];
+    if (/^\d{6}(\.SZ|\.SH|\.BJ)?$/i.test(normalizeLike) || /^\d{6}$/.test(raw)) {
+      const maybeCode = normalizeLike.includes('.') ? normalizeLike : raw.padStart(6, '0');
+      codeDirect.push({ code: maybeCode, name: maybeCode, market: '', source: 'normalize' });
+    }
 
-    dd.innerHTML = matches.map((c, i) => `
-      <div class="search-dropdown-item ${i === 0 ? 'active' : ''}" data-index="${i}" data-code="${c.code}" onclick="selectSearchItem('${c.code}')">
-        <span class="dd-code">${c.code}</span>
-        <span class="dd-name">${c.name}</span>
-        <span class="dd-tag">演示公司</span>
-      </div>
-    `).join('');
-    dd.classList.add('open');
+    // 防抖：联网搜索
+    clearTimeout(searchDebounceTimer);
+    if (searchAbortController) { searchAbortController.abort(); }
+    searchAbortController = new AbortController();
+
+    const renderNow = (netMatches = []) => {
+      const combined = {};
+      [...codeDirect, ...localMatches, ...netMatches].forEach(c => {
+        if (!combined[c.code]) combined[c.code] = c;
+      });
+      const matches = Object.values(combined).slice(0, 8);
+
+      if (!matches.length) {
+        dd.innerHTML = '<div class="search-dropdown-item"><span class="dd-name">输入名称或代码后按回车/确认切换</span></div>';
+        dd.classList.add('open');
+        return;
+      }
+
+      dd.innerHTML = matches.map((c, i) => {
+        const tagText = c.source === 'local' ? '演示公司' : (c.source === 'normalize' ? '代码直达' : '联网');
+        return `
+          <div class="search-dropdown-item ${i === 0 ? 'active' : ''}" data-index="${i}" data-code="${escapeHtml(c.code)}" onclick="selectSearchItem('${escapeHtml(c.code)}')">
+            <span class="dd-code">${escapeHtml(c.code)}</span>
+            <span class="dd-name">${escapeHtml(c.name)}</span>
+            <span class="dd-tag">${escapeHtml(tagText)}</span>
+          </div>
+        `;
+      }).join('');
+      dd.classList.add('open');
+    };
+
+    // 立即展示本地结果 + 代码直达
+    renderNow();
+
+    // 联网搜索（仅当输入不是纯 6 位代码时；纯代码直接标准化即可）
+    if (/^\d{6}$/.test(raw)) {
+      // 纯 6 位代码：延迟标准化提示，避免用户直接按确认时没有任何结果
+      return;
+    }
+
+    searchDebounceTimer = setTimeout(async () => {
+      try {
+        const resp = await fetch(`${API_BASE}/api/companies/search?q=${encodeURIComponent(raw)}&limit=8`, {
+          signal: searchAbortController.signal
+        });
+        if (!resp.ok) return;
+        const netMatches = await resp.json();
+        if (lastSearchQuery !== q) return; // 输入已变，丢弃旧结果
+        renderNow(netMatches.map(c => ({ ...c, source: c.source || 'net' })));
+      } catch (e) {
+        if (e.name !== 'AbortError') console.warn('联网搜索失败:', e);
+      }
+    }, 250);
   }
 
   function selectSearchItem(code) {
@@ -2824,6 +2917,8 @@
     AppState.selectedCompany = code;
     renderCompanyList();
     updateModalCount();
+    // 触发主控公司切换：进入公司主页并启动 agent 流水线
+    switchToDemoCompany(code);
   }
 
   function handleSearchKey(e) {
@@ -2845,7 +2940,12 @@
     } else if (e.key === 'Enter') {
       e.preventDefault();
       const active = items[activeIdx];
-      if (active && active.dataset.code) selectSearchItem(active.dataset.code);
+      if (active && active.dataset.code) {
+        selectSearchItem(active.dataset.code);
+      } else {
+        // 没有选中项时，用输入框内容直接确认切换
+        confirmCompanySelection();
+      }
     } else if (e.key === 'Escape') {
       dd.classList.remove('open');
     }
@@ -2859,10 +2959,43 @@
   }
 
   async function confirmCompanySelection() {
-    const code = document.getElementById('paramCode').value.trim() || AppState.selectedCompany;
-    if (!code) { alert('请输入公司代码'); return; }
+    const input = document.getElementById('companySearch');
+    const raw = (input ? input.value.trim() : '') || document.getElementById('paramCode').value.trim() || AppState.selectedCompany;
+    if (!raw) { alert('请输入公司代码或公司名称'); return; }
+
+    // 优先用后端搜索把名称/小写代码标准化成标准代码
+    let code = '';
+    let name = '';
+    try {
+      const resp = await fetch(`${API_BASE}/api/companies/search?q=${encodeURIComponent(raw)}&limit=1`);
+      if (resp.ok) {
+        const hits = await resp.json();
+        if (hits && hits.length) { code = hits[0].code; name = hits[0].name; }
+      }
+    } catch (e) { console.warn('搜索解析失败:', e); }
+
+    // 后端搜索失败时，直接标准化小写代码（如 002432.sz）
+    if (!code) {
+      const normalized = raw.replace(/\s+/g, '').toUpperCase();
+      if (/^\d{6}\.(SZ|SH|BJ)$/i.test(normalized)) {
+        code = normalized;
+        name = raw;
+      } else if (/^\d{6}$/.test(raw)) {
+        // 纯 6 位数字：需要推断交易所，但无法从前端推断；留给后端 resolve
+        code = raw;
+      } else {
+        alert(`无法识别「${raw}」，请输入股票代码或公司简称/全名`);
+        return;
+      }
+    }
+
+    // 更新输入框和选中态，并触发公司切换
+    document.getElementById('paramCode').value = code;
+    AppState.selectedCompany = code;
+    if (input) input.value = code;
+    updateModalCount();
     closeCompanyModal();
-    await loadCompanyData(code, AppState.realtimeMode);
+    await switchToDemoCompany(code);
   }
 
   async function runBatchDemo() {

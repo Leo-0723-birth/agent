@@ -12,10 +12,13 @@ Agent 基类 + 推理链路追踪
 run() 自动包装：记录 run_id / 耗时 / 输入输出摘要，并追加进 ctx.trace_log。
 """
 import json
+import logging
 import time
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
+
+_logger = logging.getLogger(__name__)
 
 
 class AgentBase(ABC):
@@ -53,14 +56,23 @@ class AgentBase(ABC):
         """
         统一入口：包装 execute()，记录链路追踪并追加进 ctx.trace_log。
         返回 (ctx, trace_log)。
+
+        异常隔离：execute() 抛异常时捕获并记 trace_complete=False，不拖垮整条
+        流水线（竞赛展示需保证全程可运转），同时 warning 记录堆栈便于复盘。
         """
         self.run_id = str(uuid.uuid4())[:8]
         start = time.time()
         self._report_progress(5, f"{self.name} 已启动")
 
-        ctx = self.execute(company, ctx)
-
-        self._report_progress(100, f"{self.name} 处理完成")
+        error_info = None
+        try:
+            ctx = self.execute(company, ctx)
+        except Exception as e:  # noqa: BLE001  单 Agent 失败不阻断全链
+            error_info = repr(e)
+            _logger.warning("%s execute 失败: %s", self.name, error_info, exc_info=True)
+            self._report_progress(100, f"{self.name} 执行失败：{error_info[:80]}")
+        else:
+            self._report_progress(100, f"{self.name} 处理完成")
 
         latency_ms = int((time.time() - start) * 1000)
         self.trace = {
@@ -70,8 +82,11 @@ class AgentBase(ABC):
             "timestamp": datetime.now().isoformat(),
             "output_summary": self._summarize(getattr(ctx, "report", None) or {}),
             "latency_ms": latency_ms,
-            "trace_complete": True,
+            "trace_complete": error_info is None,
         }
+        if error_info:
+            self.trace["error"] = error_info
+            self.trace["status"] = "error"
         if ctx is not None:
             ctx.trace_log.append(self.trace)
         return ctx, self.trace

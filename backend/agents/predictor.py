@@ -413,6 +413,7 @@ class PredictorAgent(AgentBase):
         for h in self.horizons:
             p, c, s = self._infer_survival(X, feats, h)
             pred[f"probability_{h}"] = p
+            pred[f"shap_features_{h}"] = s  # per-window SHAP（供前端窗口切换）
             if h == "60d":
                 p60, conf, shap = p, c, s
         if p60 is None:
@@ -438,6 +439,7 @@ class PredictorAgent(AgentBase):
             p, c, s = self._predict_realtime(h, ctx, manifest)
             key = f"probability_{h}"
             pred[key] = p
+            pred[f"shap_features_{h}"] = s  # per-window SHAP（供前端窗口切换）
             if h == "60d":
                 p60, conf, shap = p, c, s
         if p60 is None:
@@ -483,6 +485,7 @@ class PredictorAgent(AgentBase):
             p, c, s = self._predict_one(h, row, manifest)
             key = f"probability_{h}"
             pred[key] = p
+            pred[f"shap_features_{h}"] = s  # per-window SHAP（供前端窗口切换）
             if h == "60d":
                 p60, conf, shap = p, c, s
         if p60 is None:

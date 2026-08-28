@@ -5,11 +5,15 @@
 """
 from __future__ import annotations
 
+import csv
 import json
+import logging
 import os
 import sys
 from collections import OrderedDict
 from pathlib import Path
+
+_logger = logging.getLogger(__name__)
 
 # 把项目根目录加入 sys.path，以便 import backend
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -138,31 +142,55 @@ def _latest_report_file(company: str, as_of: str | None = None) -> Path | None:
 
 
 def get_model_metrics() -> dict:
-    """读取 models_manifest.json 中的模型评估指标。
+    """读取模型评估指标（三窗口 AUC/F1/Top10%Recall/threshold）。
 
-    返回 {"30d": {"AUC": ..., "F1": ..., "Top10%Recall": ...}, ...}，
-    找不到 manifest 或指标时返回空 dict。
+    优先读 models_manifest.json（train_models.py 产出，含 metrics 子键）；
+    manifest 缺失时兜底读 model_summary.json 取 Ensemble 指标（同为训练真实产物）。
+    返回 {"30d": {"AUC":..., "F1":..., "Top10%Recall":..., "threshold":...}, ...}，
+    均找不到时返回空 dict（前端硬编码兜底）。
     """
-    if not MODELS_MANIFEST_PATH.is_file():
-        return {}
-    try:
-        manifest = json.loads(MODELS_MANIFEST_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
     out = {}
-    for h in PREDICTOR_HORIZONS:
-        w = h.replace("d", "")
-        cfg = manifest.get("windows", {}).get(w, {})
-        metrics = cfg.get("metrics", {})
-        if metrics:
-            out[h] = {
-                "AUC": metrics.get("AUC"),
-                "F1": metrics.get("F1"),
-                "Top10%Recall": metrics.get("Top10%Recall"),
-                "threshold": metrics.get("threshold"),
-            }
-    if manifest.get("metadata"):
-        out["metadata"] = manifest["metadata"]
+    # 1) 优先 models_manifest.json
+    if MODELS_MANIFEST_PATH.is_file():
+        try:
+            manifest = json.loads(MODELS_MANIFEST_PATH.read_text(encoding="utf-8"))
+            for h in PREDICTOR_HORIZONS:
+                w = h.replace("d", "")
+                cfg = manifest.get("windows", {}).get(w, {})
+                metrics = cfg.get("metrics", {}) if isinstance(cfg, dict) else {}
+                if metrics:
+                    out[h] = {
+                        "AUC": metrics.get("AUC"),
+                        "F1": metrics.get("F1"),
+                        "Top10%Recall": metrics.get("Top10%Recall"),
+                        "threshold": metrics.get("threshold"),
+                    }
+            if manifest.get("metadata"):
+                out["metadata"] = manifest["metadata"]
+        except (OSError, json.JSONDecodeError):
+            pass
+    # 2) 兜底 model_summary.json（取每窗口 Ensemble 指标）
+    if not out:
+        summary_path = PREDICTOR_MODEL_DIR / "model_summary.json"
+        if summary_path.is_file():
+            try:
+                summary = json.loads(summary_path.read_text(encoding="utf-8"))
+                for h in PREDICTOR_HORIZONS:
+                    w = h.replace("d", "")
+                    ens = (summary.get("windows", {}) or {}).get(w, {}).get("Ensemble", {})
+                    if ens:
+                        out[h] = {
+                            "AUC": ens.get("AUC"),
+                            "F1": ens.get("F1"),
+                            "Top10%Recall": ens.get("Top10%Recall"),
+                            "threshold": ens.get("threshold"),
+                        }
+                if summary.get("generated_at"):
+                    out["metadata"] = {"generated_at": summary["generated_at"],
+                                       "models": summary.get("models", []),
+                                       "source": "model_summary.json"}
+            except (OSError, json.JSONDecodeError):
+                pass
     return out
 
 
@@ -275,40 +303,95 @@ def _level_from_prob(prob: float) -> str:
 _LEVEL_TEXT_EN = {"low": "低风险", "mid": "中风险", "high": "高风险"}
 
 
-def _map_shap_to_factors(report: dict) -> list[FactorItem]:
-    """把 scorecard.shap_features + attribution.top_risk_factors 映射为 FactorItem。"""
+def _factors_from_importance_csv(window: int, name_map, tag_map, desc_map) -> list:
+    """读 feature_importance_{window}d.csv（训练产出的全局特征重要性）兜底 per-window SHAP。
+
+    离线报告 scorecard 无 per-window shap 时使用；importance 归一化到 0~1 作 score。
+    """
+    csv_path = PREDICTOR_MODEL_DIR / f"feature_importance_{window}d.csv"
+    if not csv_path.is_file():
+        return []
+    try:
+        rows = []
+        with csv_path.open(encoding="utf-8-sig", newline="") as fh:
+            reader = csv.DictReader(fh)
+            for r in reader:
+                feat = (r.get("feature") or "").strip()
+                try:
+                    imp = float(r.get("importance_ensemble") or 0)
+                except (TypeError, ValueError):
+                    imp = 0
+                if feat and imp > 0:
+                    rows.append((feat, imp))
+    except (OSError, ValueError):
+        return []
+    if not rows:
+        return []
+    rows.sort(key=lambda x: x[1], reverse=True)
+    top = rows[:6]
+    max_imp = top[0][1] or 1
+    tag_pool = ["市场异动", "问询历史", "问询历史", "舆情", "市值", "财务"]
+    factors = []
+    for i, (feat, imp) in enumerate(top):
+        tag_label = tag_pool[i % len(tag_pool)]
+        tag, tag_text = tag_map.get(tag_label, ("finance", "财务"))
+        score = round(min(imp / max_imp, 1.0), 2)
+        color = "#EF4444" if score > 0.3 else "#F59E0B" if score > 0.15 else "#10B981"
+        factors.append(FactorItem(
+            name=name_map.get(feat, feat), tag=tag, tagText=tag_text,
+            desc=desc_map.get(feat, "特征重要性贡献"),
+            score=score, color=color,
+        ))
+    return factors
+
+
+def _map_shap_to_factors(report: dict, window: int = 60) -> list[FactorItem]:
+    """把 scorecard 的 SHAP + attribution.top_risk_factors 映射为 FactorItem（per-window）。
+
+    优先级：
+    1. scorecard[f"shap_features_{window}d"]（predictor 实时 per-window SHAP）
+    2. scorecard["shap_features"]（旧报告仅 60d；非 60d 窗口跳过避免串窗口）
+    3. feature_importance_{window}d.csv（训练全局重要性，per-window 真实兜底）
+    attribution.top_risk_factors 仅 60d 归因，只在 window==60 时使用。
+    """
     scorecard = report.get("scorecard", {}) or {}
     attribution = report.get("attribution", {}) or {}
-    top_factors = attribution.get("top_risk_factors", []) or []
-    shap_features = scorecard.get("shap_features", []) or []
 
-    # 人读名称映射（公共表）
+    # per-window SHAP：优先 shap_features_{window}d；旧报告无该键时仅 60d 回退 shap_features
+    shap_features = scorecard.get(f"shap_features_{window}d")
+    if not shap_features and window == 60:
+        shap_features = scorecard.get("shap_features", []) or []
+    if not shap_features:
+        shap_features = []
+
     name_map = _SHAP_NAME_MAP
     tag_map = _SHAP_TAG_MAP
     desc_map = _SHAP_DESC_MAP
 
     factors = []
-    # 优先用 attribution.top_risk_factors（有 description 和 label_ref）
-    for f in top_factors[:6]:
-        feat = f.get("feature", "")
-        shap_val = f.get("shap") or 0
-        desc = f.get("description", name_map.get(feat, feat))
-        label_ref = f.get("label_ref", "")
-        tag, tag_text = tag_map.get(label_ref, ("finance", "财务"))
-        score = min(abs(shap_val), 1.0)
-        if score > 0.3:
-            color = "#EF4444"
-        elif score > 0.15:
-            color = "#F59E0B"
-        else:
-            color = "#10B981"
-        factors.append(FactorItem(
-            name=desc, tag=tag, tagText=tag_text,
-            desc=desc_map.get(feat, f.get("theme_name", desc)),
-            score=round(score, 2), color=color,
-        ))
+    # attribution.top_risk_factors 仅 60d 归因，只在 window==60 时用（避免 30/90 显示 60d 归因）
+    if window == 60:
+        top_factors = attribution.get("top_risk_factors", []) or []
+        for f in top_factors[:6]:
+            feat = f.get("feature", "")
+            shap_val = f.get("shap") or 0
+            desc = f.get("description", name_map.get(feat, feat))
+            label_ref = f.get("label_ref", "")
+            tag, tag_text = tag_map.get(label_ref, ("finance", "财务"))
+            score = min(abs(shap_val), 1.0)
+            if score > 0.3:
+                color = "#EF4444"
+            elif score > 0.15:
+                color = "#F59E0B"
+            else:
+                color = "#10B981"
+            factors.append(FactorItem(
+                name=desc, tag=tag, tagText=tag_text,
+                desc=desc_map.get(feat, f.get("theme_name", desc)),
+                score=round(score, 2), color=color,
+            ))
 
-    # 如果 attribution 为空，从 shap_features 补
+    # shap_features 补
     if not factors:
         tag_pool = ["市场异动", "问询历史", "问询历史", "舆情", "市值", "财务"]
         for i, (feat, val) in enumerate(shap_features[:6]):
@@ -326,6 +409,10 @@ def _map_shap_to_factors(report: dict) -> list[FactorItem]:
                 desc=desc_map.get(feat, "SHAP 特征贡献"),
                 score=round(score, 2), color=color,
             ))
+
+    # CSV 兜底（per-window 训练全局重要性）
+    if not factors:
+        factors = _factors_from_importance_csv(window, name_map, tag_map, desc_map)
     return factors
 
 
@@ -668,18 +755,21 @@ from .models import ProgressMessage, ScanRequest
 
 ORCHESTRATOR_POOL_SIZE = int(os.getenv("ORCHESTRATOR_POOL_SIZE", "8"))
 _orchestrator_pool: OrderedDict[str, "SweepingOrchestrator"] = OrderedDict()
+_orchestrator_pool_lock = threading.Lock()
 
 
 def get_orchestrator(use_llm: bool, use_finbert: bool, use_semantic_cases: bool = True, max_documents: int | None = 5):
     """获取带 LRU 淘汰的 Orchestrator。key 按参数组合区分。
 
     限制最大缓存数量，避免参数组合过多时内存无限增长；命中时移动到队尾。
+    线程安全：加锁防止并发创建/淘汰竞态（创建在锁外，避免长时间持锁）。
     """
     key = f"llm={use_llm}_finbert={use_finbert}_bge={use_semantic_cases}_docs={max_documents}"
-    if key in _orchestrator_pool:
-        _orchestrator_pool.move_to_end(key)
-        return _orchestrator_pool[key]
-    # 延迟导入，避免模块级报错
+    with _orchestrator_pool_lock:
+        if key in _orchestrator_pool:
+            _orchestrator_pool.move_to_end(key)
+            return _orchestrator_pool[key]
+    # 延迟导入，避免模块级报错（锁外创建）
     from backend.agents.orchestrator import SweepingOrchestrator
     orchestrator = SweepingOrchestrator(
         use_llm=use_llm,
@@ -687,15 +777,17 @@ def get_orchestrator(use_llm: bool, use_finbert: bool, use_semantic_cases: bool 
         use_semantic_cases=use_semantic_cases,
         max_documents=max_documents,
     )
-    _orchestrator_pool[key] = orchestrator
-    while len(_orchestrator_pool) > ORCHESTRATOR_POOL_SIZE:
-        _orchestrator_pool.popitem(last=False)
+    with _orchestrator_pool_lock:
+        _orchestrator_pool[key] = orchestrator
+        while len(_orchestrator_pool) > ORCHESTRATOR_POOL_SIZE:
+            _orchestrator_pool.popitem(last=False)
     return orchestrator
 
 
 def clear_orchestrator_pool() -> None:
     """清空 Orchestrator 缓存，用于测试或内存回收。"""
-    _orchestrator_pool.clear()
+    with _orchestrator_pool_lock:
+        _orchestrator_pool.clear()
 
 
 # ---------- StreamingOrchestrator：在关键节点推送进度 ----------
@@ -752,20 +844,34 @@ class StreamingOrchestrator:
         """
         box = {}
         isolated_ctx = copy.copy(ctx)
+        # 给隔离 ctx 独立的 cancel_event：继承主状态，超时后只设 isolated 的，
+        # 让 Agent 内部 _check_cancel 在下个检查点主动退出，不影响主流水线 cancel_event
+        main_cancel = getattr(ctx, "cancel_event", None)
+        isolated_cancel = threading.Event()
+        if main_cancel is not None and main_cancel.is_set():
+            isolated_cancel.set()
         if ctx is not None:
             for key, value in vars(ctx).items():
-                setattr(isolated_ctx, key, value if key == "cancel_event" else copy.deepcopy(value))
+                if key == "cancel_event":
+                    setattr(isolated_ctx, key, isolated_cancel)
+                else:
+                    setattr(isolated_ctx, key, copy.deepcopy(value))
 
         def worker():
             try:
                 runner(company, isolated_ctx)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:  # noqa: BLE001  记堆栈便于复盘，不阻断看门狗
+                _logger.warning("Agent worker 异常: %s", e, exc_info=True)
                 box["error"] = e
 
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
         thread.join(timeout)
         if thread.is_alive():
+            # 超时：发独立 cancel 信号，Agent 内部 _check_cancel 下个检查点主动退出
+            # （Python 无法强杀线程，但 Agent 在耗时步骤间检查 cancel_event 可尽快退出，避免长期占用资源）
+            isolated_cancel.set()
+            _logger.warning("Agent 看门狗超时 %ss（runner=%s），已发独立 cancel 信号", timeout, runner)
             return "timeout", None
         if "error" in box:
             return "error", box["error"]
@@ -983,7 +1089,24 @@ def offline_to_response_from_report(report: dict, window: int = 60) -> AnalyzeRe
         f"{w}d": round(_prob_for_window(scorecard, w) * 100, 1) for w in (30, 60, 90)
     }
 
-    factors_list = _map_shap_to_factors(report)
+    factors_list = _map_shap_to_factors(report, 60)
+    # 三窗口模型评估指标（优先 models_manifest.json，兜底 model_summary.json Ensemble）
+    model_metrics = get_model_metrics() or {}
+    # 三窗口完整预测（供前端 renderPredictorDetail 30/60/90 切换：风险概率 + 置信度 + 该窗口评估指标 + per-window SHAP）
+    window_predictions = []
+    for w in (30, 60, 90):
+        p = _prob_for_window(scorecard, w)
+        lvl = _level_from_prob(p)
+        h_key = f"{w}d"
+        window_predictions.append({
+            "window": w,
+            "risk": round(p * 100, 1),
+            "confidence": round(confidence, 2),
+            "level": lvl,
+            "levelText": _LEVEL_TEXT_EN.get(lvl, "低风险"),
+            "factors": _map_shap_to_factors(report, w),  # per-window SHAP（实时/CSV 兜底）
+            "metrics": model_metrics.get(h_key, {}) if isinstance(model_metrics, dict) else {},
+        })
     return AnalyzeResponse(
         code=report.get("company", ""),
         name=report.get("name", ""),
@@ -1015,6 +1138,8 @@ def offline_to_response_from_report(report: dict, window: int = 60) -> AnalyzeRe
         attributionEvidence=_map_attribution_evidence(report),
         riskFactorDetails=_map_risk_factor_details(report),
         riskByWindow=risk_by_window,
+        windowPredictions=window_predictions,
+        modelMetrics={k: v for k, v in (model_metrics or {}).items() if k != "metadata"} if isinstance(model_metrics, dict) else {},
     )
 
 
@@ -1276,11 +1401,11 @@ async def run_scan_task(state: TaskState, req: ScanRequest):
             quality = (getattr(ctx, "meta", {}) or {}).get("runtime_quality", {}) or {}
             if quality.get("publishable") is False:
                 reasons = quality.get("degraded_reasons", []) or ["实时数据质量未达到发布条件"]
-                _persist_trace(req.code, state.task_id, getattr(ctx, "trace_log", []) or [])
+                await asyncio.to_thread(_persist_trace, req.code, state.task_id, getattr(ctx, "trace_log", []) or [])
                 await _fallback_after_error(state, req, "；".join(reasons))
                 return
             result = report_ctx_to_response(ctx)
-            _persist_trace(req.code, state.task_id, getattr(ctx, "trace_log", []) or [])
+            await asyncio.to_thread(_persist_trace, req.code, state.task_id, getattr(ctx, "trace_log", []) or [])
             state.result = result
             state.status = "completed"
             state.finished_at = time.time()

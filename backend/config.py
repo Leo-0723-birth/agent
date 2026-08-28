@@ -28,8 +28,8 @@ except Exception:
 BASE_DIR = Path(__file__).resolve().parent.parent                 # competition_agent/
 # 本机外部数据根目录（队员各自本地盘；通过 .env 覆盖 DATA_ROOT / INQUIRY_ROOT，
 # 无需逐个改下面的绝对路径）
-DATA_ROOT = Path(os.getenv("DATA_ROOT", r"D:\BaiduNetdiskDownload"))
-INQUIRY_ROOT = Path(os.getenv("INQUIRY_ROOT", r"D:\新建文件夹"))
+DATA_ROOT = Path(os.getenv("DATA_ROOT", str(BASE_DIR / "data")))
+INQUIRY_ROOT = Path(os.getenv("INQUIRY_ROOT", str(BASE_DIR / "data" / "inquiry")))
 DATA_RAW = Path(os.getenv("DATA_RAW", str(DATA_ROOT)))  # 原始公告/问询函根目录
 DATA_DIR = BASE_DIR / "backend" / "data"
 INDEX_DIR = DATA_DIR / "index"          # 公告索引缓存（announcement_index.json）
@@ -137,9 +137,9 @@ CONCERN_DICT_PATH = Path(BASE_DIR) / "backend" / "data" / "labels" / "concern_di
 # 风险词典：默认 v2.1（45/45 主题规则全覆盖，扩展自冻结版 v2.0.0）；环境变量可覆盖回退
 RISK_DICTIONARY = Path(os.getenv("RISK_DICTIONARY",
     str(Path(BASE_DIR) / "backend" / "data" / "labels" / "risk_dictionary_v2.1-taxonomy-v1.1.yaml")))
-INQUIRY_JSONL = Path(os.getenv("INQUIRY_JSONL", r"D:\新建文件夹\02_监管问询\01_数据清单与结构化文本\inquiries.jsonl"))
-RULE_RISKS_JSONL = Path(os.getenv("RULE_RISKS_JSONL", r"D:\新建文件夹\02_监管问询\02_风险标签\inquiry_rule_risks.jsonl"))
-EVAL_GT_NORMALIZED_CSV = Path(os.getenv("EVAL_GT_NORMALIZED_CSV", r"D:\新建文件夹\02_监管问询\05_标签评测与报告\evaluation_ground_truth_normalized.csv"))
+INQUIRY_JSONL = Path(os.getenv("INQUIRY_JSONL", str(INQUIRY_ROOT / "02_监管问询" / "01_数据清单与结构化文本" / "inquiries.jsonl")))
+RULE_RISKS_JSONL = Path(os.getenv("RULE_RISKS_JSONL", str(INQUIRY_ROOT / "02_监管问询" / "02_风险标签" / "inquiry_rule_risks.jsonl")))
+EVAL_GT_NORMALIZED_CSV = Path(os.getenv("EVAL_GT_NORMALIZED_CSV", str(INQUIRY_ROOT / "02_监管问询" / "05_标签评测与报告" / "evaluation_ground_truth_normalized.csv")))
 CASE_EXCERPT_CHARS = 1200      # 案例原文摘录截断长度
 
 # ---------- chunk 级段落检索（chunk_retriever / build_chunk_index） ----------

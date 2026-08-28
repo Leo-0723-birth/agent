@@ -70,6 +70,8 @@ class AnalyzeResponse(BaseModel):
     featureAnchor: str = ""
     modelVersion: str = ""
     riskByWindow: Optional[dict] = Field(default_factory=dict)
+    windowPredictions: Optional[List[dict]] = Field(default_factory=list)  # 30/60/90 各自完整预测（risk+confidence+factors+metrics），供前端窗口切换
+    modelMetrics: Optional[dict] = Field(default_factory=dict)              # 三窗口模型评估指标（AUC/F1/Top10/Threshold）
     factors: int                        # 风险因子总数
     summary: str                        # HTML 摘要
     factorsList: List[FactorItem]
@@ -84,7 +86,7 @@ class AnalyzeResponse(BaseModel):
     traceLog: Optional[list] = Field(default_factory=list)
     similarCases: Optional[List[SimilarCaseItem]] = Field(default_factory=list)
     generatedAt: Optional[str] = ""
-    # 新增：融合 Streamlit 细节
+    # 风险证据明细（前端仪表盘卡片数据）
     announcementRisks: Optional[List[AnnouncementRiskItem]] = Field(default_factory=list)
     attributionEvidence: Optional[List[AttributionEvidenceItem]] = Field(default_factory=list)
     riskFactorDetails: Optional[List[FactorItem]] = Field(default_factory=list)
