@@ -2464,6 +2464,11 @@
     if (data) applyRiskWindow(data, w);
   }
 
+  // 参数区下拉变化时同步仪表盘窗口
+  document.getElementById('paramWindow').addEventListener('change', (e) => {
+    switchRiskWindow(parseInt(e.target.value) || 60);
+  });
+
   function renderDashboard(data) {
     if (!data) return;
 
