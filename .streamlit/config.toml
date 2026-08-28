@@ -1,0 +1,24 @@
+# Streamlit 项目级配置
+# 关闭使用统计与首次运行"邮箱引导"（否则非 headless 启动会卡在 Email: 输入）
+
+[browser]
+gatherUsageStats = false
+
+[server]
+# 如需启动时自动打开浏览器，将 headless 改为 false（不会再有邮箱引导）
+headless = true
+
+[theme]
+base = "light"
+primaryColor = "#D76055"
+backgroundColor = "#F7F5F1"
+secondaryBackgroundColor = "#EEF3F6"
+textColor = "#263746"
+linkColor = "#2F6673"
+borderColor = "#DDD6CB"
+showWidgetBorder = true
+baseRadius = "0.55rem"
+buttonRadius = "0.45rem"
+font = "sans-serif"
+headingFont = "serif"
+chartCategoricalColors = ["#789AAD", "#79AFA3", "#D5AD62", "#D76055", "#A5B9C4"]

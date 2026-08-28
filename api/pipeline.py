@@ -6,9 +6,7 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
-from collections import OrderedDict
 from pathlib import Path
 
 # 把项目根目录加入 sys.path，以便 import backend
@@ -21,23 +19,16 @@ from .models import (
     FactorItem,
     AnnouncementRiskItem,
     AttributionEvidenceItem,
-    FinancialAnomalyItem,
     SimilarCaseItem,
 )
-from backend.config import PREDICTOR_HORIZONS, PREDICTOR_MODEL_DIR, RISK_THRESHOLDS
-from backend.skills.evidence_policy import publishable_evidence
 
 REPORTS_DIR = PROJECT_ROOT / "backend" / "data" / "output" / "reports"
-MODELS_MANIFEST_PATH = PREDICTOR_MODEL_DIR / "models_manifest.json"
 
 # ---------- 公司代码 → 最新离线报告 ----------
 
 # manifest.json 内存缓存（mtime 失效）：避免每次离线查询都全量解析清单
 _manifest_cache: list[dict] | None = None
 _manifest_cache_mtime: float | None = None
-
-# 单个报告 JSON 内存缓存（mtime 失效）：避免同一公司多次查询都读盘
-_report_cache: dict[str, tuple[float, dict]] = {}
 
 
 def _load_manifest() -> list[dict]:
@@ -59,132 +50,31 @@ def _load_manifest() -> list[dict]:
     return _manifest_cache
 
 
-def _read_report_path(path: Path) -> dict | None:
-    """读取报告 JSON，按 mtime 缓存；损坏文件视为不可用。"""
-    global _report_cache
-    try:
-        key = str(path)
-        mtime = path.stat().st_mtime
-        cached = _report_cache.get(key)
-        if cached and cached[0] == mtime:
-            return cached[1]
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            return None
-        _report_cache[key] = (mtime, data)
-        return data
-    except (OSError, UnicodeError, json.JSONDecodeError, TypeError):
-        return None
-
-
-def _is_usable_report(report: dict | None) -> bool:
-    """拒绝损坏或由全源失败产生的空报告，防止其污染 latest。"""
-    if not report:
-        return False
-    quality = report.get("quality", {}) or {}
-    if quality.get("publishable") is False or quality.get("status") == "invalid":
-        return False
-    scorecard = report.get("scorecard", {}) or {}
-    # 兼容早期/测试报告契约；新版报告必须有评分卡概率。
-    if not scorecard and report.get("risk") is not None:
-        return True
-    probabilities = [scorecard.get(f"probability_{w}d") for w in (30, 60, 90)]
-    if not any(value is not None for value in probabilities):
-        return False
-    semantic = report.get("semantic", {}) or {}
-    financial = report.get("financial", {}) or {}
-    name = str(report.get("name") or "").strip()
-    company = str(report.get("company") or "").strip()
-    empty_failed_runtime = (
-        report.get("data_source") == "offline_lookup"
-        and int(semantic.get("announcement_count", 0) or 0) == 0
-        and bool(financial.get("skip"))
-        and (not name or name == company)
-    )
-    return not empty_failed_runtime
-
-
-def _candidate_entries(company: str) -> list[dict]:
+def _latest_report_file(company: str) -> Path | None:
+    """从 manifest 找某公司最新一份报告 JSON。"""
     manifest = _load_manifest()
     normalized = company.upper().replace(".", "_")
-    return [
+    entries = [
         e for e in manifest
         if str(e.get("company", "")).upper().replace(".", "_") == normalized
         and (REPORTS_DIR / str(e.get("json_file", ""))).is_file()
     ]
-
-
-def _select_report_entry(company: str, as_of: str | None = None) -> tuple[dict, dict] | None:
-    """选择可用报告；历史查询按 report.as_of<=请求日取最近一份。"""
-    candidates: list[tuple[str, str, dict, dict]] = []
-    for entry in _candidate_entries(company):
-        path = REPORTS_DIR / str(entry.get("json_file", ""))
-        report = _read_report_path(path)
-        if not _is_usable_report(report):
-            continue
-        report_as_of = str(entry.get("as_of") or report.get("as_of") or "")[:10]
-        if as_of and (not report_as_of or report_as_of > as_of):
-            continue
-        candidates.append((report_as_of, str(entry.get("generated_at", "")), entry, report))
-    if not candidates:
+    if not entries:
         return None
-    candidates.sort(key=lambda row: (row[0], row[1]), reverse=True)
-    return candidates[0][2], candidates[0][3]
+    # 按 generated_at 取最新
+    entries.sort(key=lambda e: str(e.get("generated_at", "")), reverse=True)
+    return REPORTS_DIR / entries[0]["json_file"]
 
 
-def _latest_report_file(company: str, as_of: str | None = None) -> Path | None:
-    selected = _select_report_entry(company, as_of)
-    return REPORTS_DIR / selected[0]["json_file"] if selected else None
-
-
-def get_model_metrics() -> dict:
-    """读取 models_manifest.json 中的模型评估指标。
-
-    返回 {"30d": {"AUC": ..., "F1": ..., "Top10%Recall": ...}, ...}，
-    找不到 manifest 或指标时返回空 dict。
-    """
-    if not MODELS_MANIFEST_PATH.is_file():
-        return {}
-    try:
-        manifest = json.loads(MODELS_MANIFEST_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    out = {}
-    for h in PREDICTOR_HORIZONS:
-        w = h.replace("d", "")
-        cfg = manifest.get("windows", {}).get(w, {})
-        metrics = cfg.get("metrics", {})
-        if metrics:
-            out[h] = {
-                "AUC": metrics.get("AUC"),
-                "F1": metrics.get("F1"),
-                "Top10%Recall": metrics.get("Top10%Recall"),
-                "threshold": metrics.get("threshold"),
-            }
-    if manifest.get("metadata"):
-        out["metadata"] = manifest["metadata"]
-    return out
-
-
-def get_report_download_path(company: str, fmt: str = "md") -> Path | None:
-    """从 manifest 找某公司最新一份报告的下载路径（md/json）。"""
-    selected = _select_report_entry(company)
-    if not selected:
+def _load_report(company: str) -> dict | None:
+    path = _latest_report_file(company)
+    if not path:
         return None
-    entry, _ = selected
-    file_key = "md_file" if fmt == "md" else "json_file"
-    path = REPORTS_DIR / str(entry.get(file_key, ""))
-    return path if path.is_file() else None
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _load_report(company: str, as_of: str | None = None) -> dict | None:
-    """读取公司最新报告 JSON，带 mtime 失效的内存缓存。"""
-    selected = _select_report_entry(company, as_of)
-    return selected[1] if selected else None
-
-
-def _load_report_md(company: str, as_of: str | None = None) -> str:
-    path = _latest_report_file(company, as_of)
+def _load_report_md(company: str) -> str:
+    path = _latest_report_file(company)
     if not path:
         return ""
     md_path = path.with_suffix(".md")
@@ -252,27 +142,6 @@ def _map_risk_level(raw: str) -> str:
         if k in (raw or ""):
             return v
     return "low"
-
-
-_WINDOW_PROB_KEY = {30: "probability_30d", 60: "probability_60d", 90: "probability_90d"}
-
-
-def _prob_for_window(scorecard: dict, window: int) -> float:
-    """按预测窗口取对应概率（0~1），未知窗口回落 60d。"""
-    key = _WINDOW_PROB_KEY.get(window, "probability_60d")
-    return scorecard.get(key, 0) or 0
-
-
-def _level_from_prob(prob: float) -> str:
-    """基于概率（0~1）+ RISK_THRESHOLDS 重算风险等级。"""
-    if prob >= RISK_THRESHOLDS["high"]:
-        return "high"
-    if prob >= RISK_THRESHOLDS["medium"]:
-        return "mid"
-    return "low"
-
-
-_LEVEL_TEXT_EN = {"low": "低风险", "mid": "中风险", "high": "高风险"}
 
 
 def _map_shap_to_factors(report: dict) -> list[FactorItem]:
@@ -350,23 +219,6 @@ def _map_financial_table(report: dict) -> list[list[str]]:
     return rows
 
 
-def _map_financial_anomalies(report: dict) -> list[FinancialAnomalyItem]:
-    """financial.anomaly_list → 前端财务异常信号对象列表。"""
-    anomalies = report.get("financial", {}).get("anomaly_list", []) or []
-    items = []
-    for a in anomalies:
-        items.append(FinancialAnomalyItem(
-            type=a.get("type", "—"),
-            severity=int(a.get("severity", 0) or 0),
-            indicator=a.get("indicator", "—"),
-            value=a.get("value", "—"),
-            threshold=a.get("threshold", "—"),
-            evidence=a.get("evidence", "—"),
-            label_ref=a.get("label_ref", "—"),
-        ))
-    return items
-
-
 def _map_attribution_text(report: dict) -> str:
     """attribution.top_risk_factors → 归因文本。"""
     factors = report.get("attribution", {}).get("top_risk_factors", []) or []
@@ -384,7 +236,7 @@ def _map_attribution_text(report: dict) -> str:
 def _build_text_summary(report: dict) -> str:
     """semantic → 文本摘要。"""
     sem = report.get("semantic", {}) or {}
-    risk_factors = publishable_evidence(sem.get("risk_factors", []) or [])
+    risk_factors = sem.get("risk_factors", []) or []
     ann_count = sem.get("announcement_count", 0)
     rf_count = len(risk_factors)
     if rf_count:
@@ -392,7 +244,7 @@ def _build_text_summary(report: dict) -> str:
         cat_text = "、".join(categories[:3]) if categories else "多类"
         return (
             f"近一年共研读公告 <b>{ann_count}</b> 份，经规则引擎 + FinBERT + LLM 三通道抽取，"
-            f"识别出 <b>{rf_count}</b> 条已核验风险证据，涵盖 {cat_text} 等类别。"
+            f"识别出 <b>{rf_count}</b> 条风险信号，涵盖 {cat_text} 等类别。"
         )
     return f"近一年共研读公告 <b>{ann_count}</b> 份，未识别出显著风险信号。"
 
@@ -405,7 +257,7 @@ _LEVEL_FROM_SEVERITY = {1: "低", 2: "低", 3: "中", 4: "高", 5: "高"}
 def _map_announcement_risks(report: dict) -> list[AnnouncementRiskItem]:
     """semantic.risk_factors → 公告研读风险证据表。"""
     sem = report.get("semantic", {}) or {}
-    risk_factors = publishable_evidence(sem.get("risk_factors", []) or [])
+    risk_factors = sem.get("risk_factors", []) or []
     if not risk_factors:
         return []
 
@@ -433,7 +285,6 @@ def _map_announcement_risks(report: dict) -> list[AnnouncementRiskItem]:
             evidence=evidence or "—",
             title=f.get("announcement_title") or "—",
             sourceUrl=f.get("source_url") or "",
-            pdfUrl=f.get("pdf_url") or "",
         ))
         if len(items) >= 20:
             break
@@ -447,34 +298,20 @@ def _map_attribution_evidence(report: dict) -> list[AttributionEvidenceItem]:
     attribution = report.get("attribution", {}) or {}
     top_factors = attribution.get("top_risk_factors", []) or []
     semantic = report.get("semantic", {}) or {}
-    risk_factors = publishable_evidence(semantic.get("risk_factors", []) or [])
+    risk_factors = semantic.get("risk_factors", []) or []
 
     # 证据引用（若存在）
     citations = attribution.get("evidence_citations", []) or []
     if citations:
-        allowed = {
-            (str(f.get("evidence") or "").strip(), str(f.get("announcement_title") or "").strip())
-            for f in risk_factors if str(f.get("evidence") or "").strip()
-        }
-        for anomaly in (report.get("financial", {}) or {}).get("anomaly_list", []) or []:
-            evidence = str(anomaly.get("evidence") or "").strip()
-            if evidence:
-                allowed.add((evidence, "财务异常检测"))
-        filtered = []
-        for citation in citations:
-            text_value = str(citation.get("text") or citation.get("evidence") or citation.get("snippet") or "").strip()
-            source_value = str(citation.get("source") or "").strip()
-            if any(text_value == evidence and (not source_value or not title or source_value == title)
-                   for evidence, title in allowed):
-                filtered.append(citation)
         return [
             AttributionEvidenceItem(
                 factor=c.get("factor", "") or "风险因子",
-                evidence=(c.get("text") or c.get("evidence") or c.get("snippet") or "").strip() or "—",
+                evidence=(c.get("text") or "").strip() or (c.get("evidence") or "").strip() or "—",
                 source=c.get("source") or "",
                 anchor=f"evidence-{i}",
             )
-            for i, c in enumerate(filtered[:10])
+            for i, c in enumerate(citations[:10])
+            if c.get("text") or c.get("evidence")
         ]
 
     # 无显式引用时，按 top_factors 的主题/分类去 semantic.risk_factors 中找最接近证据
@@ -603,23 +440,75 @@ def _map_similar_cases(report: dict) -> list[SimilarCaseItem]:
     return items
 
 
-def offline_to_response(company: str, window: int = 60, as_of: str | None = None) -> AnalyzeResponse | None:
-    """核心映射：离线报告 JSON → AnalyzeResponse（按 window 取对应天数概率）。"""
-    report = _load_report(company, as_of)
+def offline_to_response(company: str) -> AnalyzeResponse | None:
+    """核心映射：离线报告 JSON → AnalyzeResponse。"""
+    report = _load_report(company)
     if not report:
         return None
-    resp = offline_to_response_from_report(report, window=window)
-    md = _load_report_md(company, as_of)
-    if md:
-        resp.reportMarkdown = md
-    return resp
+
+    scorecard = report.get("scorecard", {}) or {}
+    risk_level_raw = scorecard.get("risk_level", "低")
+    level = _map_risk_level(risk_level_raw)
+    prob_60d = scorecard.get("probability_60d", 0) or 0
+    confidence = scorecard.get("confidence", 0) or 0
+    financial = report.get("financial", {}) or {}
+    semantic = report.get("semantic", {}) or {}
+    similar_cases = report.get("similar_cases", []) or []
+    attribution = report.get("attribution", {}) or {}
+
+    risk_factors_count = len(semantic.get("risk_factors", []) or [])
+    anomaly_count = len(financial.get("anomaly_list", []) or [])
+    total_factors = risk_factors_count + anomaly_count
+
+    # 构建 summary（带 HTML）
+    prob_pct = prob_60d * 100
+    top_factor_names = [
+        f.get("description", f.get("feature", ""))
+        for f in (attribution.get("top_risk_factors", []) or [])[:3]
+    ]
+    factor_text = "、".join(top_factor_names) if top_factor_names else "综合多维度指标"
+    summary = (
+        f"未来 60 天收到问询函的概率为 <b>{prob_pct:.1f}%</b>。"
+        f"主要风险来源为{factor_text}。"
+    )
+
+    # 构建 conclusion
+    conclusion = report.get("executive_summary", "")
+    if not conclusion:
+        conclusion = f"风险等级为{_LEVEL_TEXT.get(risk_level_raw[0] if risk_level_raw else '低', '低风险')}，建议持续跟踪。"
+
+    factors_list = _map_shap_to_factors(report)
+    return AnalyzeResponse(
+        code=report.get("company", company),
+        name=report.get("name", company),
+        risk=round(prob_pct, 1),
+        level=level,
+        levelText=_LEVEL_TEXT.get(risk_level_raw[0] if risk_level_raw else "低", "低风险"),
+        confidence=round(confidence, 2),
+        factors=total_factors,
+        summary=summary,
+        factorsList=factors_list,
+        financialTable=_map_financial_table(report),
+        textSummary=_build_text_summary(report),
+        caseMatch=f"{len(similar_cases)} 起",
+        attribution=_map_attribution_text(report),
+        conclusion=conclusion[:200],
+        advice=report.get("disclaimer", "本预测结果仅供参考，不构成投资建议。"),
+        reportMarkdown=_load_report_md(company),
+        traceLog=report.get("trace_log", []) or [],
+        similarCases=_map_similar_cases(report),
+        generatedAt=report.get("generated_at", ""),
+        announcementRisks=_map_announcement_risks(report),
+        attributionEvidence=_map_attribution_evidence(report),
+        riskFactorDetails=_map_risk_factor_details(report),
+    )
 
 
 def run_pipeline(codes: list, window: int = 60, use_llm: bool = False, use_bge: bool = True):
     """方案 B：离线数据快速查询（同步实现，由 FastAPI 放入线程池执行）。"""
     results = []
     for code in codes:
-        resp = offline_to_response(code, window=window)
+        resp = offline_to_response(code)
         if resp:
             results.append(resp)
     return results
@@ -628,23 +517,16 @@ def run_pipeline(codes: list, window: int = 60, use_llm: bool = False, use_bge: 
 def list_available_companies() -> list[dict]:
     """返回所有有离线报告的公司列表。"""
     manifest = _load_manifest()
-    codes = []
+    seen = {}
     for e in manifest:
         code = e.get("company", "")
-        if code and code not in codes:
-            codes.append(code)
-    results = []
-    for code in codes:
-        selected = _select_report_entry(code)
-        if not selected:
-            continue
-        entry, report = selected
-        results.append({
-            "code": code,
-            "name": report.get("name") or entry.get("name") or code,
-            "generated_at": entry.get("generated_at", ""),
-        })
-    return results
+        if code and code not in seen:
+            seen[code] = {
+                "code": code,
+                "name": e.get("name", code),
+                "generated_at": e.get("generated_at", ""),
+            }
+    return list(seen.values())
 
 
 # ============================================================
@@ -652,7 +534,6 @@ def list_available_companies() -> list[dict]:
 # ============================================================
 
 import asyncio
-import copy
 import threading
 import time
 import uuid
@@ -664,38 +545,24 @@ from typing import Callable
 from .models import ProgressMessage, ScanRequest
 
 
-# ---------- Orchestrator 全局 LRU 缓存（避免每次请求都重新加载模型） ----------
+# ---------- Orchestrator 全局单例（避免每次请求都重新加载模型） ----------
 
-ORCHESTRATOR_POOL_SIZE = int(os.getenv("ORCHESTRATOR_POOL_SIZE", "8"))
-_orchestrator_pool: OrderedDict[str, "SweepingOrchestrator"] = OrderedDict()
+_orchestrator_pool: dict[str, "SweepingOrchestrator"] = {}
 
 
 def get_orchestrator(use_llm: bool, use_finbert: bool, use_semantic_cases: bool = True, max_documents: int | None = 5):
-    """获取带 LRU 淘汰的 Orchestrator。key 按参数组合区分。
-
-    限制最大缓存数量，避免参数组合过多时内存无限增长；命中时移动到队尾。
-    """
+    """获取全局单例 Orchestrator。key 按参数组合区分。"""
     key = f"llm={use_llm}_finbert={use_finbert}_bge={use_semantic_cases}_docs={max_documents}"
-    if key in _orchestrator_pool:
-        _orchestrator_pool.move_to_end(key)
-        return _orchestrator_pool[key]
-    # 延迟导入，避免模块级报错
-    from backend.agents.orchestrator import SweepingOrchestrator
-    orchestrator = SweepingOrchestrator(
-        use_llm=use_llm,
-        use_finbert=use_finbert,
-        use_semantic_cases=use_semantic_cases,
-        max_documents=max_documents,
-    )
-    _orchestrator_pool[key] = orchestrator
-    while len(_orchestrator_pool) > ORCHESTRATOR_POOL_SIZE:
-        _orchestrator_pool.popitem(last=False)
-    return orchestrator
-
-
-def clear_orchestrator_pool() -> None:
-    """清空 Orchestrator 缓存，用于测试或内存回收。"""
-    _orchestrator_pool.clear()
+    if key not in _orchestrator_pool:
+        # 延迟导入，避免模块级报错
+        from backend.agents.orchestrator import SweepingOrchestrator
+        _orchestrator_pool[key] = SweepingOrchestrator(
+            use_llm=use_llm,
+            use_finbert=use_finbert,
+            use_semantic_cases=use_semantic_cases,
+            max_documents=max_documents,
+        )
+    return _orchestrator_pool[key]
 
 
 # ---------- StreamingOrchestrator：在关键节点推送进度 ----------
@@ -740,8 +607,6 @@ class StreamingOrchestrator:
 
     def __init__(self, callback: Callable[[ProgressMessage], None]):
         self.callback = callback
-        self._active_agents: dict[str, tuple] = {}
-        self._closed_agent_keys: set[str] = set()
 
     def _run_agent(self, runner, company, ctx, timeout):
         """在 daemon 线程执行单个 Agent，join(timeout) 看门狗。
@@ -751,14 +616,10 @@ class StreamingOrchestrator:
         （配合 cancel_event 让整体超时后的旧线程在下一节点边界退出）。
         """
         box = {}
-        isolated_ctx = copy.copy(ctx)
-        if ctx is not None:
-            for key, value in vars(ctx).items():
-                setattr(isolated_ctx, key, value if key == "cancel_event" else copy.deepcopy(value))
 
         def worker():
             try:
-                runner(company, isolated_ctx)
+                runner(company, ctx)
             except Exception as e:  # noqa: BLE001
                 box["error"] = e
 
@@ -769,11 +630,6 @@ class StreamingOrchestrator:
             return "timeout", None
         if "error" in box:
             return "error", box["error"]
-        # 只有按时成功的节点才原子合入共享 Context；超时线程的迟到写入被隔离丢弃。
-        if ctx is not None:
-            for key, value in vars(isolated_ctx).items():
-                if key != "cancel_event":
-                    setattr(ctx, key, value)
         return "ok", None
 
     def run(self, company: str, window: int = 60, as_of: str | None = None,
@@ -805,8 +661,7 @@ class StreamingOrchestrator:
                 if getattr(ctx, "cancel_event", None) is not None and ctx.cancel_event.is_set():
                     raise PipelineCancelled("任务已取消")
                 step_start = time.time()
-                self._active_agents[agent_key] = (idx, total, agent_name, agent_key, display_name)
-                self._closed_agent_keys.discard(agent_key)
+                self._current_agent = (idx, total, agent_name, agent_key, display_name)
                 self._emit(idx, total, agent_name, agent_key, "running", f"{display_name} Agent 正在执行：{desc}", 0, 0)
 
                 runner = getattr(orch, self._ORCH_DISPATCH.get(agent_name, ""), None)
@@ -815,11 +670,8 @@ class StreamingOrchestrator:
 
                 # 节点级看门狗：单个 Agent 挂死只跳过它，不阻塞后续环节
                 timeout = self._AGENT_TIMEOUTS.get(agent_name, 120)
-                if agent_name == "Reporter":
-                    ctx.meta["runtime_quality"] = _evaluate_runtime_quality(ctx)
                 outcome, error = self._run_agent(runner, company, ctx, timeout)
                 latency = int((time.time() - step_start) * 1000)
-                self._closed_agent_keys.add(agent_key)
 
                 if outcome == "timeout":
                     ctx.trace_log.append({"agent": agent_name, "status": "timeout",
@@ -837,7 +689,7 @@ class StreamingOrchestrator:
                 else:
                     self._emit(idx, total, agent_name, agent_key, "done", f"{display_name} Agent 完成（{latency} ms）", latency, 100)
 
-            ctx.meta["total_elapsed_ms"] = int((time.time() - start_total) * 1000)
+            ctx.meta = {"total_elapsed_ms": int((time.time() - start_total) * 1000)}
             return ctx
         finally:
             orch.progress_callback = None
@@ -858,20 +710,13 @@ class StreamingOrchestrator:
 
     def _detail_callback(self, payload):
         """把 Agent 内部事件翻译为统一 WebSocket 进度消息。"""
-        payload = payload or {}
-        agent_key = str(payload.get("agent_key") or "")
-        if not agent_key or agent_key in self._closed_agent_keys:
-            return
-        metadata = self._active_agents.get(agent_key)
-        if metadata is None:
-            return
-        idx, total, agent, agent_key, display_name = metadata
-        event = str(payload.get("event", "agent_progress"))
-        percent = int(payload.get("percent", 0) or 0)
-        message = str(payload.get("message", "") or "")
+        idx, total, agent, agent_key, display_name = self._current_agent
+        event = str((payload or {}).get("event", "agent_progress"))
+        percent = int((payload or {}).get("percent", 0) or 0)
+        message = str((payload or {}).get("message", "") or "")
         if event == "pdf_processing":
-            current = int(payload.get("current", 0) or 0)
-            count = max(1, int(payload.get("total", 1) or 1))
+            current = int((payload or {}).get("current", 0) or 0)
+            count = max(1, int((payload or {}).get("total", 1) or 1))
             percent = 15 + int(25 * current / count)
             message = f"正在下载/解析第 {current}/{count} 份公告 PDF"
         event_map = {
@@ -879,7 +724,7 @@ class StreamingOrchestrator:
             "offline_snapshot_completed": (35, "已加载官方公告离线快照"),
             "online_company_started": (8, "正在校验公司与交易所代码"),
             "online_metadata_started": (12, "正在获取公告列表"),
-            "online_metadata_completed": (15, f"已获取公告列表，共 {payload.get('announcement_count', 0)} 份"),
+            "online_metadata_completed": (15, f"已获取公告列表，共 {(payload or {}).get('announcement_count', 0)} 份"),
             "pdf_processing": (percent, message),
             "pdf_processing_completed": (42, "公告 PDF 下载与 OCR 解析完成"),
             "rule_analysis_started": (45, "正在匹配风险词典"),
@@ -893,43 +738,7 @@ class StreamingOrchestrator:
             "agent_progress": (percent, message),
         }
         percent, default_message = event_map.get(event, (percent or 20, message or f"{display_name} Agent 处理中"))
-        channel_status = str(payload.get("status") or "").lower()
-        display_status = "running"
-        if event in {"finbert_started", "finbert_completed", "llm_started", "llm_completed"}:
-            if channel_status in {"disabled", "not_configured", "skipped"} or payload.get("enabled") is False:
-                display_status = "skipped"
-                label = "FinBERT" if event.startswith("finbert") else "LLM"
-                suffix = "已禁用" if channel_status == "disabled" or payload.get("enabled") is False else "未配置"
-                message = f"{label} {suffix}"
-            elif channel_status == "failed":
-                display_status = "error"
-        self._emit(idx, total, agent, agent_key, display_status, message or default_message, 0, max(0, min(100, percent)))
-
-
-def _evaluate_runtime_quality(ctx) -> dict:
-    """判定本次实时运行能否作为新的事实快照发布。"""
-    reasons = []
-    semantic_quality = getattr(ctx.semantic, "data_quality", {}) or {}
-    announcement_count = int((getattr(ctx.semantic, "stats", {}) or {}).get("announcement_count", 0) or 0)
-    semantic_available = bool(semantic_quality.get("current_data_available")) or announcement_count > 0
-    if not semantic_available:
-        reasons.append("当前公告事实源无可用数据")
-    financial_available = bool(getattr(ctx.financial, "features", {}) or {}) and not bool(ctx.financial.skip)
-    if not financial_available:
-        reasons.append(ctx.financial.skip_reason or "当前财务特征不可用")
-    source = str((ctx.prediction or {}).get("data_source") or "unavailable")
-    if source != "realtime":
-        reasons.extend((ctx.prediction or {}).get("degraded_reasons", []) or [])
-        reasons.append(f"预测数据源为 {source}，不是实时同口径模型输入")
-    reasons = list(dict.fromkeys(str(reason) for reason in reasons if reason))
-    return {
-        "publishable": semantic_available and financial_available and source == "realtime",
-        "status": "valid" if not reasons else "degraded",
-        "degraded_reasons": reasons,
-        "announcement_available": semantic_available,
-        "financial_available": financial_available,
-        "prediction_source": source,
-    }
+        self._emit(idx, total, agent, agent_key, "running", message or default_message, 0, max(0, min(100, percent)))
 
 # ---------- 报告 ctx -> AnalyzeResponse ----------
 
@@ -939,49 +748,36 @@ def report_ctx_to_response(ctx) -> AnalyzeResponse:
     return offline_to_response_from_report(report)
 
 
-def offline_to_response_from_report(report: dict, window: int = 60) -> AnalyzeResponse:
-    """复用方案 B 的字段映射逻辑，但直接接收 report dict；按 window 取对应天数概率。"""
+def offline_to_response_from_report(report: dict) -> AnalyzeResponse:
+    """复用方案 B 的字段映射逻辑，但直接接收 report dict。"""
     scorecard = report.get("scorecard", {}) or {}
-    prob = _prob_for_window(scorecard, window)
-    level = _level_from_prob(prob)
+    risk_level_raw = scorecard.get("risk_level", "低")
+    level = _map_risk_level(risk_level_raw)
+    prob_60d = scorecard.get("probability_60d", 0) or 0
     confidence = scorecard.get("confidence", 0) or 0
     financial = report.get("financial", {}) or {}
     semantic = report.get("semantic", {}) or {}
     similar_cases = report.get("similar_cases", []) or []
     attribution = report.get("attribution", {}) or {}
-    quality = report.get("quality", {}) or {}
-    model_version = str(scorecard.get("model_version") or report.get("model_version") or "")
-    data_source = str(report.get("data_source") or scorecard.get("data_source") or "unknown")
-    degraded_reasons = list(quality.get("degraded_reasons") or scorecard.get("degraded_reasons") or [])
-    if not quality or not model_version:
-        data_source = "legacy_snapshot_unverified"
-        degraded_reasons.append("历史报告未记录运行质量或模型版本，来源状态不可追溯")
-        model_version = model_version or "legacy-unversioned"
-    degraded_reasons = list(dict.fromkeys(degraded_reasons))
 
-    risk_factors_count = len(publishable_evidence(semantic.get("risk_factors", []) or []))
+    risk_factors_count = len(semantic.get("risk_factors", []) or [])
     anomaly_count = len(financial.get("anomaly_list", []) or [])
     total_factors = risk_factors_count + anomaly_count
 
-    prob_pct = prob * 100
+    prob_pct = prob_60d * 100
     top_factor_names = [
         f.get("description", f.get("feature", ""))
         for f in (attribution.get("top_risk_factors", []) or [])[:3]
     ]
     factor_text = "、".join(top_factor_names) if top_factor_names else "综合多维度指标"
     summary = (
-        f"未来 {window} 天收到问询函的概率为 <b>{prob_pct:.1f}%</b>。"
+        f"未来 60 天收到问询函的概率为 <b>{prob_pct:.1f}%</b>。"
         f"主要风险来源为{factor_text}。"
     )
 
     conclusion = report.get("executive_summary", "")
     if not conclusion:
-        conclusion = f"风险等级为{_LEVEL_TEXT_EN.get(level, '低风险')}，建议持续跟踪。"
-
-    # 三档窗口概率（前端切换窗口用，单位 %）
-    risk_by_window = {
-        f"{w}d": round(_prob_for_window(scorecard, w) * 100, 1) for w in (30, 60, 90)
-    }
+        conclusion = f"风险等级为{_LEVEL_TEXT.get(risk_level_raw[0] if risk_level_raw else '低', '低风险')}，建议持续跟踪。"
 
     factors_list = _map_shap_to_factors(report)
     return AnalyzeResponse(
@@ -989,19 +785,12 @@ def offline_to_response_from_report(report: dict, window: int = 60) -> AnalyzeRe
         name=report.get("name", ""),
         risk=round(prob_pct, 1),
         level=level,
-        levelText=_LEVEL_TEXT_EN.get(level, "低风险"),
+        levelText=_LEVEL_TEXT.get(risk_level_raw[0] if risk_level_raw else "低", "低风险"),
         confidence=round(confidence, 2),
-        confidenceMeaning=scorecard.get("confidence_meaning", "predicted_class_score"),
-        dataSource=data_source,
-        dataCoverage=(report.get("profile", {}) or {}).get("coverage") or scorecard.get("coverage") or {},
-        degradedReasons=degraded_reasons,
-        featureAnchor=str(scorecard.get("feature_anchor") or ""),
-        modelVersion=model_version,
         factors=total_factors,
         summary=summary,
         factorsList=factors_list,
         financialTable=_map_financial_table(report),
-        financialAnomalies=_map_financial_anomalies(report),
         textSummary=_build_text_summary(report),
         caseMatch=f"{len(similar_cases)} 起",
         attribution=_map_attribution_text(report),
@@ -1014,7 +803,6 @@ def offline_to_response_from_report(report: dict, window: int = 60) -> AnalyzeRe
         announcementRisks=_map_announcement_risks(report),
         attributionEvidence=_map_attribution_evidence(report),
         riskFactorDetails=_map_risk_factor_details(report),
-        riskByWindow=risk_by_window,
     )
 
 
@@ -1063,16 +851,12 @@ _result_cache: OrderedDict[str, AnalyzeResponse] = OrderedDict()
 _scan_lock = asyncio.Lock()
 
 
-def _cache_key(code: str, window: int, as_of: str | None = None) -> str:
-    """实时结果缓存 key：公司代码 + 窗口 + 截止日期。"""
-    parts = [str(code).strip().upper(), str(int(window))]
-    if as_of:
-        parts.append(str(as_of).strip())
-    return "_".join(parts)
+def _cache_key(code: str, window: int) -> str:
+    return f"{str(code).strip().upper()}_{int(window)}"
 
 
-def get_cached_result(code: str, window: int = 60, as_of: str | None = None) -> AnalyzeResponse | None:
-    key = _cache_key(code, window, as_of)
+def get_cached_result(code: str, window: int = 60) -> AnalyzeResponse | None:
+    key = _cache_key(code, window)
     result = _result_cache.get(key)
     if result is None:
         return None
@@ -1080,25 +864,24 @@ def get_cached_result(code: str, window: int = 60, as_of: str | None = None) -> 
     return result.model_copy(deep=True)
 
 
-def cache_result(code: str, window: int, result: AnalyzeResponse, as_of: str | None = None) -> None:
-    key = _cache_key(code, window, as_of)
+def cache_result(code: str, window: int, result: AnalyzeResponse) -> None:
+    key = _cache_key(code, window)
     _result_cache[key] = result.model_copy(deep=True)
     _result_cache.move_to_end(key)
     while len(_result_cache) > RESULT_CACHE_SIZE:
         _result_cache.popitem(last=False)
 
 
-def get_offline_result(code: str, window: int = 60, as_of: str | None = None) -> AnalyzeResponse | None:
-    # 历史查询选择 report.as_of <= 请求日的最近一份可用报告。
-    cached = get_cached_result(code, window, as_of)
+def get_offline_result(code: str, window: int = 60) -> AnalyzeResponse | None:
+    cached = get_cached_result(code, window)
     if cached is not None:
         return cached
     try:
-        result = offline_to_response(code, window=window, as_of=as_of)
+        result = offline_to_response(code)
     except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError, KeyError):
         result = None
     if result is not None:
-        cache_result(code, window, result, as_of)
+        cache_result(code, window, result)
     return result
 
 
@@ -1262,7 +1045,6 @@ async def run_scan_task(state: TaskState, req: ScanRequest):
                     lambda: streamer.run(
                         company=req.code,
                         window=req.window,
-                        as_of=req.as_of,
                         use_llm=req.use_llm,
                         use_bge=req.use_bge,
                         max_documents=req.max_documents,
@@ -1273,18 +1055,12 @@ async def run_scan_task(state: TaskState, req: ScanRequest):
             )
             if state.cancel_event.is_set():
                 raise PipelineCancelled("任务已取消")
-            quality = (getattr(ctx, "meta", {}) or {}).get("runtime_quality", {}) or {}
-            if quality.get("publishable") is False:
-                reasons = quality.get("degraded_reasons", []) or ["实时数据质量未达到发布条件"]
-                _persist_trace(req.code, state.task_id, getattr(ctx, "trace_log", []) or [])
-                await _fallback_after_error(state, req, "；".join(reasons))
-                return
             result = report_ctx_to_response(ctx)
             _persist_trace(req.code, state.task_id, getattr(ctx, "trace_log", []) or [])
             state.result = result
             state.status = "completed"
             state.finished_at = time.time()
-            cache_result(req.code, req.window, result, req.as_of)
+            cache_result(req.code, req.window, result)
             complete_msg = ProgressMessage(
                 type="complete",
                 step=AGENT_TOTAL,
@@ -1331,7 +1107,7 @@ async def _fallback_after_error(state: TaskState, req: ScanRequest, error: str) 
         status="error", progress_percent=0,
         message=error, error=error, fatal=False,
     ))
-    offline = get_offline_result(req.code, req.window, req.as_of)
+    offline = get_offline_result(req.code, req.window)
     state.finished_at = time.time()
     if offline is not None:
         state.result = offline

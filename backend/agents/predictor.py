@@ -30,18 +30,12 @@ from ..skills.stock_code import normalize_stock_code
 from .base import AgentBase
 
 
-class ManifestMismatchError(RuntimeError):
-    """模型清单与训练数据/填充表不一致。"""
-    pass
-
-
 # 进程级单例缓存：多个 PredictorAgent 实例共享已加载的模型/数据集/清单，
 # 避免 orchestrator pool 中每个实例重复读取全量 CSV 与 9 个模型（内存成倍）。
 # 实时任务由 _scan_lock 串行，离线路径不实例化 Predictor，故无需额外加锁。
 _shared_df = None
 _shared_manifest = None
-_shared_models: dict = {}       # horizon -> {"rf", "lgb", "xgb"}
-_shared_calibrators: dict = {}  # horizon -> IsotonicRegression 校准器（或 None）
+_shared_models: dict = {}   # horizon -> {"rf", "lgb", "xgb"}
 
 
 class PredictorAgent(AgentBase):
@@ -78,85 +72,6 @@ class PredictorAgent(AgentBase):
             else:
                 _shared_df = pd.DataFrame()
         return _shared_df
-
-    def _validate_manifest(self, manifest):
-        """校验 manifest 与建模数据集、fill 表的一致性。
-
-        返回 (ok, messages)。当缺失列过多时通过 logging 警告，但不阻断推理
-        （避免旧模型在新数据上完全不可用）；若 manifest 完全无法解析则返回 False。
-        """
-        import logging
-        logger = logging.getLogger(__name__)
-        messages = []
-
-        windows = manifest.get("windows", {})
-        if not windows:
-            messages.append("manifest 中无 windows 配置")
-            return False, messages
-
-        df = self._load_df()
-        if df.empty:
-            messages.append(f"建模数据集不存在或为空：{MODELING_DATASET}")
-            return False, messages
-
-        dataset_cols = set(df.columns)
-        all_ok = True
-        for h in self.horizons:
-            w = h.replace("d", "")
-            cfg = windows.get(w)
-            if not cfg or "features" not in cfg:
-                messages.append(f"窗口 {h} 缺少 features 配置")
-                all_ok = False
-                continue
-            feats = cfg["features"]
-            missing_in_dataset = [f for f in feats if f not in dataset_cols]
-            if missing_in_dataset:
-                messages.append(
-                    f"窗口 {h}: manifest 中有 {len(missing_in_dataset)} 列不在建模数据集中 "
-                    f"（示例：{missing_in_dataset[:5]}）"
-                )
-                all_ok = False
-
-            # fill 表校验
-            fill_path = self.model_dir.parent.parent / "data" / "modeling" / "fill" / f"fill_median_{w}d.csv"
-            if fill_path.exists():
-                try:
-                    fill = pd.read_csv(fill_path, encoding="utf-8-sig", index_col=0)
-                    fill_cols = set(fill.index.astype(str))
-                    missing_in_fill = [f for f in feats if f not in fill_cols]
-                    if missing_in_fill:
-                        messages.append(
-                            f"窗口 {h}: manifest 中有 {len(missing_in_fill)} 列不在 fill_median_{w}d 中 "
-                            f"（示例：{missing_in_fill[:5]}）"
-                        )
-                        all_ok = False
-                except Exception as e:
-                    messages.append(f"窗口 {h}: 读取 fill_median_{w}d 失败：{e}")
-                    all_ok = False
-            else:
-                messages.append(f"窗口 {h}: 未找到 fill_median_{w}d.csv")
-                all_ok = False
-
-        # 元信息校验（只警告，不阻断）
-        meta = manifest.get("metadata", {})
-        if not meta:
-            messages.append("manifest 缺少 metadata（建议重新训练生成版本信息）")
-        elif meta.get("data_hash") is None:
-            messages.append("manifest metadata 缺少 data_hash")
-
-        if messages:
-            level = "error" if not all_ok else "warning"
-            for m in messages:
-                getattr(logger, level)("[manifest 校验] %s", m)
-        return all_ok, messages
-
-    def _model_version(self) -> str:
-        """以 manifest 内容哈希作为可复核模型版本，不虚构人工版本号。"""
-        path = self.model_dir / "models_manifest.json"
-        try:
-            return "manifest-sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()[:12]
-        except OSError:
-            return "manifest-unavailable"
 
     # ================= XGBoost-Cox 生存模型接口（可选，预留） =================
     def _load_survival(self):

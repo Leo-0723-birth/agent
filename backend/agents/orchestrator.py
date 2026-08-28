@@ -53,17 +53,6 @@ class SweepingOrchestrator(AgentBase):
                  use_checkpointer=False, use_semantic_cases=True, max_documents=20,
                  progress_callback=None):
         super().__init__(progress_callback=progress_callback)
-        # 统一运行期开关配置：各 Agent 经 run_config 读取，不再逐层透传
-        from ..run_config import RunConfig
-        self.run_config = RunConfig(
-            use_llm=use_llm,
-            use_finbert=use_finbert,
-            use_rule=use_rule,
-            rate_limit=rate_limit,
-            use_semantic_cases=use_semantic_cases,
-            max_documents=max_documents,
-            use_checkpointer=use_checkpointer,
-        )
         self.use_llm = use_llm          # 公告研读/归因的 LLM 开关
         self.use_finbert = use_finbert  # FinBERT 门控开关
         self.use_rule = use_rule        # 规则抽取通道（官方词典）
@@ -87,6 +76,14 @@ class SweepingOrchestrator(AgentBase):
         except Exception as e:
             self._graph = None
             _logger.warning("LangGraph 不可用，回落确定性串行编排: %s: %s", type(e).__name__, e)
+
+    def _agent_callback(self, agent_key):
+        if self.progress_callback is None:
+            return None
+
+        def callback(payload):
+            self.progress_callback({"agent_key": agent_key, **(payload or {})})
+        return callback
 
     def _agent_callback(self, agent_key):
         if self.progress_callback is None:
@@ -143,15 +140,17 @@ class SweepingOrchestrator(AgentBase):
     def _run_announcement(self, company, ctx):
         from .announcement_reader import AnnouncementReaderAgent
         agent = AnnouncementReaderAgent(
-            run_config=self.run_config,
+            max_documents=self.max_documents,
+            use_finbert=self.use_finbert,
+            use_llm=self.use_llm,
+            use_rule=self.use_rule,
             progress_callback=self._agent_callback("announcement"),
         )
         agent.run(company, ctx)      # base.run 自动把 trace 追加进 ctx.trace_log
 
     def _run_financial(self, company, ctx):
         from .financial_detector import FinancialDetectorAgent
-        # 财务 LLM 解读通道未接入，保持显式关闭；限速等公共开关走 RunConfig
-        agent = FinancialDetectorAgent(use_llm=False, run_config=self.run_config)
+        agent = FinancialDetectorAgent(use_llm=False, rate_limit=self.rate_limit)
         agent.progress_callback = self._agent_callback("financial")
         agent.run(company, ctx)
 
@@ -159,7 +158,7 @@ class SweepingOrchestrator(AgentBase):
         """预测建模（待填充）：已实现则调用；未实现则占位并记录 trace。"""
         try:
             from .predictor import PredictorAgent
-            agent = PredictorAgent(run_config=self.run_config)
+            agent = PredictorAgent()
             agent.progress_callback = self._agent_callback("prediction")
             agent.run(company, ctx)
         except Exception as e:
@@ -172,7 +171,7 @@ class SweepingOrchestrator(AgentBase):
     def _run_cases(self, company, ctx):
         try:
             from .case_retriever import CaseRetrieverAgent
-            agent = CaseRetrieverAgent(run_config=self.run_config)
+            agent = CaseRetrieverAgent(use_semantic=self.use_semantic_cases)
             agent.progress_callback = self._agent_callback("case")
             agent.run(company, ctx)
         except Exception as e:
@@ -183,7 +182,7 @@ class SweepingOrchestrator(AgentBase):
 
     def _run_attribution(self, company, ctx):
         from .attributor import AttributorAgent
-        agent = AttributorAgent(run_config=self.run_config)
+        agent = AttributorAgent(use_llm=self.use_llm)
         agent.progress_callback = self._agent_callback("attribution")
         agent.run(company, ctx)
 
@@ -191,7 +190,7 @@ class SweepingOrchestrator(AgentBase):
         """chunk 级段落检索（可选）：chunk 索引缺失时自动跳过，不打断流水线。"""
         try:
             from .chunk_retriever import ChunkRetrieverAgent
-            agent = ChunkRetrieverAgent(run_config=self.run_config)
+            agent = ChunkRetrieverAgent()
             agent.progress_callback = self._agent_callback("chunk")
             agent.run(company, ctx)
         except Exception as e:
@@ -201,7 +200,7 @@ class SweepingOrchestrator(AgentBase):
 
     def _run_report(self, company, ctx):
         from .reporter import ReporterAgent
-        agent = ReporterAgent(run_config=self.run_config)
+        agent = ReporterAgent()
         agent.progress_callback = self._agent_callback("report")
         agent.run(company, ctx)
 
