@@ -1092,6 +1092,21 @@
   // ==================== API 配置 ====================
   const API_BASE = '';
 
+  // API Key：从 localStorage 读取；若后端启用了 API_KEY 而本地没有，会弹框提示输入。
+  function getApiKey() {
+    return (localStorage.getItem('risk_api_key') || '').trim();
+  }
+  function setApiKey(key) {
+    localStorage.setItem('risk_api_key', key);
+  }
+
+  async function apiFetch(url, options = {}) {
+    const key = getApiKey();
+    const headers = { ...(options.headers || {}) };
+    if (key) headers['X-API-Key'] = key;
+    return fetch(url, { ...options, headers });
+  }
+
   // ==================== 全局状态 ====================
   const AppState = {
     currentCompany: null,
@@ -1126,7 +1141,7 @@
   async function fetchCompanies() {
     companiesLoadError = '';
     try {
-      const resp = await fetch(`${API_BASE}/api/companies`);
+      const resp = await apiFetch(`${API_BASE}/api/companies`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
       if (Array.isArray(data) && data.length) {
@@ -1165,7 +1180,6 @@
   ];
 
   let wsConnection = null;
-  let lastResultIsRealtime = false;
 
   // ==================== 工具函数 ====================
   function getRiskColor(level) {
@@ -1240,15 +1254,14 @@
   async function fetchAnalysis(codes, window = 60, useLLM = false, useBGE = true) {
     showLoading(true);
     try {
-      const resp = await fetch(`${API_BASE}/api/analyze`, {
+      const resp = await apiFetch(`${API_BASE}/api/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ codes, window, use_llm: useLLM, use_bge: useBGE })
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
-      lastResultIsRealtime = false;
-      data.forEach(item => { AppState.resultCache.set(item.code, item); });
+      data.forEach(item => { setCachedResult(item, false); });
       return data;
     } catch (err) {
       console.error('API 调用失败:', err);
@@ -1262,10 +1275,10 @@
   async function fetchSingleCompany(code) {
     if (AppState.resultCache.has(code)) return AppState.resultCache.get(code);
     try {
-      const resp = await fetch(`${API_BASE}/api/company/${encodeURIComponent(code)}`);
+      const resp = await apiFetch(`${API_BASE}/api/company/${encodeURIComponent(code)}`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
-      AppState.resultCache.set(code, data);
+      setCachedResult(data, false);
       return data;
     } catch (err) {
       console.warn(`获取 ${code} 失败:`, err);
@@ -1325,51 +1338,24 @@
     // 切换公司前先取消旧的实时任务（任务 A1/B1-4：避免串行锁冲突 / 409）
     const oldTaskId = AppState.currentTaskId;
     if (oldTaskId) {
-      try { await fetch(`${API_BASE}/api/scan/${oldTaskId}`, { method: 'DELETE' }); } catch (e) {}
+      try { await apiFetch(`${API_BASE}/api/scan/${oldTaskId}`, { method: 'DELETE' }); } catch (e) {}
       AppState.set('currentTaskId', null);
     }
     if (wsConnection) { try { wsConnection.close(); } catch (e) {} wsConnection = null; }
+
+    showLoading(true, { realtime: true, step: 0, total: 7, message: '创建实时扫雷任务...' });
+    AppState.set('scanStatus', 'pending');
+    resetAgentStates();
 
     const windowVal = parseWindow();
     const maxDocs = parseInt(document.getElementById('paramMaxDocs').value) || 3;
     const useLLM = getParamSwitch('switchLLM');
     const useBGE = getParamSwitch('switchBGE');
 
-    showLoading(true, { realtime: true, step: 0, total: 7, message: '创建实时扫雷任务...' });
-    AppState.set('scanStatus', 'pending');
-    resetAgentStates();
-
     let taskId;
     try {
-      let resp = await fetch(`${API_BASE}/api/scan`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, window: windowVal, use_llm: useLLM, use_bge: useBGE, max_documents: maxDocs, realtime: true })
-      });
-      // 409 冲突：已有实时任务在跑，弹框确认后带 force 重发（任务 A1-3 / B1-4）
-      if (resp.status === 409) {
-        const shouldSwitch = confirm('当前有实时任务正在运行，是否终止并切换公司？');
-        if (!shouldSwitch) { showLoading(false); return; }
-        resp = await fetch(`${API_BASE}/api/scan`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code, window: windowVal, use_llm: useLLM, use_bge: useBGE, max_documents: maxDocs, realtime: true, force: true })
-        });
-      }
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-      // 离线快照 / 缓存命中：秒出，不建 WebSocket（任务 A2-5 / B3-1）
-      if (data.cached && data.result) {
-        showLoading(false);
-        AppState.set('scanStatus', 'completed');
-        AppState.resultCache.set(data.result.code, data.result);
-        markAllAgentsDone();
-        showDashboard();
-        renderDashboard(data.result);
-        return;
-      }
-      taskId = data.task_id;
-      AppState.set('currentTaskId', taskId);
+      taskId = await createRealtimeTask(code, windowVal, useLLM, useBGE, maxDocs);
+      if (!taskId) return; // 已处理缓存/错误
     } catch (err) {
       console.error('创建任务失败:', err);
       showLoading(false);
@@ -1379,14 +1365,70 @@
       return;
     }
 
-    const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/pipeline/${taskId}`;
+    connectRealtimeWebSocket(code, taskId);
+  }
+
+  async function createRealtimeTask(code, windowVal, useLLM, useBGE, maxDocs) {
+    let resp = await apiFetch(`${API_BASE}/api/scan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, window: windowVal, use_llm: useLLM, use_bge: useBGE, max_documents: maxDocs, realtime: true })
+    });
+    // 401：后端启用了 API_KEY，提示输入一次后重试
+    if (resp.status === 401) {
+      const key = prompt('后端已启用 API Key，请输入：');
+      if (key) {
+        setApiKey(key);
+        resp = await apiFetch(`${API_BASE}/api/scan`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, window: windowVal, use_llm: useLLM, use_bge: useBGE, max_documents: maxDocs, realtime: true })
+        });
+      }
+    }
+    // 409 冲突：已有实时任务在跑，弹框确认后带 force 重发
+    if (resp.status === 409) {
+      const shouldSwitch = confirm('当前有实时任务正在运行，是否终止并切换公司？');
+      if (!shouldSwitch) { showLoading(false); return null; }
+      resp = await apiFetch(`${API_BASE}/api/scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, window: windowVal, use_llm: useLLM, use_bge: useBGE, max_documents: maxDocs, realtime: true, force: true })
+      });
+    }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    // 离线快照 / 缓存命中：秒出，不建 WebSocket
+    if (data.cached && data.result) {
+      showLoading(false);
+      AppState.set('scanStatus', 'completed');
+      setCachedResult(data.result, true);
+      markAllAgentsDone();
+      showDashboard();
+      renderDashboard(data.result);
+      return null;
+    }
+    AppState.set('currentTaskId', data.task_id);
+    return data.task_id;
+  }
+
+  function connectRealtimeWebSocket(code, taskId) {
+    if (wsConnection) { try { wsConnection.close(); } catch (e) {} wsConnection = null; }
+
+    const token = getApiKey();
+    const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/pipeline/${taskId}${token ? '?token=' + encodeURIComponent(token) : ''}`;
     const ws = new WebSocket(wsUrl);
     wsConnection = ws;
-    let reconnectCount = 0;
+
+    // 重连计数器绑定到当前任务，跨调用不重置
+    if (!AppState.wsReconnectCount || AppState.wsTaskId !== taskId) {
+      AppState.wsReconnectCount = 0;
+      AppState.wsTaskId = taskId;
+    }
     const maxReconnect = 3;
 
     ws.onopen = () => {
-      reconnectCount = 0;
+      AppState.wsReconnectCount = 0;
       updateLoadingProgress(0, 7, '已连接，等待模型预热...');
     };
 
@@ -1400,7 +1442,6 @@
         AppState.set('scanStatus', 'running');
         updateAgentState(data.agent, data.status, data.message);
         updateLoadingProgress(data.step, data.total, data.message);
-        // 增量渲染：只 patch 当前 Agent 步骤 + 顶部流水线按状态 key 去重
         renderPipelineSteps(data.agent);
         const topIdx = mapStepToTopPipeline(data.step);
         renderTopPipeline(topIdx, 5, data.status === 'error' ? topIdx - 1 : null);
@@ -1409,15 +1450,13 @@
         AppState.set('scanStatus', 'completed');
         AppState.set('currentTaskId', null);
         if (data.result) {
-          lastResultIsRealtime = true;
-          AppState.resultCache.set(data.result.code, data.result);
+          setCachedResult(data.result, true);
           markAllAgentsDone();
           showDashboard();
           renderDashboard(data.result);
         }
         setTimeout(() => { try { ws.close(); } catch (e) {} }, 500);
       } else if (data.type === 'error') {
-        // fatal=true 表示无离线兜底，需降级；非 fatal 等待后端随后推送的 fallback 消息
         if (data.fatal) {
           showLoading(false);
           AppState.set('scanStatus', 'failed');
@@ -1432,7 +1471,7 @@
         AppState.set('currentTaskId', null);
         showFallback(data.message || '已切换离线快照');
         if (data.result) {
-          AppState.resultCache.set(data.result.code, data.result);
+          setCachedResult(data.result, false);
           markAllAgentsDone();
           showDashboard();
           renderDashboard(data.result);
@@ -1452,10 +1491,10 @@
     ws.onclose = () => {
       wsConnection = null;
       if (AppState.scanStatus === 'running' || AppState.scanStatus === 'pending') {
-        if (reconnectCount < maxReconnect) {
-          reconnectCount++;
-          const delay = 1000 * Math.pow(2, reconnectCount - 1);
-          setTimeout(() => { startRealtimeScan(code); }, delay);
+        if (AppState.wsReconnectCount < maxReconnect) {
+          AppState.wsReconnectCount++;
+          const delay = 1000 * Math.pow(2, AppState.wsReconnectCount - 1);
+          setTimeout(() => { connectRealtimeWebSocket(code, taskId); }, delay);
         } else {
           showLoading(false);
           showFallback('WebSocket 连接断开，已自动切换离线快照');
@@ -1463,6 +1502,17 @@
         }
       }
     };
+  }
+
+  // 缓存结果时同时记录来源，避免实时/离线徽标串公司
+  function setCachedResult(result, isRealtime) {
+    if (!result) return;
+    result._resultSource = isRealtime ? 'realtime' : 'offline';
+    AppState.resultCache.set(result.code, result);
+  }
+
+  function isRealtimeResult(data) {
+    return data && data._resultSource === 'realtime';
   }
 
   async function fallbackToOffline(code) {
@@ -2174,6 +2224,7 @@
     const factors = (data.riskFactorDetails || []).slice().sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 8);
     const evidence = data.attributionEvidence || [];
     const narrative = data.attribution || '';
+    const cases = data.similarCases || [];
 
     const factorHtml = factors.length ? factors.map(f => `
       <div style="margin-bottom: 14px;">
@@ -2194,6 +2245,17 @@
         <div class="attr-evidence" style="font-size: 12px; line-height: 1.6; margin-top: 4px;">${e.evidence || '—'}</div>
       </div>
     `).join('') : '<div class="empty-state" style="padding: 20px;">暂无归因证据</div>';
+
+    const caseHtml = cases.length ? cases.slice(0, 5).map((c, i) => `
+      <div class="attribution-item" style="margin-bottom: 14px;">
+        <div class="attr-factor" style="font-size: 12px;">
+          ${escapeHtml(c.company || c.name || '相似案例')} <span style="color: var(--text-muted); margin-left: 6px;">相似度 ${((c.similarity || 0) * 100).toFixed(1)}%</span>
+        </div>
+        <div class="attr-evidence" style="font-size: 12px; line-height: 1.6; margin-top: 4px;">
+          ${escapeHtml(c.reason || c.description || '—')}
+        </div>
+      </div>
+    `).join('') : '<div class="empty-state" style="padding: 20px;">暂无匹配案例</div>';
 
     const narrativeHtml = narrative ? `
       <div class="report-section">
@@ -2234,7 +2296,7 @@
 
         <div class="report-preview" style="margin: 0;">
           <div class="report-preview-header" style="border-bottom: none; padding-bottom: 0;">
-            <div class="report-preview-title">归因证据</div>
+            <div class="report-preview-title">归因证据（对应原文）</div>
           </div>
           <div style="padding: 20px;">
             ${evidenceHtml}
@@ -2242,7 +2304,25 @@
         </div>
       </div>
 
-      ${narrativeHtml}
+      <div style="display: grid; grid-template-columns: 1fr 1.5fr; gap: 24px; margin-bottom: 24px;">
+        <div class="report-preview" style="margin: 0;">
+          <div class="report-preview-header" style="border-bottom: none; padding-bottom: 0;">
+            <div class="report-preview-title">相似监管案例</div>
+          </div>
+          <div style="padding: 20px; max-height: 360px; overflow-y: auto;">
+            ${caseHtml}
+          </div>
+        </div>
+
+        ${narrativeHtml ? `<div class="report-preview" style="margin: 0;">
+          <div class="report-preview-header" style="border-bottom: none; padding-bottom: 0;">
+            <div class="report-preview-title">综合归因叙述</div>
+          </div>
+          <div style="padding: 20px;">
+            ${narrative}
+          </div>
+        </div>` : ''}
+      </div>
     `;
   }
 
@@ -2346,22 +2426,6 @@
     if (f1El) f1El.textContent = (metrics.F1 || 0).toFixed(4);
   }
 
-  function computeHealthScore(data) {
-    if (!data) return '—';
-    let score = 100;
-    score -= (data.risk || 0);
-    const anomalies = data.financialAnomalies || [];
-    anomalies.forEach(a => {
-      score -= (a.severity || 0) >= 4 ? 15 : (a.severity || 0) >= 2 ? 8 : 4;
-    });
-    const annRisks = data.announcementRisks || [];
-    score -= annRisks.filter(r => r.level === 'high').length * 4;
-    score -= annRisks.filter(r => r.level === 'mid').length * 2;
-    const maxSim = Math.max(0, ...(data.similarCases || []).map(c => c.similarity || 0));
-    score -= maxSim * 100 * 0.5;
-    return Math.max(0, Math.min(100, Math.round(score)));
-  }
-
   // ==================== 主界面渲染 ====================
   let currentRiskWindow = 60;
 
@@ -2404,17 +2468,12 @@
     if (!data) return;
 
     document.getElementById('companyName').textContent = data.name || '—';
-    const healthScore = computeHealthScore(data);
-    const healthEl = document.getElementById('healthScoreValue');
-    if (healthEl) {
-      healthEl.textContent = typeof healthScore === 'number' ? healthScore : '—';
-      healthEl.style.color = healthScore >= 80 ? '#10B981' : healthScore >= 50 ? '#F59E0B' : '#EF4444';
-    }
     const codeEl = document.getElementById('companyCode');
     codeEl.textContent = `${data.code || '—'} · ${parseWindow()} 天窗口`;
     const badge = document.createElement('span');
-    badge.className = lastResultIsRealtime ? 'snapshot-badge realtime' : 'snapshot-badge';
-    badge.textContent = lastResultIsRealtime ? '⚡ 实时扫雷' : '📷 离线快照';
+    const realtime = isRealtimeResult(data);
+    badge.className = realtime ? 'snapshot-badge realtime' : 'snapshot-badge';
+    badge.textContent = realtime ? '⚡ 实时扫雷' : '📷 离线快照';
     codeEl.appendChild(badge);
     document.getElementById('confidenceValue').textContent = (data.confidence !== undefined ? data.confidence.toFixed(2) : '—');
     document.getElementById('factorCount').textContent = (data.factors !== undefined ? data.factors : '—');
@@ -2795,7 +2854,7 @@
     meta.className = 'report-meta';
     meta.appendChild(document.createTextNode('📄 ' + (c.code || '—')));
     meta.appendChild(document.createTextNode(' 🕐 ' + ((c.generatedAt || '').substring(0, 10) || '—')));
-    meta.appendChild(document.createTextNode(' ⏱ ' + (c.code === data.code && lastResultIsRealtime ? '实时扫雷' : '离线快照')));
+    meta.appendChild(document.createTextNode(' ⏱ ' + (isRealtimeResult(c) ? '实时扫雷' : '离线快照')));
 
     const summary = document.createElement('div');
     summary.className = 'report-summary';
@@ -2978,7 +3037,7 @@
         (c.generatedAt || '').substring(0, 10) || '—',
         null,
         c.risk !== undefined ? c.risk.toFixed(1) + '%' : '—',
-        c.code === data.code && lastResultIsRealtime ? '实时' : '离线快照'
+        isRealtimeResult(c) ? '实时' : '离线快照'
       ];
       tds.forEach((val, idx) => {
         const td = document.createElement('td');
