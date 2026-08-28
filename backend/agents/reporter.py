@@ -64,6 +64,10 @@ class ReporterAgent(AgentBase):
     # ================= 落盘（报告存档） =================
     def _save_report(self, ctx, report_json: dict, markdown: str):
         """把报告写入 output/reports/ 并更新 manifest 索引。"""
+        quality = (getattr(ctx, "meta", {}) or {}).get("runtime_quality", {}) or {}
+        if quality.get("publishable") is False:
+            _logger.warning("本次运行质量未达发布条件，跳过报告落盘: %s", quality.get("degraded_reasons", []))
+            return
         try:
             REPORTS_DIR.mkdir(parents=True, exist_ok=True)
             rid = report_json["report_id"]

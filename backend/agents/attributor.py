@@ -38,6 +38,7 @@ from pathlib import Path
 
 from ..llm import chat
 from ..run_config import RunConfig
+from ..skills.evidence_policy import publishable_evidence
 from .base import AgentBase
 
 # 特征 → 官方 taxonomy（案例库风险因素体系）映射表（feature_taxonomy_map.csv）
@@ -240,7 +241,7 @@ class AttributorAgent(AgentBase):
             })
         # 公告风险要素按严重度降序，取 top_k
         risks = sorted(
-            ctx.semantic.risk_factors,
+            publishable_evidence(ctx.semantic.risk_factors),
             key=lambda r: -int(r.get("severity", 0)),
         )
         for r in risks[:self.top_k]:
@@ -314,12 +315,12 @@ class AttributorAgent(AgentBase):
                 "indicator": a.get("indicator"),
                 "snippet": a.get("evidence", ""),
             })
-        for i, s in enumerate(ctx.semantic.evidence_snippets):
+        for i, factor in enumerate(publishable_evidence(ctx.semantic.risk_factors)):
             pool.append({
                 "evidence_id": f"sem_{i:03d}",
                 "source": "公告研读",
-                "label_ref": s.get("category", ""),
-                "snippet": s.get("text", ""),
+                "label_ref": factor.get("taxonomy_l2") or factor.get("category", ""),
+                "snippet": factor.get("evidence", ""),
             })
         return pool
 

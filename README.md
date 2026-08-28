@@ -149,6 +149,11 @@ pip install -r requirements.txt
 
 # 2. 配置 .env（见上节）
 
+# 2.1 首次部署下载公告 NLP 模型（约 3.8GB，只需执行一次）
+python backend/scripts/download_runtime_models.py --model all
+# 已下载环境可离线核验；自定义缓存时两次都传同一个 --cache-dir
+python backend/scripts/download_runtime_models.py --model all --verify-only
+
 # 3. 启动后端（FastAPI + WebSocket）
 python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
 #   或 python api/main.py
@@ -157,6 +162,10 @@ python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
 #    浏览器访问 http://127.0.0.1:8000/
 #    接口文档 http://127.0.0.1:8000/docs
 ```
+
+模型权重不提交到 Git。下载脚本固定 BGE、BGE Reranker 与中文 FinBERT 的
+仓库版本，并在完成后打印实际快照路径；团队成员和算力平台各下载一次即可。
+若使用共享磁盘，可通过 `--cache-dir <共享目录>` 让多个运行实例复用缓存。
 
 ## 七、API 接口
 

@@ -126,12 +126,23 @@ def agents():
 
 @app.get("/api/health")
 async def health():
+    realtime_verified = os.getenv("REALTIME_READY", "").strip().lower() in {"1", "true", "yes"}
+    model_manifest = PROJECT_ROOT / "backend" / "models" / "predictor" / "models_manifest.json"
+    reports_manifest = PROJECT_ROOT / "backend" / "data" / "output" / "reports" / "manifest.json"
     return {
         "status": "ok",
+        "liveness": "ok",
         "agents": AGENT_TOTAL,
         "online": True,
         "mode": "hybrid",           # 支持离线 + 实时
-        "realtime_ready": True,
+        "realtime_ready": realtime_verified,
+        "realtime_status": "verified" if realtime_verified else "unverified",
+        "checks": {
+            "model_manifest": model_manifest.is_file(),
+            "offline_reports": reports_manifest.is_file(),
+            "external_sources": "not_probed",
+            "f1_same_pipeline": "required",
+        },
     }
 
 
@@ -223,11 +234,8 @@ async def mock_company(code: str):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     result = get_offline_result(normalized, 60)
     if result is None:
-        companies = list_available_companies()
-        result = get_offline_result(companies[0]["code"], 60) if companies else None
-    if result is None:
-        raise HTTPException(status_code=404, detail="仓库中没有可用的 mock/离线报告")
-    return result.model_copy(update={"code": normalized})
+        raise HTTPException(status_code=404, detail=f"未找到 {normalized} 的 mock/离线报告")
+    return result
 
 
 @app.websocket("/ws/pipeline/{task_id}")

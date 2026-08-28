@@ -1,4 +1,4 @@
-jian@echo off
+@echo off
 chcp 65001 >nul
 title FastAPI Service - Risk Early Warning System
 cd /d "%~dp0"
@@ -18,7 +18,18 @@ echo   Close this window to stop the service.
 echo ============================================================
 echo.
 
-".venv\Scripts\python.exe" -m uvicorn api.main:app --host %API_HOST% --port %API_PORT%
+set "PYTHON_EXE=.venv\Scripts\python.exe"
+if not exist "%PYTHON_EXE%" set "PYTHON_EXE=python"
+
+%PYTHON_EXE% -c "import uvicorn" >nul 2>nul
+if errorlevel 1 (
+  echo ERROR: Python or uvicorn is unavailable.
+  echo Run: python -m pip install -r requirements.txt
+  pause
+  exit /b 1
+)
+
+%PYTHON_EXE% -m uvicorn api.main:app --host %API_HOST% --port %API_PORT%
 
 echo.
 echo Service stopped. Press any key to close.

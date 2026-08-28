@@ -15,6 +15,7 @@
 依赖：backend/scripts/train_models.py 先训练产出 models/predictor/（9 模型 + manifest）。
 """
 import json
+import hashlib
 import sys
 import threading
 from pathlib import Path
@@ -148,6 +149,14 @@ class PredictorAgent(AgentBase):
             for m in messages:
                 getattr(logger, level)("[manifest 校验] %s", m)
         return all_ok, messages
+
+    def _model_version(self) -> str:
+        """以 manifest 内容哈希作为可复核模型版本，不虚构人工版本号。"""
+        path = self.model_dir / "models_manifest.json"
+        try:
+            return "manifest-sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+        except OSError:
+            return "manifest-unavailable"
 
     # ================= XGBoost-Cox 生存模型接口（可选，预留） =================
     def _load_survival(self):
@@ -416,11 +425,21 @@ class PredictorAgent(AgentBase):
         # 可选：XGBoost-Cox 生存模型已部署 → 单模型产出 30/60/90d（输出契约不变）
         if self._load_survival():
             return self._execute_survival(ctx, code, as_of)
-        # 有财务异常实时特征 → 走实时推理（F1 标量 + F2-F6 实时值，缺失列用训练集中位数兜底）；
-        # 否则 → 兜底查表（离线建模数据集）
-        realtime_ok = bool(getattr(getattr(ctx, "financial", None), "features", None))
+        from ..skills.feature_composer import realtime_f1_compatibility
+        f1_ok, f1_audit = realtime_f1_compatibility(ctx, manifest)
+        # 只有财务特征存在且训练所需 F1 已按完全相同口径生成，才允许标记实时推理。
+        realtime_ok = bool(getattr(getattr(ctx, "financial", None), "features", None)) and f1_ok
         if realtime_ok:
             return self._execute_realtime(ctx, manifest)
+        reasons = []
+        if not f1_ok:
+            reasons.append(
+                f"实时F1与训练特征口径不一致（缺少 {f1_audit['missing']}/{f1_audit['required']} 个语义特征），已回退历史查表"
+            )
+        if not getattr(getattr(ctx, "financial", None), "features", None):
+            reasons.append("实时财务特征不可用，已回退历史查表")
+        ctx.meta["prediction_degraded_reasons"] = reasons
+        ctx.meta["f1_compatibility"] = f1_audit
         return self._execute_lookup(ctx, manifest, code, as_of)
 
     def _execute_survival(self, ctx, code, as_of):
@@ -433,7 +452,11 @@ class PredictorAgent(AgentBase):
         surv = self._load_survival()
         feats = list(surv["features"])
         fill = load_fill_dict("60", expected_features=feats)
-        realtime_ok = bool(getattr(getattr(ctx, "financial", None), "features", None))
+        from ..skills.feature_composer import realtime_f1_compatibility
+        f1_ok, f1_audit = realtime_f1_compatibility(
+            ctx, {"windows": {"survival": {"features": feats}}}
+        )
+        realtime_ok = bool(getattr(getattr(ctx, "financial", None), "features", None)) and f1_ok
         if realtime_ok:
             vec = compose_realtime_features(ctx, feats, fill)
             missing = [f for f in feats if vec.get(f) is None]
@@ -451,7 +474,12 @@ class PredictorAgent(AgentBase):
             vec[f] = fill.get(f, 0.0)
         X = np.asarray([vec[f] for f in feats], dtype=np.float32).reshape(1, -1)
 
-        pred = {"data_source": "survival_cox"}
+        pred = {"data_source": "realtime" if realtime_ok else "offline_lookup",
+                "model_version": self._model_version(),
+                "confidence_meaning": "predicted_class_score"}
+        if not realtime_ok:
+            pred["degraded_reasons"] = ["生存模型实时特征口径不完整，已使用历史特征查表"]
+            pred["f1_compatibility"] = f1_audit
         p60, conf, shap = None, None, []
         for h in self.horizons:
             p, c, s = self._infer_survival(X, feats, h)
@@ -474,7 +502,8 @@ class PredictorAgent(AgentBase):
     def _execute_realtime(self, ctx, manifest):
         """实时推理主逻辑：以公告研读 F1 + 财务异常 F2-F6 为数据源，概率由实时数据驱动。"""
         from ..skills.feature_composer import coverage_stats
-        pred = {"data_source": "realtime"}
+        pred = {"data_source": "realtime", "model_version": self._model_version(),
+                "confidence_meaning": "predicted_class_score"}
         p60, conf, shap = None, None, []
         for h in self.horizons:
             p, c, s = self._predict_realtime(h, ctx, manifest)
@@ -502,16 +531,24 @@ class PredictorAgent(AgentBase):
 
     def _execute_lookup(self, ctx, manifest, code, as_of):
         """兜底：离线建模数据查表推理（公司无实时财务数据时）。"""
+        degraded_reasons = (getattr(ctx, "meta", {}) or {}).get("prediction_degraded_reasons", [])
+        f1_audit = (getattr(ctx, "meta", {}) or {}).get("f1_compatibility", {})
         row = self._lookup(code, as_of)
         if row is None:
             ctx.prediction = {"probability_30d": None, "probability_60d": None,
                               "probability_90d": None, "risk_level": "未预测",
                               "confidence": None, "shap_features": [],
-                              "reason": "未找到该股票特征（不在建模数据集内）"}
+                              "reason": "未找到该股票特征（不在建模数据集内）",
+                              "data_source": "unavailable",
+                              "degraded_reasons": list(degraded_reasons or [])}
             return ctx
 
         anchor = str(row["report_period"])
-        pred = {"feature_anchor": anchor, "data_source": "offline_lookup"}
+        pred = {"feature_anchor": anchor, "data_source": "offline_lookup",
+                "model_version": self._model_version(),
+                "confidence_meaning": "predicted_class_score",
+                "degraded_reasons": list(degraded_reasons or []),
+                "f1_compatibility": f1_audit or {}}
         p60, conf, shap = None, None, []
         for h in self.horizons:
             p, c, s = self._predict_one(h, row, manifest)
