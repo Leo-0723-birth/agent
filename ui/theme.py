@@ -98,6 +98,15 @@ def apply_page_style() -> None:
         .risk-source-card b {{ display:block; font-size:.82rem; }}
         .risk-source-card span {{ display:block; color:var(--risk-muted); font-size:.68rem; margin-top:.2rem; }}
         .risk-note {{ color:var(--risk-muted); font-size:.74rem; line-height:1.6; }}
+        .risk-color-legend {{ display:flex; flex-wrap:wrap; align-items:center; gap:.45rem 1rem;
+          margin:.25rem 0 .1rem; color:var(--risk-muted); font-size:.76rem; }}
+        .risk-color-legend-item {{ display:inline-flex; align-items:center; gap:.4rem; white-space:nowrap; }}
+        .risk-color-swatch {{ width:.78rem; height:.78rem; border-radius:2px;
+          background:var(--legend-color); box-shadow:inset 0 0 0 1px rgba(49,68,86,.08); }}
+        .risk-color-legend-note {{ flex-basis:100%; color:#8A949C; font-size:.7rem; line-height:1.45; }}
+        .risk-evidence-check {{ display:inline-flex; align-items:center; border:1px solid #BBD9CB;
+          border-radius:999px; padding:.14rem .48rem; color:#35645B; background:#EAF5F0;
+          font-size:.66rem; font-weight:700; margin-right:.45rem; }}
         @media (max-width: 1100px) {{ .risk-metric-grid {{ grid-template-columns:repeat(3,1fr); }} .risk-trace {{ grid-template-columns:repeat(4,1fr); }} }}
         @media (max-width: 700px) {{ .risk-metric-grid {{ grid-template-columns:repeat(2,1fr); }} .risk-trace {{ grid-template-columns:repeat(2,1fr); }} .risk-source-grid {{ grid-template-columns:repeat(2,1fr); }} }}
         </style>

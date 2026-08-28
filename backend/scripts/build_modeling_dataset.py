@@ -1,25 +1,25 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-数据处理：构建建模数据集（F1 前50语义 + F2-F6 + 30/60/90d 标签）
+数据处理：构建建模数据集（F1 50维语义 + F2-F6 + 30/60/90d 标签）
 =================================================================
 流程：
-  1. 加载 F1 语义特征 parquet（300 维 PCA 主成分，announcement_semantic_*）
-  2. 按"训练集 Spearman |corr| 与 target_60d"筛选 Top-50
+  1. 加载 F1 语义特征 parquet（announcement_semantic_*）
+  2. 若多于 50 维，按训练集 Spearman |corr| 与 target_60d 筛选 Top-50；
+     全量公告流水线已经输出 PCA50 时保留全部 50 维
   3. 加载 F2/F3/F4/F5/F6（键：company_code + report_period）
   4. 由 inquiry_events.csv（kind=='letter'）构建 30/60/90 天未来问询标签
   5. 合并保存 processed_dataset.csv + F1_top50_features.csv
 
 输出：backend/data/modeling/processed_dataset.csv
-说明：与上游版本相比仅更换 F1 数据源（问询函语义 → 官方公告语义，
-      20% 年报解析；全量数据替换 raw/F1_announcement_semantic_features.parquet 后重跑即可）。
+说明：F1 由 import_full_announcement_f1.py 从全量公告流水线的
+      company_quarter_pca50.parquet 导入；
       标签口径、F2 骨架、合并逻辑保持不变。
 """
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.stats import spearmanr
 
 # 训练原料从项目内读取（backend/data/modeling/raw/），输出到建模数据根目录
 _MODELING = Path(__file__).resolve().parent.parent.parent / "backend" / "data" / "modeling"
@@ -34,7 +34,7 @@ N_KEEP = 50
 
 # ============================================================
 # 1) F1 语义特征 Top-50 选取（训练集 Spearman |corr| vs target_60d）
-#    数据源：官方公告语义特征（announcement_semantic_*，20% 年报解析）
+#    数据源：全量官方公告语义特征（announcement_semantic_*）
 # ============================================================
 f1 = pd.read_parquet(RAW / "F1_announcement_semantic_features.parquet")
 f1 = f1.rename(columns={"stock_code": "company_code", "T_date": "report_period"})
@@ -42,6 +42,8 @@ f1["company_code"] = f1["company_code"].astype(str)
 f1["report_period"] = pd.to_datetime(f1["report_period"], errors="coerce").dt.strftime("%Y%m%d")
 semantic_cols = [c for c in f1.columns if c.startswith("announcement_semantic_")]
 print(f"F1 公告语义特征: {len(semantic_cols)} 维（announcement_semantic_*）")
+if len(semantic_cols) < N_KEEP:
+    raise ValueError(f"F1 语义特征不足 {N_KEEP} 维，实际仅 {len(semantic_cols)} 维")
 
 # 选取用骨架：公司级 split（F2）+ 每个 (公司, 报告期) 的 target_60d
 _f2_sel = pd.read_csv(RAW / "F2_financial_anomaly.csv", encoding="utf-8-sig")
@@ -70,21 +72,29 @@ f1_sel = f1[["company_code", "report_period"] + semantic_cols].merge(
 _tr = (f1_sel["split"] == "Train") & (f1_sel["target_60d"] >= 0)
 _y = f1_sel.loc[_tr, "target_60d"]
 
-corr_scores = {}
-for c in semantic_cols:
-    col = f1_sel.loc[_tr, c]
-    if col.nunique() > 1:
-        try:
-            r, _ = spearmanr(col, _y)
-            corr_scores[c] = abs(r) if not np.isnan(r) else 0.0
-        except Exception:
-            corr_scores[c] = 0.0
-    else:
-        corr_scores[c] = 0.0
+def _spearman_abs(left, right):
+    """不依赖 SciPy 的 Spearman 绝对相关系数（平均秩 + Pearson）。"""
+    left_rank = pd.Series(left).rank(method="average").to_numpy(dtype="float64")
+    right_rank = pd.Series(right).rank(method="average").to_numpy(dtype="float64")
+    if np.std(left_rank) == 0 or np.std(right_rank) == 0:
+        return 0.0
+    value = float(np.corrcoef(left_rank, right_rank)[0, 1])
+    return abs(value) if np.isfinite(value) else 0.0
 
-top50 = [c for c, _ in sorted(corr_scores.items(), key=lambda x: x[1], reverse=True)[:N_KEEP]]
-print(f"F1 Top-{len(top50)} 特征已确定（|corr| 区间 "
-      f"{corr_scores[top50[0]]:.4f} ~ {corr_scores[top50[-1]]:.4f}）")
+
+if len(semantic_cols) == N_KEEP:
+    # 全量流水线已在训练集上拟合 PCA50；这里保留全部分量，不再次监督筛选。
+    top50 = semantic_cols
+    corr_scores = {c: None for c in semantic_cols}
+    print("F1 已是 PCA50，保留全部 50 维（不使用标签二次筛选）")
+else:
+    corr_scores = {}
+    for c in semantic_cols:
+        col = f1_sel.loc[_tr, c]
+        corr_scores[c] = _spearman_abs(col, _y) if col.nunique() > 1 else 0.0
+    top50 = [c for c, _ in sorted(corr_scores.items(), key=lambda x: x[1], reverse=True)[:N_KEEP]]
+    print(f"F1 Top-{len(top50)} 特征已确定（|corr| 区间 "
+          f"{corr_scores[top50[0]]:.4f} ~ {corr_scores[top50[-1]]:.4f}）")
 pd.DataFrame({"rank": range(1, len(top50) + 1), "feature": top50}).to_csv(
     SEL / "F1_top50_features.csv", index=False, encoding="utf-8-sig")
 

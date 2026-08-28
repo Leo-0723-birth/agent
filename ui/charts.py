@@ -120,11 +120,27 @@ def case_score_chart(cases: list[dict]) -> alt.Chart:
 
 def risk_severity_chart(factors: list[dict]) -> alt.Chart:
     counts = Counter(int(item.get("severity") or 0) for item in (factors or []))
-    frame = pd.DataFrame([{"严重度": str(level), "风险要素数": count} for level, count in sorted(counts.items())])
+    frame = pd.DataFrame(
+        [
+            {
+                "严重度": str(level),
+                "风险等级": "高风险" if level >= 4 else ("中风险" if level >= 3 else "低风险"),
+                "风险要素数": count,
+            }
+            for level, count in sorted(counts.items())
+        ]
+    )
     return alt.Chart(frame).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
         x=alt.X("严重度:N", title="严重度等级"),
         y=alt.Y("风险要素数:Q", title="风险要素数"),
-        color=alt.Color("严重度:N", scale=alt.Scale(range=[PALETTE["blue"], PALETTE["teal"], PALETTE["gold"], PALETTE["coral"]]), legend=None),
-        tooltip=["严重度:N", "风险要素数:Q"],
+        color=alt.Color(
+            "风险等级:N",
+            scale=alt.Scale(
+                domain=["高风险", "中风险", "低风险"],
+                range=[PALETTE["coral"], PALETTE["gold"], PALETTE["blue"]],
+            ),
+            legend=None,
+        ),
+        tooltip=["风险等级:N", "严重度:N", "风险要素数:Q"],
     ).properties(height=230)
 

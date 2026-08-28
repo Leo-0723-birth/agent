@@ -5,6 +5,8 @@ from urllib.parse import quote
 
 import streamlit as st
 
+from backend.skills.announcement_context_filter import contextual_suppression_reason
+
 
 def _safe(value) -> str:
     return html.escape(str(value if value is not None else ""))
@@ -51,6 +53,17 @@ def render_metric_grid(items: list[dict]) -> None:
     st.html(f'<div class="risk-metric-grid">{"".join(cards)}</div>')
 
 
+def render_color_legend(items: list[tuple[str, str]], note: str = "") -> None:
+    """Render an explicit swatch-to-label mapping below a chart."""
+    entries = "".join(
+        f'<span class="risk-color-legend-item"><i class="risk-color-swatch" '
+        f'style="--legend-color:{_safe(color)}"></i>{_safe(label)}</span>'
+        for label, color in items
+    )
+    note_html = f'<span class="risk-color-legend-note">{_safe(note)}</span>' if note else ""
+    st.html(f'<div class="risk-color-legend">{entries}{note_html}</div>')
+
+
 def render_trace(trace: list[dict]) -> None:
     steps = []
     for item in trace or []:
@@ -70,6 +83,29 @@ def render_trace(trace: list[dict]) -> None:
 def evidence_records(result: dict, limit: int = 8) -> list[dict]:
     records: list[dict] = []
     for index, item in enumerate(result.get("semantic", {}).get("risk_factors", []) or []):
+        evidence = str(item.get("evidence") or "").strip()
+        method = str(item.get("method") or "")
+        agreement = str(item.get("agreement_status") or "")
+        assertion_type = str(item.get("assertion_type") or "").lower()
+        factual_channel = method == "llm_evidence_validated" or agreement == "rule_llm_agree"
+        context_reason = contextual_suppression_reason(
+            rule_id=str(item.get("rule_id") or ""),
+            label=str(item.get("taxonomy_l2") or item.get("label") or ""),
+            text=evidence,
+            start=0,
+            end=len(evidence),
+        ) if evidence else "missing_evidence"
+        if (
+            not item.get("evidence_valid")
+            or not evidence
+            or not factual_channel
+            or (assertion_type and not assertion_type.startswith("actual_event"))
+            or context_reason
+        ):
+            continue
+        verification_label = (
+            "规则与 LLM 交叉一致" if agreement == "rule_llm_agree" else "原文事实语境已校验"
+        )
         records.append(
             {
                 "id": f"ANN-{str(item.get('risk_id') or index + 1)[:8].upper()}",
@@ -77,9 +113,10 @@ def evidence_records(result: dict, limit: int = 8) -> list[dict]:
                 "kind": item.get("taxonomy_l2") or item.get("category") or "公告风险",
                 "title": item.get("announcement_title") or "公告原文证据",
                 "meta": " · ".join(filter(None, [item.get("announcement_date"), item.get("matched_keyword")])),
-                "quote": item.get("evidence") or item.get("description") or "",
-                "issue": item.get("description") or "命中风险规则，需结合原文复核。",
+                "quote": evidence,
+                "issue": f"问题：{item.get('description') or item.get('risk_label') or '公告风险事件'}",
                 "keyword": item.get("matched_keyword") or "",
+                "verification_label": verification_label,
                 "source_url": item.get("source_url") or "",
                 "pdf_url": item.get("pdf_url") or "",
                 "page": "announcement",
@@ -96,6 +133,9 @@ def evidence_records(result: dict, limit: int = 8) -> list[dict]:
                 "quote": item.get("evidence") or "",
                 "issue": f"问题标记：{item.get('type', '财务异常')}；关联标签 {item.get('label_ref', '—')}。",
                 "keyword": str(item.get("value", "")),
+                "verification_label": "结构化指标记录",
+                "source_url": item.get("source_url") or "",
+                "pdf_url": item.get("pdf_url") or "",
                 "page": "financial",
             }
         )
@@ -104,6 +144,13 @@ def evidence_records(result: dict, limit: int = 8) -> list[dict]:
 
 
 def render_evidence_cards(records: list[dict]) -> None:
+    if not records:
+        st.info(
+            "当前没有通过事实性语境校验的关键证据。规则命中、制度条款、职责条款和假设性描述"
+            "仍保留在公告研读 Agent 的候选信号与审计记录中，但不在此处作为事实展示。",
+            icon=":material/fact_check:",
+        )
+        return
     for item in records:
         quote_text = _safe(item.get("quote"))
         keyword = _safe(item.get("keyword"))
@@ -121,7 +168,7 @@ def render_evidence_cards(records: list[dict]) -> None:
             f"""
             <article class="risk-evidence {'high' if severity >= 4 else ''}">
               <div class="risk-evidence-title"><span>{_safe(item.get('kind'))} · {_safe(item.get('id'))}</span><span>{severity_text}</span></div>
-              <div class="risk-evidence-meta">{_safe(item.get('title'))} · {_safe(item.get('meta'))}</div>
+              <div class="risk-evidence-meta"><span class="risk-evidence-check">{_safe(item.get('verification_label'))}</span>{_safe(item.get('title'))} · {_safe(item.get('meta'))}</div>
               <div class="risk-evidence-quote">{quote_text}</div>
               <div class="risk-evidence-issue">{_safe(item.get('issue'))}</div>
               <div class="risk-links">{''.join(links)}</div>

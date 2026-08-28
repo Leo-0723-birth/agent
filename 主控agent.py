@@ -14,10 +14,10 @@ from backend.agents import SweepingOrchestrator
 from backend.config import OUTPUT_DIR
 from backend.skills.stock_code import StockCodeError, normalize_stock_code
 from ui.charts import case_score_chart, probability_chart, risk_severity_chart, shap_chart
-from ui.components import evidence_records, render_evidence_cards, render_metric_grid, render_page_header, render_source_index, render_trace
+from ui.components import evidence_records, render_color_legend, render_evidence_cards, render_metric_grid, render_page_header, render_source_index, render_trace
 from ui.data import dataset_shape, load_model_summary, load_offline_context
 from ui.session import publish_analysis
-from ui.theme import apply_page_style
+from ui.theme import PALETTE, apply_page_style
 
 st.set_page_config(page_title="监管问询风险简报", page_icon=":material/radar:", layout="wide")
 apply_page_style()
@@ -161,15 +161,24 @@ with left:
     with st.container(border=True):
         st.markdown("#### 30 / 60 / 90 天问询概率")
         st.altair_chart(probability_chart(prediction), width="stretch")
-        st.caption("雾蓝、青绿与柔金分别对应 30、60、90 天预测窗口；柱顶为模型输出概率。")
+        render_color_legend(
+            [("30 天", PALETTE["blue"]), ("60 天", PALETTE["teal"]), ("90 天", PALETTE["gold"])],
+            "柱顶为模型输出概率。",
+        )
 with right:
     with st.container(border=True):
         st.markdown("#### Top 特征贡献")
         st.altair_chart(shap_chart(prediction.get("shap_features", [])), width="stretch")
-        st.caption("珊瑚红表示推升风险，雾蓝表示降低风险；数值为 SHAP 局部贡献。")
+        render_color_legend(
+            [("推升风险", PALETTE["coral"]), ("降低风险", PALETTE["blue"])],
+            "数值为 SHAP 局部贡献。",
+        )
 
 st.markdown("### 关键证据与问题定位")
-st.caption("每条证据同时标明问题、系统记录与原文入口，评委可直接追溯。")
+st.caption(
+    "这里只展示通过事实性语境校验的原文事件或结构化指标，并标明问题、系统记录与原文入口；"
+    "仅规则命中、制度职责条款和假设描述不作为事实证据展示。"
+)
 render_evidence_cards(evidence_records(result, limit=6))
 
 chart_left, chart_right = st.columns(2)
@@ -179,7 +188,13 @@ with chart_left:
         factors = semantic.get("risk_factors", [])
         if factors:
             st.altair_chart(risk_severity_chart(factors), width="stretch")
-            st.caption("珊瑚红对应高严重度，柔金对应关注项，青绿与雾蓝为较低等级。")
+            render_color_legend(
+                [
+                    ("高风险", PALETTE["coral"]),
+                    ("中风险", PALETTE["gold"]),
+                    ("低风险", PALETTE["blue"]),
+                ]
+            )
         else:
             st.info("当前结果未提取到公告风险要素。")
 with chart_right:
@@ -188,7 +203,10 @@ with chart_right:
         cases = result.get("cases", [])
         if cases:
             st.altair_chart(case_score_chart(cases), width="stretch")
-            st.caption("青绿色柱表示案例检索可信度；悬停可查看问询类型和精确得分。")
+            render_color_legend(
+                [("案例检索匹配分", PALETTE["teal"])],
+                "悬停可查看问询类型和精确得分。",
+            )
         else:
             st.info("当前结果未检索到相似案例。")
 
