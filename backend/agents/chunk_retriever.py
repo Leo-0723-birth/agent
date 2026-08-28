@@ -31,8 +31,9 @@ _logger = logging.getLogger(__name__)
 class ChunkRetrieverAgent(AgentBase):
     name = "ChunkRetriever"
 
-    def __init__(self, top_k=CHUNK_TOP_K):
+    def __init__(self, top_k=CHUNK_TOP_K, run_config=None):
         super().__init__()
+        self.run_config = run_config
         self.top_k = top_k
         self._entries, self._vecs = None, None
 

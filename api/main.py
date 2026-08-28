@@ -36,6 +36,7 @@ from .pipeline import (
     create_task,
     get_cached_result,
     get_offline_result,
+    get_report_download_path,
     get_task,
     list_available_companies,
     offline_to_response,
@@ -94,6 +95,22 @@ def get_company(code: str):
     return results[0]
 
 
+@app.get("/api/reports/{code}/download")
+def download_report(code: str, format: str = "md"):
+    """下载某公司最新报告的 Markdown 或 JSON 文件。"""
+    try:
+        normalized = normalize_stock_code(code)
+    except StockCodeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    fmt = "json" if format.lower() == "json" else "md"
+    path = get_report_download_path(normalized, fmt)
+    if path is None or not path.is_file():
+        raise HTTPException(status_code=404, detail=f"未找到 {normalized} 的报告文件")
+    media_type = "application/json" if fmt == "json" else "text/markdown; charset=utf-8"
+    filename = f"{normalized}_risk_report.{fmt}"
+    return FileResponse(str(path), media_type=media_type, filename=filename)
+
+
 @app.get("/api/companies")
 def companies():
     """返回所有有离线报告的公司列表。"""
@@ -129,7 +146,7 @@ async def scan(req: ScanRequest):
     req = req.model_copy(update={"code": code})
 
     if not req.realtime:
-        result = get_offline_result(code, req.window)
+        result = get_offline_result(code, req.window, req.as_of)
         if result is None:
             raise HTTPException(status_code=404, detail=f"未找到 {code} 的离线报告")
         return ScanResponse(
@@ -254,4 +271,9 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    # 端口/监听统一从环境变量读取，避免多入口脚本硬编码导致端口冲突。
+    # 默认端口 8000，与 `start_api.bat`「前端错误提示」保持一致。
+    host = os.getenv("API_HOST", "0.0.0.0")
+    port = int(os.getenv("API_PORT", "8000"))
+    uvicorn.run(app, host=host, port=port)

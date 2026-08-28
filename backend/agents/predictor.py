@@ -40,8 +40,10 @@ _shared_models: dict = {}   # horizon -> {"rf", "lgb", "xgb"}
 class PredictorAgent(AgentBase):
     name = "Predictor"
 
-    def __init__(self, horizons=PREDICTOR_HORIZONS, model_dir=None, top_shap=PREDICTOR_TOP_SHAP):
+    def __init__(self, horizons=PREDICTOR_HORIZONS, model_dir=None, top_shap=PREDICTOR_TOP_SHAP,
+                 run_config=None):
         super().__init__()
+        self.run_config = run_config
         self.horizons = horizons
         self.top_shap = top_shap
         self.model_dir = Path(model_dir or PREDICTOR_MODEL_DIR)

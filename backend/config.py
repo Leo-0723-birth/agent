@@ -26,7 +26,11 @@ except Exception:
 
 # ---------- 路径 ----------
 BASE_DIR = Path(__file__).resolve().parent.parent                 # competition_agent/
-DATA_RAW = Path(os.getenv("DATA_RAW", r"D:\BaiduNetdiskDownload"))  # 原始公告/问询函根目录
+# 本机外部数据根目录（队员各自本地盘；通过 .env 覆盖 DATA_ROOT / INQUIRY_ROOT，
+# 无需逐个改下面的绝对路径）
+DATA_ROOT = Path(os.getenv("DATA_ROOT", r"D:\BaiduNetdiskDownload"))
+INQUIRY_ROOT = Path(os.getenv("INQUIRY_ROOT", r"D:\新建文件夹"))
+DATA_RAW = Path(os.getenv("DATA_RAW", str(DATA_ROOT)))  # 原始公告/问询函根目录
 DATA_DIR = BASE_DIR / "backend" / "data"
 INDEX_DIR = DATA_DIR / "index"          # 公告索引缓存（announcement_index.json）
 VECTOR_DB_DIR = DATA_DIR / "vector_db"  # 向量库持久化（案例库/证据库）
@@ -63,10 +67,12 @@ COMPETITION_SEMANTIC_FEATURES = Path(os.getenv(
 )).expanduser()
 
 # ---------- LLM（backend/llm.py 使用） ----------
+LLM_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 LLM_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
 LLM_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
 LLM_TEMPERATURE = 0.1        # 低温度：推理稳定（方案 5.4）
 LLM_MAX_TOKENS = 2000
+LLM_THINKING = os.getenv("DEEPSEEK_THINKING", "0") == "1"
 
 # ---------- Embedding ----------
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5")  # 或 stella-base-zh-v3
@@ -118,8 +124,8 @@ FIN_ROE_TREND_SLOPE = -5.0    # ROE 近4期趋势斜率阈值（个百分点/季
 FIN_Z_SCORE = 2.0             # 行业偏离 |Z| 阈值
 
 # ---------- 案例检索 / 案例库（case_retriever / build_case_db） ----------
-INQUIRY_DATA_DIR = Path(os.getenv("INQUIRY_DATA_DIR", r"D:\BaiduNetdiskDownload\监管问询函及回复数据集"))
-EVAL_GT_CSV = Path(os.getenv("EVAL_GT_CSV", r"D:\BaiduNetdiskDownload\标签与评测数据集\evaluation_ground_truth.csv"))
+INQUIRY_DATA_DIR = Path(os.getenv("INQUIRY_DATA_DIR", str(DATA_ROOT / "监管问询函及回复数据集")))
+EVAL_GT_CSV = Path(os.getenv("EVAL_GT_CSV", str(DATA_ROOT / "标签与评测数据集" / "evaluation_ground_truth.csv")))
 CASE_DB_PATH = VECTOR_DB_DIR / "case_db.json"       # 案例元数据（含官方关注点 + 原文摘录）
 CASE_VEC_PATH = VECTOR_DB_DIR / "case_vectors.npy"  # 案例向量
 CASE_META_PATH = VECTOR_DB_DIR / "case_meta.json"   # 案例库构建元数据（embedding 后端/维度校验）
@@ -131,9 +137,9 @@ CONCERN_DICT_PATH = Path(BASE_DIR) / "backend" / "data" / "labels" / "concern_di
 # 风险词典：默认 v2.1（45/45 主题规则全覆盖，扩展自冻结版 v2.0.0）；环境变量可覆盖回退
 RISK_DICTIONARY = Path(os.getenv("RISK_DICTIONARY",
     str(Path(BASE_DIR) / "backend" / "data" / "labels" / "risk_dictionary_v2.1-taxonomy-v1.1.yaml")))
-INQUIRY_JSONL = Path(os.getenv("INQUIRY_JSONL", r"D:\新建文件夹\02_监管问询\01_数据清单与结构化文本\inquiries.jsonl"))
-RULE_RISKS_JSONL = Path(os.getenv("RULE_RISKS_JSONL", r"D:\新建文件夹\02_监管问询\02_风险标签\inquiry_rule_risks.jsonl"))
-EVAL_GT_NORMALIZED_CSV = Path(os.getenv("EVAL_GT_NORMALIZED_CSV", r"D:\新建文件夹\02_监管问询\05_标签评测与报告\evaluation_ground_truth_normalized.csv"))
+INQUIRY_JSONL = Path(os.getenv("INQUIRY_JSONL", str(INQUIRY_ROOT / "02_监管问询" / "01_数据清单与结构化文本" / "inquiries.jsonl")))
+RULE_RISKS_JSONL = Path(os.getenv("RULE_RISKS_JSONL", str(INQUIRY_ROOT / "02_监管问询" / "02_风险标签" / "inquiry_rule_risks.jsonl")))
+EVAL_GT_NORMALIZED_CSV = Path(os.getenv("EVAL_GT_NORMALIZED_CSV", str(INQUIRY_ROOT / "02_监管问询" / "05_标签评测与报告" / "evaluation_ground_truth_normalized.csv")))
 CASE_EXCERPT_CHARS = 1200      # 案例原文摘录截断长度
 
 # ---------- chunk 级段落检索（chunk_retriever / build_chunk_index） ----------
@@ -141,7 +147,7 @@ CHUNK_DB_PATH = VECTOR_DB_DIR / "chunk_db.json"        # chunk 元数据（段�
 CHUNK_VEC_PATH = VECTOR_DB_DIR / "chunk_vectors.npy"   # chunk 向量（BGE 1024 维）
 CHUNK_TOP_K = 8                 # chunk 检索返回 Top-K
 CHUNK_INDEX_JSONL = Path(os.getenv("CHUNK_INDEX_JSONL",
-    r"D:\新建文件夹\02_监管问询\03_向量索引与Chroma\inquiry_embedding_index.jsonl"))
+    str(INQUIRY_ROOT / "02_监管问询" / "03_向量索引与Chroma" / "inquiry_embedding_index.jsonl")))
 
 # ---------- 预测建模（PredictorAgent / train_models） ----------
 PREDICTOR_MODEL_DIR = Path(BASE_DIR) / "backend" / "models" / "predictor"   # 模型+清单
@@ -176,6 +182,6 @@ META_COLS = {"company_code", "stock_code", "report_period", "T_date", "split",
              "industry", "matched_stat_date", "governance_year", "audit_year"}
 # 在线爬虫用（F5 年报 PDF 目录 / F6 问询事件缓存）
 ANNUAL_REPORT_DIR = Path(os.getenv("ANNUAL_REPORT_DIR",
-    r"D:\BaiduNetdiskDownload\上市公司公告与定期报告数据集\上市公司公告与定期报告数据集"))
+    str(DATA_ROOT / "上市公司公告与定期报告数据集" / "上市公司公告与定期报告数据集")))
 INQUIRY_EVENTS_CSV = Path(os.getenv("INQUIRY_EVENTS_CSV",
-    r"D:\新建文件夹\02_监管问询\F2-F6\中间产物及特征来源\中间产物10,056份问询回复函的日期+类型解析结果(下次重跑免解析)\inquiry_events.csv"))
+    str(INQUIRY_ROOT / "02_监管问询" / "F2-F6" / "中间产物及特征来源" / "中间产物10,056份问询回复函的日期+类型解析结果(下次重跑免解析)" / "inquiry_events.csv")))

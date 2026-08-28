@@ -23,6 +23,7 @@ from ..config import (
     MAX_TEXT_CHARS,
 )
 from ..llm import chat_json
+from ..run_config import RunConfig
 from ..skills.announcement_context_filter import (
     FILTER_VERSION,
     apply_title_policy,
@@ -78,27 +79,32 @@ class AnnouncementReaderAgent(AgentBase):
     def __init__(
         self,
         data_root=None,
-        use_finbert=True,
-        use_llm=True,
-        use_rule=True,
+        use_finbert=None,
+        use_llm=None,
+        use_rule=None,
         max_text_chars=MAX_TEXT_CHARS,
         gate_threshold=FINBERT_GATE,
         source=None,
-        max_documents=ANNOUNCE_MAX_DOCUMENTS,
+        max_documents=None,
         rule_extractor=None,
         llm_callable=None,
         progress_callback=None,
+        run_config=None,
     ):
         super().__init__()
+        rc = run_config or RunConfig()
         self.data_root = data_root
-        self.use_finbert = bool(use_finbert)
-        self.use_llm = bool(use_llm)
-        self.use_rule = bool(use_rule)
+        # 公共开关：显式传入优先，否则从 RunConfig 读（默认值 = 历史无参行为）
+        self.use_finbert = bool(rc.use_finbert if use_finbert is None else use_finbert)
+        self.use_llm = bool(rc.use_llm if use_llm is None else use_llm)
+        self.use_rule = bool(rc.use_rule if use_rule is None else use_rule)
+        self.run_config = rc
         self.max_text_chars = int(max_text_chars)
         self.gate_threshold = float(gate_threshold)
         self.rule_extractor = rule_extractor or RuleRiskExtractor()
         self.progress_callback = progress_callback   # 需在 _default_source() 之前赋值
-        self.max_documents = None if max_documents is None else int(max_documents)
+        docs = max_documents if max_documents is not None else rc.max_documents
+        self.max_documents = None if docs is None else int(docs)
         self.source = source or self._default_source()
         self.llm_callable = llm_callable or chat_json
         self.llm_configured = bool(llm_callable is not None or os.getenv("DEEPSEEK_API_KEY"))
@@ -166,10 +172,12 @@ class AnnouncementReaderAgent(AgentBase):
             item.setdefault("content_sha256", "")
         return identity, announcements
 
-    def _rule_extract(self, announcements):
+    def _rule_extract(self, announcements, cancel_event=None):
         factors, suppressed = [], 0
         per_announcement = {}
         for announcement in announcements:
+            if cancel_event is not None and cancel_event.is_set():
+                raise RuntimeError("任务已取消")
             source_text = announcement.get("text") or announcement.get("title") or ""
             evidence_field = "pdf_text" if announcement.get("text") else "title"
             hits = self.rule_extractor.extract(source_text)
@@ -256,9 +264,11 @@ class AnnouncementReaderAgent(AgentBase):
                 )
         return signals, "experimental_unvalidated"
 
-    def _llm_extract(self, company_name, announcements):
+    def _llm_extract(self, company_name, announcements, cancel_event=None):
         factors, rejected, rejected_context, failed, per_announcement = [], 0, 0, 0, {}
         for item in announcements:
+            if cancel_event is not None and cancel_event.is_set():
+                raise RuntimeError("任务已取消")
             text = item.get("text") or ""
             if not text:
                 per_announcement[item["id"]] = {"llm_factors": [], "status": "no_full_text"}
@@ -436,9 +446,17 @@ class AnnouncementReaderAgent(AgentBase):
             "probability_status": "F1是文本特征，不是风险概率",
         }
 
+    @staticmethod
+    def _check_cancel(ctx):
+        """取消信号检查：任务被取消时抛异常，让 execute 尽快中断（最终由调度层标记 cancelled）。"""
+        cancel = getattr(ctx, "cancel_event", None)
+        if cancel is not None and cancel.is_set():
+            raise RuntimeError("任务已取消")
+
     def execute(self, company, ctx):
         as_of = str(ctx.as_of or date.today().isoformat())[:10]
         identity, announcements = self._load_announcements(company, as_of)
+        self._check_cancel(ctx)
         historical_context = getattr(self.source, "last_history", {}) or {}
         query_trace = getattr(self.source, "last_query_trace", []) or []
         ctx.company = identity["secucode"]
@@ -452,7 +470,8 @@ class AnnouncementReaderAgent(AgentBase):
         self._emit_progress("rule_analysis_started", document_count=len(eligible_announcements))
         if self.use_rule:
             rule_factors, per_announcement, suppressed = self._rule_extract(
-                eligible_announcements
+                eligible_announcements,
+                cancel_event=getattr(ctx, "cancel_event", None),
             )
         else:
             rule_factors, suppressed = [], 0
@@ -461,9 +480,11 @@ class AnnouncementReaderAgent(AgentBase):
                 for item in eligible_announcements
             }
         self._emit_progress("rule_analysis_completed", factor_count=len(rule_factors), suppressed_count=suppressed)
+        self._check_cancel(ctx)
         self._emit_progress("finbert_started", enabled=bool(self.use_finbert))
         finbert_signals, finbert_status = self._finbert_classify(eligible_announcements)
         self._emit_progress("finbert_completed", status=finbert_status, signal_count=len(finbert_signals))
+        self._check_cancel(ctx)
         signal_map = {item["announcement_id"]: item for item in finbert_signals}
         rule_ids = {item["announcement_id"] for item in rule_factors}
         gate_active = bool(
@@ -486,7 +507,8 @@ class AnnouncementReaderAgent(AgentBase):
                 rejected_llm_context,
                 failed_llm,
             ) = self._llm_extract(
-                identity["company_name"], llm_candidates
+                identity["company_name"], llm_candidates,
+                cancel_event=getattr(ctx, "cancel_event", None),
             )
             llm_status = "partial_failed" if failed_llm else "enabled"
         else:
@@ -499,6 +521,7 @@ class AnnouncementReaderAgent(AgentBase):
             processed_count=len(llm_candidates),
             factor_count=len(llm_factors),
         )
+        self._check_cancel(ctx)
 
         for announcement_id, payload in llm_per_announcement.items():
             per_announcement.setdefault(announcement_id, {}).update(payload)

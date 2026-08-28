@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+from collections import OrderedDict
 from pathlib import Path
 
 # 把项目根目录加入 sys.path，以便 import backend
@@ -19,8 +21,10 @@ from .models import (
     FactorItem,
     AnnouncementRiskItem,
     AttributionEvidenceItem,
+    FinancialAnomalyItem,
     SimilarCaseItem,
 )
+from backend.config import RISK_THRESHOLDS
 
 REPORTS_DIR = PROJECT_ROOT / "backend" / "data" / "output" / "reports"
 
@@ -29,6 +33,9 @@ REPORTS_DIR = PROJECT_ROOT / "backend" / "data" / "output" / "reports"
 # manifest.json 内存缓存（mtime 失效）：避免每次离线查询都全量解析清单
 _manifest_cache: list[dict] | None = None
 _manifest_cache_mtime: float | None = None
+
+# 单个报告 JSON 内存缓存（mtime 失效）：避免同一公司多次查询都读盘
+_report_cache: dict[str, tuple[float, dict]] = {}
 
 
 def _load_manifest() -> list[dict]:
@@ -66,11 +73,36 @@ def _latest_report_file(company: str) -> Path | None:
     return REPORTS_DIR / entries[0]["json_file"]
 
 
+def get_report_download_path(company: str, fmt: str = "md") -> Path | None:
+    """从 manifest 找某公司最新一份报告的下载路径（md/json）。"""
+    manifest = _load_manifest()
+    normalized = company.upper().replace(".", "_")
+    file_key = "md_file" if fmt == "md" else "json_file"
+    entries = [
+        e for e in manifest
+        if str(e.get("company", "")).upper().replace(".", "_") == normalized
+        and (REPORTS_DIR / str(e.get(file_key, ""))).is_file()
+    ]
+    if not entries:
+        return None
+    entries.sort(key=lambda e: str(e.get("generated_at", "")), reverse=True)
+    return REPORTS_DIR / entries[0][file_key]
+
+
 def _load_report(company: str) -> dict | None:
+    """读取公司最新报告 JSON，带 mtime 失效的内存缓存。"""
+    global _report_cache
     path = _latest_report_file(company)
     if not path:
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    key = str(path)
+    mtime = path.stat().st_mtime
+    cached = _report_cache.get(key)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    data = json.loads(path.read_text(encoding="utf-8"))
+    _report_cache[key] = (mtime, data)
+    return data
 
 
 def _load_report_md(company: str) -> str:
@@ -142,6 +174,27 @@ def _map_risk_level(raw: str) -> str:
         if k in (raw or ""):
             return v
     return "low"
+
+
+_WINDOW_PROB_KEY = {30: "probability_30d", 60: "probability_60d", 90: "probability_90d"}
+
+
+def _prob_for_window(scorecard: dict, window: int) -> float:
+    """按预测窗口取对应概率（0~1），未知窗口回落 60d。"""
+    key = _WINDOW_PROB_KEY.get(window, "probability_60d")
+    return scorecard.get(key, 0) or 0
+
+
+def _level_from_prob(prob: float) -> str:
+    """基于概率（0~1）+ RISK_THRESHOLDS 重算风险等级。"""
+    if prob >= RISK_THRESHOLDS["high"]:
+        return "high"
+    if prob >= RISK_THRESHOLDS["medium"]:
+        return "mid"
+    return "low"
+
+
+_LEVEL_TEXT_EN = {"low": "低风险", "mid": "中风险", "high": "高风险"}
 
 
 def _map_shap_to_factors(report: dict) -> list[FactorItem]:
@@ -219,6 +272,23 @@ def _map_financial_table(report: dict) -> list[list[str]]:
     return rows
 
 
+def _map_financial_anomalies(report: dict) -> list[FinancialAnomalyItem]:
+    """financial.anomaly_list → 前端财务异常信号对象列表。"""
+    anomalies = report.get("financial", {}).get("anomaly_list", []) or []
+    items = []
+    for a in anomalies:
+        items.append(FinancialAnomalyItem(
+            type=a.get("type", "—"),
+            severity=int(a.get("severity", 0) or 0),
+            indicator=a.get("indicator", "—"),
+            value=a.get("value", "—"),
+            threshold=a.get("threshold", "—"),
+            evidence=a.get("evidence", "—"),
+            label_ref=a.get("label_ref", "—"),
+        ))
+    return items
+
+
 def _map_attribution_text(report: dict) -> str:
     """attribution.top_risk_factors → 归因文本。"""
     factors = report.get("attribution", {}).get("top_risk_factors", []) or []
@@ -285,6 +355,7 @@ def _map_announcement_risks(report: dict) -> list[AnnouncementRiskItem]:
             evidence=evidence or "—",
             title=f.get("announcement_title") or "—",
             sourceUrl=f.get("source_url") or "",
+            pdfUrl=f.get("pdf_url") or "",
         ))
         if len(items) >= 20:
             break
@@ -440,75 +511,23 @@ def _map_similar_cases(report: dict) -> list[SimilarCaseItem]:
     return items
 
 
-def offline_to_response(company: str) -> AnalyzeResponse | None:
-    """核心映射：离线报告 JSON → AnalyzeResponse。"""
+def offline_to_response(company: str, window: int = 60) -> AnalyzeResponse | None:
+    """核心映射：离线报告 JSON → AnalyzeResponse（按 window 取对应天数概率）。"""
     report = _load_report(company)
     if not report:
         return None
-
-    scorecard = report.get("scorecard", {}) or {}
-    risk_level_raw = scorecard.get("risk_level", "低")
-    level = _map_risk_level(risk_level_raw)
-    prob_60d = scorecard.get("probability_60d", 0) or 0
-    confidence = scorecard.get("confidence", 0) or 0
-    financial = report.get("financial", {}) or {}
-    semantic = report.get("semantic", {}) or {}
-    similar_cases = report.get("similar_cases", []) or []
-    attribution = report.get("attribution", {}) or {}
-
-    risk_factors_count = len(semantic.get("risk_factors", []) or [])
-    anomaly_count = len(financial.get("anomaly_list", []) or [])
-    total_factors = risk_factors_count + anomaly_count
-
-    # 构建 summary（带 HTML）
-    prob_pct = prob_60d * 100
-    top_factor_names = [
-        f.get("description", f.get("feature", ""))
-        for f in (attribution.get("top_risk_factors", []) or [])[:3]
-    ]
-    factor_text = "、".join(top_factor_names) if top_factor_names else "综合多维度指标"
-    summary = (
-        f"未来 60 天收到问询函的概率为 <b>{prob_pct:.1f}%</b>。"
-        f"主要风险来源为{factor_text}。"
-    )
-
-    # 构建 conclusion
-    conclusion = report.get("executive_summary", "")
-    if not conclusion:
-        conclusion = f"风险等级为{_LEVEL_TEXT.get(risk_level_raw[0] if risk_level_raw else '低', '低风险')}，建议持续跟踪。"
-
-    factors_list = _map_shap_to_factors(report)
-    return AnalyzeResponse(
-        code=report.get("company", company),
-        name=report.get("name", company),
-        risk=round(prob_pct, 1),
-        level=level,
-        levelText=_LEVEL_TEXT.get(risk_level_raw[0] if risk_level_raw else "低", "低风险"),
-        confidence=round(confidence, 2),
-        factors=total_factors,
-        summary=summary,
-        factorsList=factors_list,
-        financialTable=_map_financial_table(report),
-        textSummary=_build_text_summary(report),
-        caseMatch=f"{len(similar_cases)} 起",
-        attribution=_map_attribution_text(report),
-        conclusion=conclusion[:200],
-        advice=report.get("disclaimer", "本预测结果仅供参考，不构成投资建议。"),
-        reportMarkdown=_load_report_md(company),
-        traceLog=report.get("trace_log", []) or [],
-        similarCases=_map_similar_cases(report),
-        generatedAt=report.get("generated_at", ""),
-        announcementRisks=_map_announcement_risks(report),
-        attributionEvidence=_map_attribution_evidence(report),
-        riskFactorDetails=_map_risk_factor_details(report),
-    )
+    resp = offline_to_response_from_report(report, window=window)
+    md = _load_report_md(company)
+    if md:
+        resp.reportMarkdown = md
+    return resp
 
 
 def run_pipeline(codes: list, window: int = 60, use_llm: bool = False, use_bge: bool = True):
     """方案 B：离线数据快速查询（同步实现，由 FastAPI 放入线程池执行）。"""
     results = []
     for code in codes:
-        resp = offline_to_response(code)
+        resp = offline_to_response(code, window=window)
         if resp:
             results.append(resp)
     return results
@@ -545,24 +564,38 @@ from typing import Callable
 from .models import ProgressMessage, ScanRequest
 
 
-# ---------- Orchestrator 全局单例（避免每次请求都重新加载模型） ----------
+# ---------- Orchestrator 全局 LRU 缓存（避免每次请求都重新加载模型） ----------
 
-_orchestrator_pool: dict[str, "SweepingOrchestrator"] = {}
+ORCHESTRATOR_POOL_SIZE = int(os.getenv("ORCHESTRATOR_POOL_SIZE", "8"))
+_orchestrator_pool: OrderedDict[str, "SweepingOrchestrator"] = OrderedDict()
 
 
 def get_orchestrator(use_llm: bool, use_finbert: bool, use_semantic_cases: bool = True, max_documents: int | None = 5):
-    """获取全局单例 Orchestrator。key 按参数组合区分。"""
+    """获取带 LRU 淘汰的 Orchestrator。key 按参数组合区分。
+
+    限制最大缓存数量，避免参数组合过多时内存无限增长；命中时移动到队尾。
+    """
     key = f"llm={use_llm}_finbert={use_finbert}_bge={use_semantic_cases}_docs={max_documents}"
-    if key not in _orchestrator_pool:
-        # 延迟导入，避免模块级报错
-        from backend.agents.orchestrator import SweepingOrchestrator
-        _orchestrator_pool[key] = SweepingOrchestrator(
-            use_llm=use_llm,
-            use_finbert=use_finbert,
-            use_semantic_cases=use_semantic_cases,
-            max_documents=max_documents,
-        )
-    return _orchestrator_pool[key]
+    if key in _orchestrator_pool:
+        _orchestrator_pool.move_to_end(key)
+        return _orchestrator_pool[key]
+    # 延迟导入，避免模块级报错
+    from backend.agents.orchestrator import SweepingOrchestrator
+    orchestrator = SweepingOrchestrator(
+        use_llm=use_llm,
+        use_finbert=use_finbert,
+        use_semantic_cases=use_semantic_cases,
+        max_documents=max_documents,
+    )
+    _orchestrator_pool[key] = orchestrator
+    while len(_orchestrator_pool) > ORCHESTRATOR_POOL_SIZE:
+        _orchestrator_pool.popitem(last=False)
+    return orchestrator
+
+
+def clear_orchestrator_pool() -> None:
+    """清空 Orchestrator 缓存，用于测试或内存回收。"""
+    _orchestrator_pool.clear()
 
 
 # ---------- StreamingOrchestrator：在关键节点推送进度 ----------
@@ -748,12 +781,11 @@ def report_ctx_to_response(ctx) -> AnalyzeResponse:
     return offline_to_response_from_report(report)
 
 
-def offline_to_response_from_report(report: dict) -> AnalyzeResponse:
-    """复用方案 B 的字段映射逻辑，但直接接收 report dict。"""
+def offline_to_response_from_report(report: dict, window: int = 60) -> AnalyzeResponse:
+    """复用方案 B 的字段映射逻辑，但直接接收 report dict；按 window 取对应天数概率。"""
     scorecard = report.get("scorecard", {}) or {}
-    risk_level_raw = scorecard.get("risk_level", "低")
-    level = _map_risk_level(risk_level_raw)
-    prob_60d = scorecard.get("probability_60d", 0) or 0
+    prob = _prob_for_window(scorecard, window)
+    level = _level_from_prob(prob)
     confidence = scorecard.get("confidence", 0) or 0
     financial = report.get("financial", {}) or {}
     semantic = report.get("semantic", {}) or {}
@@ -764,20 +796,25 @@ def offline_to_response_from_report(report: dict) -> AnalyzeResponse:
     anomaly_count = len(financial.get("anomaly_list", []) or [])
     total_factors = risk_factors_count + anomaly_count
 
-    prob_pct = prob_60d * 100
+    prob_pct = prob * 100
     top_factor_names = [
         f.get("description", f.get("feature", ""))
         for f in (attribution.get("top_risk_factors", []) or [])[:3]
     ]
     factor_text = "、".join(top_factor_names) if top_factor_names else "综合多维度指标"
     summary = (
-        f"未来 60 天收到问询函的概率为 <b>{prob_pct:.1f}%</b>。"
+        f"未来 {window} 天收到问询函的概率为 <b>{prob_pct:.1f}%</b>。"
         f"主要风险来源为{factor_text}。"
     )
 
     conclusion = report.get("executive_summary", "")
     if not conclusion:
-        conclusion = f"风险等级为{_LEVEL_TEXT.get(risk_level_raw[0] if risk_level_raw else '低', '低风险')}，建议持续跟踪。"
+        conclusion = f"风险等级为{_LEVEL_TEXT_EN.get(level, '低风险')}，建议持续跟踪。"
+
+    # 三档窗口概率（前端切换窗口用，单位 %）
+    risk_by_window = {
+        f"{w}d": round(_prob_for_window(scorecard, w) * 100, 1) for w in (30, 60, 90)
+    }
 
     factors_list = _map_shap_to_factors(report)
     return AnalyzeResponse(
@@ -785,12 +822,13 @@ def offline_to_response_from_report(report: dict) -> AnalyzeResponse:
         name=report.get("name", ""),
         risk=round(prob_pct, 1),
         level=level,
-        levelText=_LEVEL_TEXT.get(risk_level_raw[0] if risk_level_raw else "低", "低风险"),
+        levelText=_LEVEL_TEXT_EN.get(level, "低风险"),
         confidence=round(confidence, 2),
         factors=total_factors,
         summary=summary,
         factorsList=factors_list,
         financialTable=_map_financial_table(report),
+        financialAnomalies=_map_financial_anomalies(report),
         textSummary=_build_text_summary(report),
         caseMatch=f"{len(similar_cases)} 起",
         attribution=_map_attribution_text(report),
@@ -803,6 +841,7 @@ def offline_to_response_from_report(report: dict) -> AnalyzeResponse:
         announcementRisks=_map_announcement_risks(report),
         attributionEvidence=_map_attribution_evidence(report),
         riskFactorDetails=_map_risk_factor_details(report),
+        riskByWindow=risk_by_window,
     )
 
 
@@ -851,12 +890,16 @@ _result_cache: OrderedDict[str, AnalyzeResponse] = OrderedDict()
 _scan_lock = asyncio.Lock()
 
 
-def _cache_key(code: str, window: int) -> str:
-    return f"{str(code).strip().upper()}_{int(window)}"
+def _cache_key(code: str, window: int, as_of: str | None = None) -> str:
+    """实时结果缓存 key：公司代码 + 窗口 + 截止日期。"""
+    parts = [str(code).strip().upper(), str(int(window))]
+    if as_of:
+        parts.append(str(as_of).strip())
+    return "_".join(parts)
 
 
-def get_cached_result(code: str, window: int = 60) -> AnalyzeResponse | None:
-    key = _cache_key(code, window)
+def get_cached_result(code: str, window: int = 60, as_of: str | None = None) -> AnalyzeResponse | None:
+    key = _cache_key(code, window, as_of)
     result = _result_cache.get(key)
     if result is None:
         return None
@@ -864,24 +907,30 @@ def get_cached_result(code: str, window: int = 60) -> AnalyzeResponse | None:
     return result.model_copy(deep=True)
 
 
-def cache_result(code: str, window: int, result: AnalyzeResponse) -> None:
-    key = _cache_key(code, window)
+def cache_result(code: str, window: int, result: AnalyzeResponse, as_of: str | None = None) -> None:
+    key = _cache_key(code, window, as_of)
     _result_cache[key] = result.model_copy(deep=True)
     _result_cache.move_to_end(key)
     while len(_result_cache) > RESULT_CACHE_SIZE:
         _result_cache.popitem(last=False)
 
 
-def get_offline_result(code: str, window: int = 60) -> AnalyzeResponse | None:
-    cached = get_cached_result(code, window)
+def get_offline_result(code: str, window: int = 60, as_of: str | None = None) -> AnalyzeResponse | None:
+    # 离线报告带固定 as_of；请求了特定 as_of 且与离线报告不一致时，不返回离线报告
+    cached = get_cached_result(code, window, as_of)
     if cached is not None:
         return cached
     try:
-        result = offline_to_response(code)
+        result = offline_to_response(code, window=window)
     except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError, KeyError):
         result = None
     if result is not None:
-        cache_result(code, window, result)
+        # 若指定了 as_of，简单校验离线报告生成日期是否一致
+        if as_of:
+            report_as_of = getattr(result, "generatedAt", "") or getattr(result, "as_of", "")
+            if report_as_of and str(as_of).strip() != str(report_as_of).strip()[:10]:
+                return None
+        cache_result(code, window, result, as_of)
     return result
 
 
@@ -1045,6 +1094,7 @@ async def run_scan_task(state: TaskState, req: ScanRequest):
                     lambda: streamer.run(
                         company=req.code,
                         window=req.window,
+                        as_of=req.as_of,
                         use_llm=req.use_llm,
                         use_bge=req.use_bge,
                         max_documents=req.max_documents,
@@ -1060,7 +1110,7 @@ async def run_scan_task(state: TaskState, req: ScanRequest):
             state.result = result
             state.status = "completed"
             state.finished_at = time.time()
-            cache_result(req.code, req.window, result)
+            cache_result(req.code, req.window, result, req.as_of)
             complete_msg = ProgressMessage(
                 type="complete",
                 step=AGENT_TOTAL,
@@ -1107,7 +1157,7 @@ async def _fallback_after_error(state: TaskState, req: ScanRequest, error: str) 
         status="error", progress_percent=0,
         message=error, error=error, fatal=False,
     ))
-    offline = get_offline_result(req.code, req.window)
+    offline = get_offline_result(req.code, req.window, req.as_of)
     state.finished_at = time.time()
     if offline is not None:
         state.result = offline

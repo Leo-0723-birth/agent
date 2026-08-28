@@ -44,6 +44,7 @@ from ..config import (
     FIN_Z_SCORE,
 )
 from ..llm import chat, chat_json
+from ..run_config import RunConfig
 from ..skills import f2_calc, market_fetch
 from ..skills.financial_data_fetch import DataFetcher
 from ..skills.stock_code import StockCodeError, normalize_stock_code
@@ -123,10 +124,14 @@ def _risk_level(n):
 class FinancialDetectorAgent(AgentBase):
     name = "FinancialDetector"
 
-    def __init__(self, use_llm=True, rate_limit=0.5, wind_csv_path=None):
+    def __init__(self, use_llm=None, rate_limit=None, wind_csv_path=None, run_config=None):
         super().__init__()
-        self.fetcher = DataFetcher(rate_limit=rate_limit)
-        self.use_llm = use_llm
+        rc = run_config or RunConfig()
+        # 财务 LLM 解读通道：保持历史行为（默认关闭），显式传 True 才开启
+        self.use_llm = bool(rc.use_llm if use_llm is None else use_llm)
+        self.rate_limit = rc.rate_limit if rate_limit is None else rate_limit
+        self.run_config = rc
+        self.fetcher = DataFetcher(rate_limit=self.rate_limit)
         self._wind_csv = wind_csv_path or (FIN_WIND_CSV or "")
         self._wind_df = None   # 懒加载
 
@@ -364,6 +369,7 @@ class FinancialDetectorAgent(AgentBase):
     # ================= 主入口（统一签名） =================
     def execute(self, company, ctx):
         """统一签名：读 ctx（company/name/window），写回 ctx.financial。"""
+        self._check_cancel(ctx, "财务异常检测任务已取消")
         raw_company = str(company or "").strip()
         # 1. 输入解析：股票代码统一规范；纯名称仅在启用 LLM 时解析。
         try:
@@ -441,7 +447,9 @@ class FinancialDetectorAgent(AgentBase):
                 with ThreadPoolExecutor(max_workers=1) as ex:
                     return ex.submit(fn, *args).result(timeout=timeout)
 
+            self._check_cancel(ctx, "财务异常检测任务已取消")
             for fam, crawler in online_crawlers.items():
+                self._check_cancel(ctx, "财务异常检测任务已取消")
                 feats = None
                 try:
                     feats = _run_with_timeout(crawler, code, timeout=30)   # 在线：近日最新数据

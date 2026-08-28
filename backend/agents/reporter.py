@@ -37,8 +37,9 @@ MANIFEST_PATH = REPORTS_DIR / "manifest.json"
 class ReporterAgent(AgentBase):
     name = "Reporter"
 
-    def __init__(self):
+    def __init__(self, run_config=None):
         super().__init__()
+        self.run_config = run_config
 
     # ================= 执行摘要 =================
     def _executive_summary(self, ctx) -> str:

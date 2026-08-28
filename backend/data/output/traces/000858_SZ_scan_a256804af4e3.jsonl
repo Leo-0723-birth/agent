@@ -1,0 +1,7 @@
+{"run_id": "f3559907", "agent": "AnnouncementReader", "company": "000858.SZ", "timestamp": "2026-08-28T11:46:32.476059", "output_summary": {}, "latency_ms": 36392, "trace_complete": true}
+{"run_id": "7d4efb31", "agent": "FinancialDetector", "company": "000858.SZ", "timestamp": "2026-08-28T11:46:38.047541", "output_summary": {}, "latency_ms": 5518, "trace_complete": true}
+{"run_id": "9800d037", "agent": "Predictor", "company": "000858.SZ", "timestamp": "2026-08-28T11:46:41.269278", "output_summary": {}, "latency_ms": 3220, "trace_complete": true}
+{"agent": "CaseRetriever", "status": "skipped", "reason": "案例检索不可用: NameError: name 'ctx' is not defined", "trace_complete": true}
+{"run_id": "8fa7015f", "agent": "ChunkRetriever", "company": "000858.SZ", "timestamp": "2026-08-28T11:46:41.402373", "output_summary": {}, "latency_ms": 1, "trace_complete": true}
+{"run_id": "08b3a868", "agent": "Attributor", "company": "000858.SZ", "timestamp": "2026-08-28T11:46:41.404370", "output_summary": {}, "latency_ms": 0, "trace_complete": true}
+{"run_id": "63769d82", "agent": "Reporter", "company": "000858.SZ", "timestamp": "2026-08-28T11:46:41.470897", "output_summary": {"json": "{'report_id': '000858_SZ_2026-08-28_20260828_114641', 'company': '000858.SZ', 'n", "markdown": "# 上市公司监管问询风险提示函\n\n**报告编号**：000858_SZ_2026-08-28_20260828_114641\n**致**：000858.SZ 五"}, "latency_ms": 64, "trace_complete": true}

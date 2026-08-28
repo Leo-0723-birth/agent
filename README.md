@@ -2,7 +2,7 @@
 
 > 基于 Agentic AI 的上市公司监管问询概率预测与扫雷预警 · 东吴证券「智能风控与量化建模」赛题
 >
-> FastAPI 后端 + 多 Agent 流水线 + 单文件前端 + WebSocket 实时进度，支持离线快照秒出与实时扫雷双模式。
+> FastAPI 后端 + 7 Agent 流水线 + 单文件前端 + WebSocket 实时进度，支持离线快照秒出与实时扫雷双模式。
 
 ---
 
@@ -11,7 +11,7 @@
 ```
 ┌──────────────────────────────────────────────────────────┐
 │  浏览器 api/static/index.html （单文件前端）            │
-│  全局状态 + 发布订阅 · 6 Agent 流水线可视化 · 风险仪表盘 │
+│  全局状态 + 发布订阅 · 7 Agent 流水线可视化 · 风险仪表盘 │
 │  WebSocket 进度 · 实时扫雷开关 · 离线兜底提示条          │
 └───────────────┬────────────────────────┬─────────────────┘
         fetch /api/*               ws /ws/pipeline/{id}
@@ -29,9 +29,9 @@
 └───────────────┬──────────────────────────────────────────┘
                 ▼
 ┌──────────────────────────────────────────────────────────┐
-│  Agent 流水线  backend/agents/  （6 个 Agent + 编排器）   │
-│  公告研读 → 财务异常 → 预测建模 → 案例匹配 → 归因分析     │
-│  → 报告生成  （SweepingOrchestrator 串行编排 + 进度回调） │
+│  Agent 流水线  backend/agents/  （7 个 Agent + 编排器）   │
+│  公告研读 → 财务异常 → 预测建模 → 案例匹配 → 段落召回     │
+│  → 归因分析 → 报告生成  （SweepingOrchestrator 串行编排 + 进度回调） │
 └───────────────┬──────────────────────────────────────────┘
                 ▼
 ┌──────────────────────────────────────────────────────────┐
@@ -68,6 +68,7 @@ competition_agent/
 │   │   ├── financial_detector.py    # 财务异常 Agent
 │   │   ├── predictor.py            # 预测建模 Agent（SHAP 归因）
 │   │   ├── case_retriever.py       # 案例匹配 Agent（RRF 融合）
+│   │   ├── chunk_retriever.py      # 段落召回 Agent（证据级 chunk 检索）
 │   │   ├── attributor.py           # 归因分析 Agent
 │   │   ├── reporter.py             # 报告生成 Agent
 │   │   ├── graph.py / risk_mapper.py / label_keywords_v2.py
@@ -88,7 +89,7 @@ competition_agent/
 |------|------|
 | `api/main.py` | FastAPI 入口，10 个路由 + WebSocket + 静态挂载，CORS 全开 |
 | `api/pipeline.py` | 任务调度核心：`_scan_lock` 串行锁、`cancel_task` 取消、`_result_cache` LRU 缓存、`get_offline_result` 离线快照、`_fallback_after_error` 失败兜底、`run_scan_task` 实时流水线、`ProgressMessage` 消息推送 |
-| `api/models.py` | Pydantic 模型：`AnalyzeRequest/Response`、`ScanRequest{realtime,force}`、`ScanResponse{cached,result}`、`ProgressMessage{type,agent_key,progress_percent,fatal}` |
+| `api/models.py` | Pydantic 模型：`AnalyzeRequest/Response`、`ScanRequest{as_of,realtime,force}`、`ScanResponse{cached,result}`、`ProgressMessage{type,agent_key,progress_percent,fatal}` |
 | `backend/agents/*` | 6 个 Agent + 编排器，`AgentBase` 提供 `_report_progress` 细粒度进度回调 |
 | `backend/skills/*` | 公告检索(cninfo)、OCR、Embedding(bge/fallback)、案例向量、财务抓取、特征加载、风险词典 |
 | `backend/config.py` | 全局配置单一来源，路径/阈值/模型路径集中，业务代码禁止硬编码 |
@@ -100,7 +101,7 @@ competition_agent/
 - **全局状态** `AppState`：`currentCompany`/`scanStatus`/`currentTaskId`/`agentStates`/`agentResults`/`resultCache`/`realtimeMode`，带发布订阅 `subscribe/set`。
 - **API 调用**：`fetchSingleCompany`(→GET `/api/company/{code}`)、`fetchAnalysis`(→POST `/api/analyze`)、`startRealtimeScan`(→POST `/api/scan` + WS + DELETE 取消)。
 - **WebSocket**：`/ws/pipeline/{taskId}`，`onmessage` 按 `type` 分发（progress/complete/error/fallback/cancelled/heartbeat），断线指数退避重连，消息 id 去重。
-- **6 Agent 流水线可视化**：左侧 Agent 卡片灰→蓝(脉冲)→绿(完成)，顶部 5 步步骤条，全局进度条。
+- **7 Agent 流水线可视化**：左侧 Agent 卡片灰→蓝(脉冲)→绿(完成)，顶部 5 步步骤条，全局进度条。
 - **主控仪表盘**：问询概率大数字(变色)、风险等级徽章、SHAP 因子卡、风险证据表(可排序)、执行摘要、4 项模型指标卡。
 - **实时扫雷开关 + 离线兜底**：默认离线秒出，开关开启走真实流水线，失败黄色兜底条 + 自动回退离线。
 - **前端结果缓存** `resultCache`：看过的公司秒出（与后端 LRU 双重保障）。
@@ -130,6 +131,17 @@ competition_agent/
 
 ## 六、启动方式
 
+### 一键启动（推荐）
+
+在资源管理器中进入项目根目录，双击：
+
+- `start_api_verify.bat` —— 启动 FastAPI 服务并自动打开浏览器访问 `http://127.0.0.1:8000`
+- `start_api.bat` —— 仅启动服务（不自动开浏览器，适合开发/调试）
+
+> 两个脚本均通过环境变量 `API_PORT` / `API_HOST` 控制监听端口（默认 `0.0.0.0:8000`），避免与历史脚本 `8080` 端口冲突。
+
+### 命令行启动
+
 ```bash
 # 1. 安装依赖
 cd D:/competition_agent
@@ -138,7 +150,7 @@ pip install -r requirements.txt
 # 2. 配置 .env（见上节）
 
 # 3. 启动后端（FastAPI + WebSocket）
-python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
 #   或 python api/main.py
 
 # 4. 打开前端
@@ -156,7 +168,7 @@ python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 | GET | `/api/agents` | 7 个 Agent 的元数据（前端流水线清单单一来源） |
 | POST | `/api/analyze` | 批量风险分析（离线） |
 | GET | `/api/company/{code}` | 单公司离线查询 |
-| POST | `/api/scan` | 实时扫雷：`realtime=false` 秒返离线快照(cached)，`true` 创建任务，冲突返回 409 |
+| POST | `/api/scan` | 实时扫雷：`realtime=false` 秒返离线快照(cached)，`true` 创建任务，冲突返回 409；支持 `as_of` 指定截止日期 |
 | DELETE | `/api/scan/{task_id}` | 取消实时任务 |
 | GET | `/api/scan/{task_id}` | 查询任务状态（断线重连补历史） |
 | GET | `/api/mock/{code}` | 联调用：有离线快照优先返回真实，否则 404 |
@@ -164,7 +176,7 @@ python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 
 ## 八、核心功能
 
-1. **6 Agent 流水线**：公告研读→财务异常→预测建模→案例匹配→归因分析→报告生成，串行编排 + 细粒度进度回调。
+1. **7 Agent 流水线**：公告研读→财务异常→预测建模→案例匹配→段落召回→归因分析→报告生成，串行编排 + 细粒度进度回调。
 2. **问询概率预测**：XGBoost 三模型集成（30/60/90d），SHAP 因子归因，可选 XGBoost-Cox 生存模型。
 3. **风险证据表**：公告研读 Agent 输出日期/等级/L1L2/描述/原文证据，支持排序筛选。
 4. **案例语义匹配**：BGE 向量检索 + RRF 融合得分，Top-5 相似历史问询案例。

@@ -37,6 +37,7 @@ import re
 from pathlib import Path
 
 from ..llm import chat
+from ..run_config import RunConfig
 from .base import AgentBase
 
 # 特征 → 官方 taxonomy（案例库风险因素体系）映射表（feature_taxonomy_map.csv）
@@ -198,11 +199,13 @@ PREFIX_MAP = [
 class AttributorAgent(AgentBase):
     name = "Attributor"
 
-    def __init__(self, top_k=5, shap_threshold=0.05, use_llm=True):
+    def __init__(self, top_k=5, shap_threshold=0.05, use_llm=None, run_config=None):
         super().__init__()
+        rc = run_config or RunConfig()
         self.top_k = top_k
         self.shap_threshold = shap_threshold
-        self.use_llm = use_llm
+        self.use_llm = bool(rc.use_llm if use_llm is None else use_llm)
+        self.run_config = rc
 
     # ============ Step 1: 读取特征贡献（已前移到预测 Agent） ============
     def read_shap(self, ctx):

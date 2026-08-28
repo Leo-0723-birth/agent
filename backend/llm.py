@@ -22,18 +22,25 @@
 """
 import json
 import logging
-import os
-from pathlib import Path
 
 import requests
 
+from backend.config import (
+    LLM_API_KEY,
+    LLM_BASE_URL,
+    LLM_MAX_TOKENS,
+    LLM_MODEL,
+    LLM_TEMPERATURE,
+    LLM_THINKING,
+)
+
 _logger = logging.getLogger(__name__)
 
-# 默认值（会被 .env / 环境变量覆盖）
-DEFAULT_MODEL = "deepseek-v4-flash"
-DEFAULT_BASE_URL = "https://api.deepseek.com"
-DEFAULT_TEMPERATURE = 0.1
-DEFAULT_MAX_TOKENS = 2000
+# 默认值（会被 backend.config 中的环境变量读取覆盖）
+DEFAULT_MODEL = LLM_MODEL
+DEFAULT_BASE_URL = LLM_BASE_URL
+DEFAULT_TEMPERATURE = LLM_TEMPERATURE
+DEFAULT_MAX_TOKENS = LLM_MAX_TOKENS
 
 _client = None  # 单例（requests 兜底通道）
 _lc_base = None  # 单例（LangChain 基础模型）
@@ -46,27 +53,11 @@ except Exception:  # 未安装 langchain-deepseek 时静默降级
     ChatDeepSeek = None
 
 
-def _load_env():
-    """从项目根 .env 读取 DEEPSEEK_*（系统环境变量优先，不覆盖已存在的）。"""
-    env_path = Path(__file__).resolve().parent.parent / ".env"
-    if not env_path.exists():
-        return
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            if k.strip() in ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "DEEPSEEK_MODEL"):
-                os.environ.setdefault(k.strip(), v.strip())
-
-
-_load_env()
-
-
 def _require_key():
-    key = os.getenv("DEEPSEEK_API_KEY", "")
-    if not key:
+    """返回 DEEPSEEK_API_KEY；未配置时抛出明确异常。"""
+    if not LLM_API_KEY:
         raise RuntimeError("未配置 DEEPSEEK_API_KEY，请在项目根 .env 中填写")
-    return key
+    return LLM_API_KEY
 
 
 def get_client():
@@ -75,8 +66,8 @@ def get_client():
     if _client is None:
         _client = _DeepSeekClient(
             api_key=_require_key(),
-            base_url=os.getenv("DEEPSEEK_BASE_URL", DEFAULT_BASE_URL).rstrip("/"),
-            model=os.getenv("DEEPSEEK_MODEL", DEFAULT_MODEL),
+            base_url=LLM_BASE_URL,
+            model=LLM_MODEL,
         )
     return _client
 
@@ -86,9 +77,9 @@ def _get_lc_base():
     global _lc_base
     if _lc_base is None:
         _lc_base = ChatDeepSeek(
-            model=os.getenv("DEEPSEEK_MODEL", DEFAULT_MODEL),
+            model=LLM_MODEL,
             api_key=_require_key(),
-            base_url=os.getenv("DEEPSEEK_BASE_URL", DEFAULT_BASE_URL).rstrip("/"),
+            base_url=LLM_BASE_URL,
             timeout=120,
         )
     return _lc_base
@@ -214,7 +205,7 @@ class _DeepSeekClient:
             payload["response_format"] = {"type": "json_object"}
         # 禁用 thinking：v4-flash 推理会耗尽 max_tokens 且 JSON 结构不稳；
         # 抽取/结构化任务走确定性输出（可用环境变量 DEEPSEEK_THINKING=1 重新开启）
-        if os.getenv("DEEPSEEK_THINKING", "0") != "1":
+        if not LLM_THINKING:
             payload["thinking"] = {"type": "disabled"}
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         resp = requests.post(url, json=payload, headers=headers, timeout=120)
@@ -227,7 +218,7 @@ class _DeepSeekClient:
 # 自测入口（python -m backend.llm）
 # ============================================================
 if __name__ == "__main__":
-    print(f"模型: {os.getenv('DEEPSEEK_MODEL', DEFAULT_MODEL)}")
-    print(f"Base URL: {os.getenv('DEEPSEEK_BASE_URL', DEFAULT_BASE_URL)}")
-    print(f"API Key: {'已配置' if os.getenv('DEEPSEEK_API_KEY') else '未配置（请在 .env 填写）'}")
+    print(f"模型: {LLM_MODEL}")
+    print(f"Base URL: {LLM_BASE_URL}")
+    print(f"API Key: {'已配置' if LLM_API_KEY else '未配置（请在 .env 填写）'}")
     print(f"LangChain 通道: {'可用' if LANGCHAIN_AVAILABLE else '不可用（将使用 requests 直连）'}")

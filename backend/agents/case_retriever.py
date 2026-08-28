@@ -37,6 +37,7 @@ from typing import Iterable
 _logger = logging.getLogger(__name__)
 
 from ..config import CASE_TOP_K, RRF_K
+from ..run_config import RunConfig
 from ..skills import vector_store
 from ..skills.case_embedding import embed_one
 from .base import AgentBase
@@ -55,12 +56,14 @@ class CaseRetrieverAgent(AgentBase):
     KEYWORD_WEIGHT = 0.25
     KEYWORD_HIT_CAP = 8
 
-    def __init__(self, top_k=CASE_TOP_K, rrf_k=RRF_K, use_semantic=True,
-                 semantic_timeout=60):
+    def __init__(self, top_k=CASE_TOP_K, rrf_k=RRF_K, use_semantic=None,
+                 semantic_timeout=60, run_config=None):
         super().__init__()
+        rc = run_config or RunConfig()
         self.top_k = top_k
         self.rrf_k = rrf_k
-        self.use_semantic = bool(use_semantic)
+        self.use_semantic = bool(rc.use_semantic_cases if use_semantic is None else use_semantic)
+        self.run_config = rc
         self.semantic_timeout = float(semantic_timeout)
         self._cosine_scores = {}   # 语义通道余弦相似度（idx -> 0~1）
         self._db, self._vecs = None, None
@@ -229,7 +232,7 @@ class CaseRetrieverAgent(AgentBase):
 
         return None
 
-    def _eligible_indices(self, entries, cutoff_date=None):
+    def _eligible_indices(self, entries, cutoff_date=None, ctx=None):
         """
         返回可参与检索的原案例索引。
         有截点时严格使用 publish_date < cutoff_date，避免未来案例泄漏。
@@ -241,6 +244,8 @@ class CaseRetrieverAgent(AgentBase):
         bad_dates = 0
 
         for i, e in enumerate(entries):
+            if ctx is not None:
+                self._check_cancel(ctx, "案例检索任务已取消")
             d = self._parse_date(e.get("publish_date"))
             if d is None:
                 bad_dates += 1
@@ -386,6 +391,7 @@ class CaseRetrieverAgent(AgentBase):
 
     # ================= 主入口 =================
     def execute(self, company, ctx, cutoff_date=None):
+        self._check_cancel(ctx, "案例检索任务已取消")
         entries, vectors = self._load_db()
 
         if not entries:
@@ -419,6 +425,7 @@ class CaseRetrieverAgent(AgentBase):
         eligible_indices = self._eligible_indices(
             entries,
             cutoff_date=resolved_cutoff,
+            ctx=ctx,
         )
 
         if not eligible_indices:

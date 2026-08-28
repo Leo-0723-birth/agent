@@ -1,7 +1,14 @@
 from datetime import date
 from pathlib import Path
 
+import pytest
 from streamlit.testing.v1 import AppTest
+
+# 旧 Streamlit 架构（公告研读agent.py）已被 FastAPI+WebSocket 架构替代
+# （commit 69d7e9d），入口脚本已删除，这些用例改为跳过而非失败。
+pytestmark = pytest.mark.skip(
+    reason="Streamlit 已迁移至 FastAPI 前后端架构，入口脚本 公告研读agent.py 已删除"
+)
 
 from backend.dashboard_utils import (
     risk_interval_comparison_rows,
