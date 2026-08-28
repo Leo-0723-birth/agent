@@ -1,0 +1,198 @@
+﻿semantic_column,source_feature,description
+announcement_semantic_000,w30_n_ann,近30天 公告数
+announcement_semantic_001,w30_n_rows,近30天 主题命中数
+announcement_semantic_002,w30_n_high,近30天 高风险条数
+announcement_semantic_003,w30_n_themes,近30天 覆盖主题数
+announcement_semantic_004,w30_rule_hits,近30天 规则命中数
+announcement_semantic_005,w30_strong,近30天 强风险信号数
+announcement_semantic_006,w30_score_mean,近30天 风险分均值
+announcement_semantic_007,w30_score_max,近30天 风险分最大值
+announcement_semantic_008,w30_score_sum,近30天 风险分总和
+announcement_semantic_009,w30_rerank_max,近30天 精排分最大值
+announcement_semantic_010,w30_sentneg_mean,近30天 负面情绪均值
+announcement_semantic_011,w30_L1_A_max,近30天 一级主题A 最高分
+announcement_semantic_012,w30_L1_A_cnt,近30天 一级主题A 证据数
+announcement_semantic_013,w30_L1_B_max,近30天 一级主题B 最高分
+announcement_semantic_014,w30_L1_B_cnt,近30天 一级主题B 证据数
+announcement_semantic_015,w30_L1_C_max,近30天 一级主题C 最高分
+announcement_semantic_016,w30_L1_C_cnt,近30天 一级主题C 证据数
+announcement_semantic_017,w30_L1_D_max,近30天 一级主题D 最高分
+announcement_semantic_018,w30_L1_D_cnt,近30天 一级主题D 证据数
+announcement_semantic_019,w30_L1_E_max,近30天 一级主题E 最高分
+announcement_semantic_020,w30_L1_E_cnt,近30天 一级主题E 证据数
+announcement_semantic_021,w30_L1_F_max,近30天 一级主题F 最高分
+announcement_semantic_022,w30_L1_F_cnt,近30天 一级主题F 证据数
+announcement_semantic_023,w30_L1_G_max,近30天 一级主题G 最高分
+announcement_semantic_024,w30_L1_G_cnt,近30天 一级主题G 证据数
+announcement_semantic_025,w30_L1_H_max,近30天 一级主题H 最高分
+announcement_semantic_026,w30_L1_H_cnt,近30天 一级主题H 证据数
+announcement_semantic_027,w60_n_ann,近60天 公告数
+announcement_semantic_028,w60_n_rows,近60天 主题命中数
+announcement_semantic_029,w60_n_high,近60天 高风险条数
+announcement_semantic_030,w60_n_themes,近60天 覆盖主题数
+announcement_semantic_031,w60_rule_hits,近60天 规则命中数
+announcement_semantic_032,w60_strong,近60天 强风险信号数
+announcement_semantic_033,w60_score_mean,近60天 风险分均值
+announcement_semantic_034,w60_score_max,近60天 风险分最大值
+announcement_semantic_035,w60_score_sum,近60天 风险分总和
+announcement_semantic_036,w60_rerank_max,近60天 精排分最大值
+announcement_semantic_037,w60_sentneg_mean,近60天 负面情绪均值
+announcement_semantic_038,w60_L1_A_max,近60天 一级主题A 最高分
+announcement_semantic_039,w60_L1_A_cnt,近60天 一级主题A 证据数
+announcement_semantic_040,w60_L1_B_max,近60天 一级主题B 最高分
+announcement_semantic_041,w60_L1_B_cnt,近60天 一级主题B 证据数
+announcement_semantic_042,w60_L1_C_max,近60天 一级主题C 最高分
+announcement_semantic_043,w60_L1_C_cnt,近60天 一级主题C 证据数
+announcement_semantic_044,w60_L1_D_max,近60天 一级主题D 最高分
+announcement_semantic_045,w60_L1_D_cnt,近60天 一级主题D 证据数
+announcement_semantic_046,w60_L1_E_max,近60天 一级主题E 最高分
+announcement_semantic_047,w60_L1_E_cnt,近60天 一级主题E 证据数
+announcement_semantic_048,w60_L1_F_max,近60天 一级主题F 最高分
+announcement_semantic_049,w60_L1_F_cnt,近60天 一级主题F 证据数
+announcement_semantic_050,w60_L1_G_max,近60天 一级主题G 最高分
+announcement_semantic_051,w60_L1_G_cnt,近60天 一级主题G 证据数
+announcement_semantic_052,w60_L1_H_max,近60天 一级主题H 最高分
+announcement_semantic_053,w60_L1_H_cnt,近60天 一级主题H 证据数
+announcement_semantic_054,w90_n_ann,近90天 公告数
+announcement_semantic_055,w90_n_rows,近90天 主题命中数
+announcement_semantic_056,w90_n_high,近90天 高风险条数
+announcement_semantic_057,w90_n_themes,近90天 覆盖主题数
+announcement_semantic_058,w90_rule_hits,近90天 规则命中数
+announcement_semantic_059,w90_strong,近90天 强风险信号数
+announcement_semantic_060,w90_score_mean,近90天 风险分均值
+announcement_semantic_061,w90_score_max,近90天 风险分最大值
+announcement_semantic_062,w90_score_sum,近90天 风险分总和
+announcement_semantic_063,w90_rerank_max,近90天 精排分最大值
+announcement_semantic_064,w90_sentneg_mean,近90天 负面情绪均值
+announcement_semantic_065,w90_L1_A_max,近90天 一级主题A 最高分
+announcement_semantic_066,w90_L1_A_cnt,近90天 一级主题A 证据数
+announcement_semantic_067,w90_L1_B_max,近90天 一级主题B 最高分
+announcement_semantic_068,w90_L1_B_cnt,近90天 一级主题B 证据数
+announcement_semantic_069,w90_L1_C_max,近90天 一级主题C 最高分
+announcement_semantic_070,w90_L1_C_cnt,近90天 一级主题C 证据数
+announcement_semantic_071,w90_L1_D_max,近90天 一级主题D 最高分
+announcement_semantic_072,w90_L1_D_cnt,近90天 一级主题D 证据数
+announcement_semantic_073,w90_L1_E_max,近90天 一级主题E 最高分
+announcement_semantic_074,w90_L1_E_cnt,近90天 一级主题E 证据数
+announcement_semantic_075,w90_L1_F_max,近90天 一级主题F 最高分
+announcement_semantic_076,w90_L1_F_cnt,近90天 一级主题F 证据数
+announcement_semantic_077,w90_L1_G_max,近90天 一级主题G 最高分
+announcement_semantic_078,w90_L1_G_cnt,近90天 一级主题G 证据数
+announcement_semantic_079,w90_L1_H_max,近90天 一级主题H 最高分
+announcement_semantic_080,w90_L1_H_cnt,近90天 一级主题H 证据数
+announcement_semantic_081,w180_n_ann,近180天 公告数
+announcement_semantic_082,w180_n_rows,近180天 主题命中数
+announcement_semantic_083,w180_n_high,近180天 高风险条数
+announcement_semantic_084,w180_n_themes,近180天 覆盖主题数
+announcement_semantic_085,w180_rule_hits,近180天 规则命中数
+announcement_semantic_086,w180_strong,近180天 强风险信号数
+announcement_semantic_087,w180_score_mean,近180天 风险分均值
+announcement_semantic_088,w180_score_max,近180天 风险分最大值
+announcement_semantic_089,w180_score_sum,近180天 风险分总和
+announcement_semantic_090,w180_rerank_max,近180天 精排分最大值
+announcement_semantic_091,w180_sentneg_mean,近180天 负面情绪均值
+announcement_semantic_092,w180_L1_A_max,近180天 一级主题A 最高分
+announcement_semantic_093,w180_L1_A_cnt,近180天 一级主题A 证据数
+announcement_semantic_094,w180_L1_B_max,近180天 一级主题B 最高分
+announcement_semantic_095,w180_L1_B_cnt,近180天 一级主题B 证据数
+announcement_semantic_096,w180_L1_C_max,近180天 一级主题C 最高分
+announcement_semantic_097,w180_L1_C_cnt,近180天 一级主题C 证据数
+announcement_semantic_098,w180_L1_D_max,近180天 一级主题D 最高分
+announcement_semantic_099,w180_L1_D_cnt,近180天 一级主题D 证据数
+announcement_semantic_100,w180_L1_E_max,近180天 一级主题E 最高分
+announcement_semantic_101,w180_L1_E_cnt,近180天 一级主题E 证据数
+announcement_semantic_102,w180_L1_F_max,近180天 一级主题F 最高分
+announcement_semantic_103,w180_L1_F_cnt,近180天 一级主题F 证据数
+announcement_semantic_104,w180_L1_G_max,近180天 一级主题G 最高分
+announcement_semantic_105,w180_L1_G_cnt,近180天 一级主题G 证据数
+announcement_semantic_106,w180_L1_H_max,近180天 一级主题H 最高分
+announcement_semantic_107,w180_L1_H_cnt,近180天 一级主题H 证据数
+announcement_semantic_108,th_A01_max,主题 A01 近180天最高风险分
+announcement_semantic_109,th_A01_cnt,主题 A01 近180天证据条数
+announcement_semantic_110,th_A02_max,主题 A02 近180天最高风险分
+announcement_semantic_111,th_A02_cnt,主题 A02 近180天证据条数
+announcement_semantic_112,th_A03_max,主题 A03 近180天最高风险分
+announcement_semantic_113,th_A03_cnt,主题 A03 近180天证据条数
+announcement_semantic_114,th_A04_max,主题 A04 近180天最高风险分
+announcement_semantic_115,th_A04_cnt,主题 A04 近180天证据条数
+announcement_semantic_116,th_A05_max,主题 A05 近180天最高风险分
+announcement_semantic_117,th_A05_cnt,主题 A05 近180天证据条数
+announcement_semantic_118,th_A06_max,主题 A06 近180天最高风险分
+announcement_semantic_119,th_A06_cnt,主题 A06 近180天证据条数
+announcement_semantic_120,th_B01_max,主题 B01 近180天最高风险分
+announcement_semantic_121,th_B01_cnt,主题 B01 近180天证据条数
+announcement_semantic_122,th_B02_max,主题 B02 近180天最高风险分
+announcement_semantic_123,th_B02_cnt,主题 B02 近180天证据条数
+announcement_semantic_124,th_B03_max,主题 B03 近180天最高风险分
+announcement_semantic_125,th_B03_cnt,主题 B03 近180天证据条数
+announcement_semantic_126,th_B04_max,主题 B04 近180天最高风险分
+announcement_semantic_127,th_B04_cnt,主题 B04 近180天证据条数
+announcement_semantic_128,th_B05_max,主题 B05 近180天最高风险分
+announcement_semantic_129,th_B05_cnt,主题 B05 近180天证据条数
+announcement_semantic_130,th_C01_max,主题 C01 近180天最高风险分
+announcement_semantic_131,th_C01_cnt,主题 C01 近180天证据条数
+announcement_semantic_132,th_C02_max,主题 C02 近180天最高风险分
+announcement_semantic_133,th_C02_cnt,主题 C02 近180天证据条数
+announcement_semantic_134,th_C03_max,主题 C03 近180天最高风险分
+announcement_semantic_135,th_C03_cnt,主题 C03 近180天证据条数
+announcement_semantic_136,th_C04_max,主题 C04 近180天最高风险分
+announcement_semantic_137,th_C04_cnt,主题 C04 近180天证据条数
+announcement_semantic_138,th_C05_max,主题 C05 近180天最高风险分
+announcement_semantic_139,th_C05_cnt,主题 C05 近180天证据条数
+announcement_semantic_140,th_C06_max,主题 C06 近180天最高风险分
+announcement_semantic_141,th_C06_cnt,主题 C06 近180天证据条数
+announcement_semantic_142,th_D01_max,主题 D01 近180天最高风险分
+announcement_semantic_143,th_D01_cnt,主题 D01 近180天证据条数
+announcement_semantic_144,th_D02_max,主题 D02 近180天最高风险分
+announcement_semantic_145,th_D02_cnt,主题 D02 近180天证据条数
+announcement_semantic_146,th_D03_max,主题 D03 近180天最高风险分
+announcement_semantic_147,th_D03_cnt,主题 D03 近180天证据条数
+announcement_semantic_148,th_D04_max,主题 D04 近180天最高风险分
+announcement_semantic_149,th_D04_cnt,主题 D04 近180天证据条数
+announcement_semantic_150,th_D05_max,主题 D05 近180天最高风险分
+announcement_semantic_151,th_D05_cnt,主题 D05 近180天证据条数
+announcement_semantic_152,th_D06_max,主题 D06 近180天最高风险分
+announcement_semantic_153,th_D06_cnt,主题 D06 近180天证据条数
+announcement_semantic_154,th_E02_max,主题 E02 近180天最高风险分
+announcement_semantic_155,th_E02_cnt,主题 E02 近180天证据条数
+announcement_semantic_156,th_E03_max,主题 E03 近180天最高风险分
+announcement_semantic_157,th_E03_cnt,主题 E03 近180天证据条数
+announcement_semantic_158,th_E04_max,主题 E04 近180天最高风险分
+announcement_semantic_159,th_E04_cnt,主题 E04 近180天证据条数
+announcement_semantic_160,th_E05_max,主题 E05 近180天最高风险分
+announcement_semantic_161,th_E05_cnt,主题 E05 近180天证据条数
+announcement_semantic_162,th_E06_max,主题 E06 近180天最高风险分
+announcement_semantic_163,th_E06_cnt,主题 E06 近180天证据条数
+announcement_semantic_164,th_E07_max,主题 E07 近180天最高风险分
+announcement_semantic_165,th_E07_cnt,主题 E07 近180天证据条数
+announcement_semantic_166,th_F01_max,主题 F01 近180天最高风险分
+announcement_semantic_167,th_F01_cnt,主题 F01 近180天证据条数
+announcement_semantic_168,th_F02_max,主题 F02 近180天最高风险分
+announcement_semantic_169,th_F02_cnt,主题 F02 近180天证据条数
+announcement_semantic_170,th_F03_max,主题 F03 近180天最高风险分
+announcement_semantic_171,th_F03_cnt,主题 F03 近180天证据条数
+announcement_semantic_172,th_F04_max,主题 F04 近180天最高风险分
+announcement_semantic_173,th_F04_cnt,主题 F04 近180天证据条数
+announcement_semantic_174,th_F05_max,主题 F05 近180天最高风险分
+announcement_semantic_175,th_F05_cnt,主题 F05 近180天证据条数
+announcement_semantic_176,th_F06_max,主题 F06 近180天最高风险分
+announcement_semantic_177,th_F06_cnt,主题 F06 近180天证据条数
+announcement_semantic_178,th_G01_max,主题 G01 近180天最高风险分
+announcement_semantic_179,th_G01_cnt,主题 G01 近180天证据条数
+announcement_semantic_180,th_G03_max,主题 G03 近180天最高风险分
+announcement_semantic_181,th_G03_cnt,主题 G03 近180天证据条数
+announcement_semantic_182,th_G04_max,主题 G04 近180天最高风险分
+announcement_semantic_183,th_G04_cnt,主题 G04 近180天证据条数
+announcement_semantic_184,th_G05_max,主题 G05 近180天最高风险分
+announcement_semantic_185,th_G05_cnt,主题 G05 近180天证据条数
+announcement_semantic_186,th_G06_max,主题 G06 近180天最高风险分
+announcement_semantic_187,th_G06_cnt,主题 G06 近180天证据条数
+announcement_semantic_188,th_G07_max,主题 G07 近180天最高风险分
+announcement_semantic_189,th_G07_cnt,主题 G07 近180天证据条数
+announcement_semantic_190,th_H01_max,主题 H01 近180天最高风险分
+announcement_semantic_191,th_H01_cnt,主题 H01 近180天证据条数
+announcement_semantic_192,th_H02_max,主题 H02 近180天最高风险分
+announcement_semantic_193,th_H02_cnt,主题 H02 近180天证据条数
+announcement_semantic_194,days_since_high,距上次高风险公告天数
+announcement_semantic_195,days_since_ann,距上次公告天数
+announcement_semantic_196,trend_90_delta,风险分90天环比变化
