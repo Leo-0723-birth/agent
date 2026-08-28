@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class FactorItem(BaseModel):
@@ -25,7 +25,8 @@ class AnnouncementRiskItem(BaseModel):
     description: str                    # 风险描述
     evidence: str                       # 原文证据
     title: str                          # 公告标题
-    sourceUrl: Optional[str] = ""
+    sourceUrl: Optional[str] = ""       # 巨潮详情页
+    pdfUrl: Optional[str] = ""          # PDF 原文
 
 
 class AttributionEvidenceItem(BaseModel):
@@ -33,6 +34,16 @@ class AttributionEvidenceItem(BaseModel):
     evidence: str                       # 归因原文/证据
     source: Optional[str] = ""          # 来源说明
     anchor: Optional[str] = ""          # 前端锚点
+
+
+class FinancialAnomalyItem(BaseModel):
+    type: str                           # 异常类型
+    severity: int                       # 严重度 1-5
+    indicator: str                      # 指标名
+    value: Any                          # 本期值
+    threshold: str                      # 阈值说明
+    evidence: str                       # 证据描述
+    label_ref: str                      # 标签体系归类
 
 
 class SimilarCaseItem(BaseModel):
@@ -52,6 +63,13 @@ class AnalyzeResponse(BaseModel):
     level: str                          # low / mid / high
     levelText: str                      # 低风险 / 中风险 / 高风险
     confidence: float                   # 0~1
+    confidenceMeaning: str = "predicted_class_score"  # 非统计置信区间
+    dataSource: str = "unknown"         # realtime / offline_lookup / offline_snapshot
+    dataCoverage: dict = Field(default_factory=dict)
+    degradedReasons: List[str] = Field(default_factory=list)
+    featureAnchor: str = ""
+    modelVersion: str = ""
+    riskByWindow: Optional[dict] = Field(default_factory=dict)
     factors: int                        # 风险因子总数
     summary: str                        # HTML 摘要
     factorsList: List[FactorItem]
@@ -63,13 +81,14 @@ class AnalyzeResponse(BaseModel):
     advice: str
     # 扩展字段（真实数据补充）
     reportMarkdown: Optional[str] = ""
-    traceLog: Optional[list] = []
-    similarCases: Optional[List[SimilarCaseItem]] = []
+    traceLog: Optional[list] = Field(default_factory=list)
+    similarCases: Optional[List[SimilarCaseItem]] = Field(default_factory=list)
     generatedAt: Optional[str] = ""
     # 新增：融合 Streamlit 细节
-    announcementRisks: Optional[List[AnnouncementRiskItem]] = []    # 公告研读风险证据表
-    attributionEvidence: Optional[List[AttributionEvidenceItem]] = []  # 风险归因原文
-    riskFactorDetails: Optional[List[FactorItem]] = []              # 全部风险因子（查看全部用）
+    announcementRisks: Optional[List[AnnouncementRiskItem]] = Field(default_factory=list)
+    attributionEvidence: Optional[List[AttributionEvidenceItem]] = Field(default_factory=list)
+    riskFactorDetails: Optional[List[FactorItem]] = Field(default_factory=list)
+    financialAnomalies: Optional[List[FinancialAnomalyItem]] = Field(default_factory=list)
 
 
 class AnalyzeRequest(BaseModel):
@@ -84,11 +103,25 @@ class AnalyzeRequest(BaseModel):
 class ScanRequest(BaseModel):
     code: str = Field(..., description="公司代码，如 000001.SZ")
     window: int = Field(60, ge=1, le=365, description="预测窗口天数")
+    as_of: Optional[str] = Field(None, description="分析截止日期（YYYY-MM-DD），空则默认今天")
     use_llm: bool = Field(False, description="是否启用LLM精细抽取（演示建议关闭，可大幅提速）")
     use_bge: bool = Field(True, description="是否启用BGE语义检索")
     max_documents: Optional[int] = Field(5, ge=1, le=100, description="公告研读最大文档数（越小越快）")
     realtime: bool = Field(False, description="默认返回离线快照；为 true 时执行实时 Agent 流水线")
     force: bool = Field(False, description="是否取消当前任务并切换到新公司")
+
+    @field_validator("as_of")
+    @classmethod
+    def validate_as_of(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or not str(value).strip():
+            return None
+        from datetime import date
+
+        normalized = str(value).strip()
+        try:
+            return date.fromisoformat(normalized).isoformat()
+        except ValueError as exc:
+            raise ValueError("as_of 必须是有效的 YYYY-MM-DD 日期") from exc
 
 
 class ScanResponse(BaseModel):

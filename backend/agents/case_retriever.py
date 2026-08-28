@@ -56,13 +56,14 @@ class CaseRetrieverAgent(AgentBase):
     KEYWORD_WEIGHT = 0.25
     KEYWORD_HIT_CAP = 8
 
-    def __init__(self, top_k=CASE_TOP_K, rrf_k=RRF_K, use_semantic=True,
-                 semantic_timeout=60):
+    def __init__(self, top_k=CASE_TOP_K, rrf_k=RRF_K, use_semantic=None,
+                 semantic_timeout=60, run_config=None):
         super().__init__()
         rc = run_config or RunConfig()
         self.top_k = top_k
         self.rrf_k = rrf_k
-        self.use_semantic = bool(use_semantic)
+        self.use_semantic = bool(rc.use_semantic_cases if use_semantic is None else use_semantic)
+        self.run_config = rc
         self.semantic_timeout = float(semantic_timeout)
         self._cosine_scores = {}   # 语义通道余弦相似度（idx -> 0~1）
         self._db, self._vecs = None, None

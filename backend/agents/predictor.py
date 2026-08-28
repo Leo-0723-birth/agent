@@ -73,6 +73,20 @@ class PredictorAgent(AgentBase):
                 _shared_df = pd.DataFrame()
         return _shared_df
 
+    def _validate_manifest(self, manifest):
+        """在推理前检查模型清单的基础结构，损坏时只降级而不终止流水线。"""
+        if not isinstance(manifest, dict):
+            return False, ["manifest 不是对象"]
+        windows = manifest.get("windows")
+        if not isinstance(windows, dict):
+            return False, ["manifest 缺少 windows"]
+        messages = []
+        for horizon in self.horizons:
+            cfg = windows.get(horizon.replace("d", ""))
+            if not isinstance(cfg, dict) or not isinstance(cfg.get("features"), list):
+                messages.append(f"{horizon} 缺少特征清单")
+        return not messages, messages
+
     # ================= XGBoost-Cox 生存模型接口（可选，预留） =================
     def _load_survival(self):
         """加载 XGBoost-Cox 生存模型（单模型产出 30/60/90d 概率）。

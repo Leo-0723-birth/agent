@@ -37,6 +37,13 @@ class AgentBase(ABC):
                 "message": str(message),
             })
 
+    @staticmethod
+    def _check_cancel(ctx, message="任务已取消"):
+        """让支持取消的 Agent 在耗时步骤之间尽快退出。"""
+        cancel = getattr(ctx, "cancel_event", None)
+        if cancel is not None and cancel.is_set():
+            raise RuntimeError(message)
+
     @abstractmethod
     def execute(self, company, ctx):
         """Agent 主逻辑：读 ctx 需要的数据，写回 ctx 对应字段。子类必须实现。"""
