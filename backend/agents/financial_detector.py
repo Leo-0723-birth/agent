@@ -20,11 +20,14 @@
 设计：纯规则 + 可选 LLM 解读（backend/llm.py，模型 deepseek-v4-flash）。
 参考：底层建模方案 2.3/2.4 + 桌面《财务异常agent》已有实现（已跑通）。
 """
+import logging
 import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+_logger = logging.getLogger(__name__)
 
 if sys.platform == "win32":
     try:
@@ -408,7 +411,7 @@ class FinancialDetectorAgent(AgentBase):
                 f2_features = {k: _safe_float(v) for k, v in
                                f2_latest.iloc[-1][f2_calc.F2_FEATURE_NAMES].items()}
         except Exception as e:
-            print(f"  [F2 计算失败] {code}: {e}")
+            _logger.warning("[F2 计算失败] %s: %s", code, e)
 
         # 3.6 F3 市场特征（35 维在线，队友 crawl_market 迁移；失败降级空）
         mkt_features = {}
@@ -416,7 +419,7 @@ class FinancialDetectorAgent(AgentBase):
             mkt_features = {k: _safe_float(v) for k, v in
                             market_fetch.crawl_market_features(code).items()}
         except Exception as e:
-            print(f"  [F3 抓取失败] {code}: {e}")
+            _logger.warning("[F3 抓取失败] %s: %s", code, e)
 
         # 3.7 F4/F5 特征（在线爬取优先 → 离线预处理表兜底，在线带超时保护）
         #     在线：股吧舆情(F4)/股东治理(F5)，保证拿到近日最新数据；
@@ -443,18 +446,18 @@ class FinancialDetectorAgent(AgentBase):
                 try:
                     feats = _run_with_timeout(crawler, code, timeout=30)   # 在线：近日最新数据
                 except FutTimeout:
-                    print(f"  [{fam} 在线抓取超时(30s)，回退离线表] {code}")
+                    _logger.warning("[%s 在线抓取超时(30s)，回退离线表] %s", fam, code)
                 except Exception as e:
-                    print(f"  [{fam} 在线抓取失败，回退离线表] {code}: {e}")
+                    _logger.warning("[%s 在线抓取失败，回退离线表] %s: %s", fam, code, e)
                 if feats is None:
                     try:
                         feats = load_latest_features(code, fam)             # 离线表兜底
                     except Exception as e:
-                        print(f"  [{fam} 离线表加载失败] {code}: {e}")
+                        _logger.warning("[%s 离线表加载失败] %s: %s", fam, code, e)
                         feats = {}
                 f456_features.update({k: _safe_float(v) for k, v in (feats or {}).items()})
         except Exception as e:
-            print(f"  [F4/F5 加载失败] {code}: {e}")
+            _logger.warning("[F4/F5 加载失败] %s: %s", code, e)
 
         # 4. 行业对标 Z-Score（可选）
         benchmarks = self.industry_benchmark(code, indicators)
@@ -495,7 +498,7 @@ class FinancialDetectorAgent(AgentBase):
             ctx.financial.risk_factors = generate_risk_factors(
                 ctx.financial.features, code, str(indicators.get("report_period", "")))
         except Exception as e:
-            print(f"  [风险因素生成失败] {code}: {e}")
+            _logger.warning("[风险因素生成失败] %s: %s", code, e)
         return ctx
 
     def _industry_characteristics(self, industry):

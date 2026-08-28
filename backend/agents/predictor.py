@@ -16,6 +16,7 @@
 """
 import json
 import sys
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -26,6 +27,14 @@ from ..config import (MODELING_DATASET, PREDICTOR_HORIZONS, PREDICTOR_MODEL_DIR,
                       PREDICTOR_SURVIVAL_XGB, PREDICTOR_TOP_SHAP, RISK_THRESHOLDS)
 from ..skills.stock_code import normalize_stock_code
 from .base import AgentBase
+
+
+# 进程级单例缓存：多个 PredictorAgent 实例共享已加载的模型/数据集/清单，
+# 避免 orchestrator pool 中每个实例重复读取全量 CSV 与 9 个模型（内存成倍）。
+# 实时任务由 _scan_lock 串行，离线路径不实例化 Predictor，故无需额外加锁。
+_shared_df = None
+_shared_manifest = None
+_shared_models: dict = {}   # horizon -> {"rf", "lgb", "xgb"}
 
 
 class PredictorAgent(AgentBase):
@@ -43,21 +52,23 @@ class PredictorAgent(AgentBase):
 
     # ================= 懒加载 =================
     def _load_manifest(self):
-        if self._manifest is None:
+        global _shared_manifest
+        if _shared_manifest is None:
             p = self.model_dir / "models_manifest.json"
             if p.exists():
-                self._manifest = json.loads(p.read_text(encoding="utf-8"))
+                _shared_manifest = json.loads(p.read_text(encoding="utf-8"))
             else:
-                self._manifest = {"windows": {}}
-        return self._manifest
+                _shared_manifest = {"windows": {}}
+        return _shared_manifest
 
     def _load_df(self):
-        if self._df is None:
+        global _shared_df
+        if _shared_df is None:
             if Path(MODELING_DATASET).exists():
-                self._df = pd.read_csv(MODELING_DATASET, encoding="utf-8-sig")
+                _shared_df = pd.read_csv(MODELING_DATASET, encoding="utf-8-sig")
             else:
-                self._df = pd.DataFrame()
-        return self._df
+                _shared_df = pd.DataFrame()
+        return _shared_df
 
     # ================= XGBoost-Cox 生存模型接口（可选，预留） =================
     def _load_survival(self):
@@ -114,8 +125,8 @@ class PredictorAgent(AgentBase):
             return None, None, []
 
     def _load_models(self, horizon):
-        if horizon in self._models:
-            return self._models[horizon]
+        if horizon in _shared_models:
+            return _shared_models[horizon]
         w = horizon.replace("d", "")
         loaded = {}
         try:
@@ -139,7 +150,7 @@ class PredictorAgent(AgentBase):
                 model_file=str(self.model_dir / f"model_xgb_{w}d.json"))
         except Exception:
             loaded["xgb"] = None
-        self._models[horizon] = loaded
+        _shared_models[horizon] = loaded
         return loaded
 
     # ================= 查表（as-of） =================

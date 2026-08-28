@@ -7,8 +7,15 @@
 用法：
     from backend.config import DATA_RAW, FINBERT_GATE, RISK_THRESHOLDS
 """
+import logging
 import os
 from pathlib import Path
+
+# 统一日志输出（各模块用 logging.getLogger(__name__)，此处配置一次格式与级别）
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-7s [%(name)s] %(message)s",
+)
 
 # 尽量加载项目根 .env（密钥）；无 python-dotenv 时静默跳过，靠系统环境变量
 try:
@@ -24,6 +31,7 @@ DATA_DIR = BASE_DIR / "backend" / "data"
 INDEX_DIR = DATA_DIR / "index"          # 公告索引缓存（announcement_index.json）
 VECTOR_DB_DIR = DATA_DIR / "vector_db"  # 向量库持久化（案例库/证据库）
 OUTPUT_DIR = DATA_DIR / "output"        # context 快照 / 报告 / trace.log
+TRACE_DIR = OUTPUT_DIR / "traces"       # 实时流水线 trace 落盘（JSONL，赛后复盘审计）
 MODEL_DIR = BASE_DIR / "backend" / "models"
 
 # 比赛历史库（2020—2024 历史研究数据；只作历史证据，不替代当前公告事实）
@@ -120,6 +128,9 @@ RRF_K = 60                      # RRF 融合常数（k）
 
 # ---------- 关注点词典 / 案例重建源头（02_监管问询 数据产物，队友交付） ----------
 CONCERN_DICT_PATH = Path(BASE_DIR) / "backend" / "data" / "labels" / "concern_dict.json"
+# 风险词典：默认 v2.1（45/45 主题规则全覆盖，扩展自冻结版 v2.0.0）；环境变量可覆盖回退
+RISK_DICTIONARY = Path(os.getenv("RISK_DICTIONARY",
+    str(Path(BASE_DIR) / "backend" / "data" / "labels" / "risk_dictionary_v2.1-taxonomy-v1.1.yaml")))
 INQUIRY_JSONL = Path(os.getenv("INQUIRY_JSONL", r"D:\新建文件夹\02_监管问询\01_数据清单与结构化文本\inquiries.jsonl"))
 RULE_RISKS_JSONL = Path(os.getenv("RULE_RISKS_JSONL", r"D:\新建文件夹\02_监管问询\02_风险标签\inquiry_rule_risks.jsonl"))
 EVAL_GT_NORMALIZED_CSV = Path(os.getenv("EVAL_GT_NORMALIZED_CSV", r"D:\新建文件夹\02_监管问询\05_标签评测与报告\evaluation_ground_truth_normalized.csv"))

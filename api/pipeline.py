@@ -1,0 +1,1130 @@
+"""离线数据 → 前端 JSON 的桥梁。
+
+方案 B：从 backend/data/output/reports/ 读取已生成的离线报告，
+映射为前端 AnalyzeResponse 格式，秒级响应，不调模型。
+"""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+# 把项目根目录加入 sys.path，以便 import backend
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from .models import (
+    AnalyzeResponse,
+    FactorItem,
+    AnnouncementRiskItem,
+    AttributionEvidenceItem,
+    SimilarCaseItem,
+)
+
+REPORTS_DIR = PROJECT_ROOT / "backend" / "data" / "output" / "reports"
+
+# ---------- 公司代码 → 最新离线报告 ----------
+
+# manifest.json 内存缓存（mtime 失效）：避免每次离线查询都全量解析清单
+_manifest_cache: list[dict] | None = None
+_manifest_cache_mtime: float | None = None
+
+
+def _load_manifest() -> list[dict]:
+    """读取 manifest.json（带 mtime 失效的内存缓存）。"""
+    global _manifest_cache, _manifest_cache_mtime
+    path = REPORTS_DIR / "manifest.json"
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return []
+    if _manifest_cache is not None and _manifest_cache_mtime == mtime:
+        return _manifest_cache
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        _manifest_cache = payload if isinstance(payload, list) else []
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        _manifest_cache = []
+    _manifest_cache_mtime = mtime
+    return _manifest_cache
+
+
+def _latest_report_file(company: str) -> Path | None:
+    """从 manifest 找某公司最新一份报告 JSON。"""
+    manifest = _load_manifest()
+    normalized = company.upper().replace(".", "_")
+    entries = [
+        e for e in manifest
+        if str(e.get("company", "")).upper().replace(".", "_") == normalized
+        and (REPORTS_DIR / str(e.get("json_file", ""))).is_file()
+    ]
+    if not entries:
+        return None
+    # 按 generated_at 取最新
+    entries.sort(key=lambda e: str(e.get("generated_at", "")), reverse=True)
+    return REPORTS_DIR / entries[0]["json_file"]
+
+
+def _load_report(company: str) -> dict | None:
+    path = _latest_report_file(company)
+    if not path:
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_report_md(company: str) -> str:
+    path = _latest_report_file(company)
+    if not path:
+        return ""
+    md_path = path.with_suffix(".md")
+    if md_path.exists():
+        return md_path.read_text(encoding="utf-8")
+    return ""
+
+
+# ---------- 字段映射 ----------
+
+_LEVEL_MAP = {"低": "low", "中": "mid", "高": "high"}
+_LEVEL_TEXT = {"低": "低风险", "中": "中风险", "高": "高风险"}
+_COLOR_MAP = {"low": "#10B981", "mid": "#F59E0B", "high": "#EF4444"}
+
+# SHAP 因子的人读名称/标签/描述映射（单一来源，_map_shap_to_factors 与
+# _map_risk_factor_details 共用，避免双份维护）。
+_SHAP_NAME_MAP = {
+    "mkt_volume_ratio_20d": "20 日量比",
+    "f6_last_inquiry_interval_days": "最近问询间隔",
+    "f6_inquiry_count_60m": "60 月问询次数",
+    "sent_guba_negative_ratio_30d": "股吧负面占比 30d",
+    "mkt_market_cap": "总市值",
+    "mkt_log_market_cap": "总市值（对数）",
+    "f6_inquiry_count_12m": "12 月问询次数",
+    "f6_inquiry_count_24m": "24 月问询次数",
+    "f6_inquiry_count_36m": "36 月问询次数",
+    "f6_inquiry_count_48m": "48 月问询次数",
+    "mkt_turnover_20d": "20 日换手率",
+    "mkt_volatility_20d": "20 日波动率",
+    "mkt_pe_ratio": "市盈率",
+    "mkt_return_60d": "60 日收益率",
+    "f2_p_roa": "ROA",
+    "f2_beneish_m": "Beneish M-Score",
+    "debt_to_assets_ratio": "资产负债率",
+}
+_SHAP_TAG_MAP = {
+    "市场异动": ("market", "市场"),
+    "问询历史": ("text", "问询历史"),
+    "舆情": ("text", "舆情"),
+    "市值": ("market", "市值"),
+    "财务": ("finance", "财务"),
+    "历史问询": ("text", "历史问询"),
+    "市场情绪": ("text", "舆情"),
+    "偿债能力": ("finance", "财务"),
+    "盈利能力": ("finance", "财务"),
+    "市场市值": ("market", "市值"),
+}
+_SHAP_DESC_MAP = {
+    "mkt_volume_ratio_20d": "当日成交量 / 前 19 日均量异常",
+    "f6_last_inquiry_interval_days": "距最近一次监管问询天数",
+    "f6_inquiry_count_60m": "历史监管问询频次",
+    "sent_guba_negative_ratio_30d": "近 30 天负面舆情比例",
+    "mkt_market_cap": "当前总市值水平",
+    "mkt_log_market_cap": "当前总市值水平（对数）",
+    "mkt_pe_ratio": "当前市盈率水平",
+    "mkt_return_60d": "近 60 日股价收益率",
+    "f2_p_roa": "资产回报率",
+    "f2_beneish_m": "盈余操纵嫌疑评分",
+    "debt_to_assets_ratio": "资产负债率水平",
+}
+
+
+def _map_risk_level(raw: str) -> str:
+    for k, v in _LEVEL_MAP.items():
+        if k in (raw or ""):
+            return v
+    return "low"
+
+
+def _map_shap_to_factors(report: dict) -> list[FactorItem]:
+    """把 scorecard.shap_features + attribution.top_risk_factors 映射为 FactorItem。"""
+    scorecard = report.get("scorecard", {}) or {}
+    attribution = report.get("attribution", {}) or {}
+    top_factors = attribution.get("top_risk_factors", []) or []
+    shap_features = scorecard.get("shap_features", []) or []
+
+    # 人读名称映射（公共表）
+    name_map = _SHAP_NAME_MAP
+    tag_map = _SHAP_TAG_MAP
+    desc_map = _SHAP_DESC_MAP
+
+    factors = []
+    # 优先用 attribution.top_risk_factors（有 description 和 label_ref）
+    for f in top_factors[:6]:
+        feat = f.get("feature", "")
+        shap_val = f.get("shap") or 0
+        desc = f.get("description", name_map.get(feat, feat))
+        label_ref = f.get("label_ref", "")
+        tag, tag_text = tag_map.get(label_ref, ("finance", "财务"))
+        score = min(abs(shap_val), 1.0)
+        if score > 0.3:
+            color = "#EF4444"
+        elif score > 0.15:
+            color = "#F59E0B"
+        else:
+            color = "#10B981"
+        factors.append(FactorItem(
+            name=desc, tag=tag, tagText=tag_text,
+            desc=desc_map.get(feat, f.get("theme_name", desc)),
+            score=round(score, 2), color=color,
+        ))
+
+    # 如果 attribution 为空，从 shap_features 补
+    if not factors:
+        tag_pool = ["市场异动", "问询历史", "问询历史", "舆情", "市值", "财务"]
+        for i, (feat, val) in enumerate(shap_features[:6]):
+            tag_label = tag_pool[i % len(tag_pool)]
+            tag, tag_text = tag_map.get(tag_label, ("finance", "财务"))
+            score = min(abs(val), 1.0)
+            if score > 0.3:
+                color = "#EF4444"
+            elif score > 0.15:
+                color = "#F59E0B"
+            else:
+                color = "#10B981"
+            factors.append(FactorItem(
+                name=name_map.get(feat, feat), tag=tag, tagText=tag_text,
+                desc=desc_map.get(feat, "SHAP 特征贡献"),
+                score=round(score, 2), color=color,
+            ))
+    return factors
+
+
+def _map_financial_table(report: dict) -> list[list[str]]:
+    """financial.anomaly_list → [[指标, 本期值, 行业均值/阈值, 偏离度], ...]"""
+    anomalies = report.get("financial", {}).get("anomaly_list", []) or []
+    rows = []
+    for a in anomalies[:6]:
+        indicator = a.get("indicator", "—")
+        value = str(a.get("value", "—"))
+        threshold = str(a.get("threshold", "—"))
+        evidence = a.get("evidence") or ""
+        # 从 evidence 里提取偏离度（如果有的话）
+        deviation = "—"
+        if "，" in evidence:
+            parts = evidence.split("，")
+            for p in parts:
+                if "%" in p or "倍" in p:
+                    deviation = p.strip()
+                    break
+        rows.append([indicator, value, threshold, deviation])
+    return rows
+
+
+def _map_attribution_text(report: dict) -> str:
+    """attribution.top_risk_factors → 归因文本。"""
+    factors = report.get("attribution", {}).get("top_risk_factors", []) or []
+    if not factors:
+        return "暂无归因数据"
+    parts = []
+    for f in factors[:5]:
+        desc = f.get("description", f.get("feature", ""))
+        shap_val = f.get("shap") or 0
+        pct = abs(shap_val) * 100
+        parts.append(f"{desc}（{pct:.1f}%）")
+    return "、".join(parts)
+
+
+def _build_text_summary(report: dict) -> str:
+    """semantic → 文本摘要。"""
+    sem = report.get("semantic", {}) or {}
+    risk_factors = sem.get("risk_factors", []) or []
+    ann_count = sem.get("announcement_count", 0)
+    rf_count = len(risk_factors)
+    if rf_count:
+        categories = list({f.get("category", "") for f in risk_factors if f.get("category")})
+        cat_text = "、".join(categories[:3]) if categories else "多类"
+        return (
+            f"近一年共研读公告 <b>{ann_count}</b> 份，经规则引擎 + FinBERT + LLM 三通道抽取，"
+            f"识别出 <b>{rf_count}</b> 条风险信号，涵盖 {cat_text} 等类别。"
+        )
+    return f"近一年共研读公告 <b>{ann_count}</b> 份，未识别出显著风险信号。"
+
+
+# ---------- 新增：公告研读风险证据表 ----------
+
+_LEVEL_FROM_SEVERITY = {1: "低", 2: "低", 3: "中", 4: "高", 5: "高"}
+
+
+def _map_announcement_risks(report: dict) -> list[AnnouncementRiskItem]:
+    """semantic.risk_factors → 公告研读风险证据表。"""
+    sem = report.get("semantic", {}) or {}
+    risk_factors = sem.get("risk_factors", []) or []
+    if not risk_factors:
+        return []
+
+    # 按 severity 降序、confidence 降序取前 20 条（去重：相同证据只保留一条）
+    sorted_factors = sorted(
+        risk_factors,
+        key=lambda f: (f.get("severity") or 0, f.get("confidence") or 0),
+        reverse=True,
+    )
+    seen = set()
+    items = []
+    for f in sorted_factors:
+        evidence = (f.get("evidence") or "").strip()
+        key = (f.get("announcement_id"), evidence[:40])
+        if key in seen:
+            continue
+        seen.add(key)
+        severity = f.get("severity") or 3
+        items.append(AnnouncementRiskItem(
+            date=f.get("announcement_date") or "—",
+            level=_LEVEL_FROM_SEVERITY.get(severity, "中"),
+            l1=f.get("taxonomy_l1") or f.get("category") or "—",
+            l2=f.get("taxonomy_l2") or f.get("label") or "—",
+            description=(f.get("description") or "").strip() or "—",
+            evidence=evidence or "—",
+            title=f.get("announcement_title") or "—",
+            sourceUrl=f.get("source_url") or "",
+        ))
+        if len(items) >= 20:
+            break
+    return items
+
+
+# ---------- 新增：风险归因原文 ----------
+
+def _map_attribution_evidence(report: dict) -> list[AttributionEvidenceItem]:
+    """attribution.top_risk_factors + semantic.risk_factors → 归因原文。"""
+    attribution = report.get("attribution", {}) or {}
+    top_factors = attribution.get("top_risk_factors", []) or []
+    semantic = report.get("semantic", {}) or {}
+    risk_factors = semantic.get("risk_factors", []) or []
+
+    # 证据引用（若存在）
+    citations = attribution.get("evidence_citations", []) or []
+    if citations:
+        return [
+            AttributionEvidenceItem(
+                factor=c.get("factor", "") or "风险因子",
+                evidence=(c.get("text") or "").strip() or (c.get("evidence") or "").strip() or "—",
+                source=c.get("source") or "",
+                anchor=f"evidence-{i}",
+            )
+            for i, c in enumerate(citations[:10])
+            if c.get("text") or c.get("evidence")
+        ]
+
+    # 无显式引用时，按 top_factors 的主题/分类去 semantic.risk_factors 中找最接近证据
+    results = []
+    used = set()
+    for i, f in enumerate(top_factors[:6]):
+        feat = f.get("feature", "")
+        desc = f.get("description", feat)
+        taxonomy_l1 = f.get("taxonomy_l1", "")
+        taxonomy_l2 = f.get("taxonomy_l2", "")
+        theme = f.get("theme_name", "")
+
+        # 优先匹配 taxonomy_l2，其次 taxonomy_l1/category，最后 theme；
+        # 均不命中则不再兜底到 risk_factors[0]（避免证据错配到不相关因子）
+        matched = None
+        for rf in risk_factors:
+            if rf.get("risk_id") in used:
+                continue
+            rf_l2 = rf.get("taxonomy_l2", "")
+            rf_l1 = rf.get("taxonomy_l1", "")
+            rf_cat = rf.get("category", "")
+            rf_label = rf.get("label", "")
+            if taxonomy_l2 and rf_l2 == taxonomy_l2:
+                matched = rf
+                break
+            if taxonomy_l1 and (rf_l1 == taxonomy_l1 or rf_cat == taxonomy_l1):
+                matched = rf
+                break
+            if theme and (rf.get("theme_name") == theme or rf_label == theme):
+                matched = rf
+                break
+
+        if matched:
+            used.add(matched.get("risk_id"))
+            evidence = (matched.get("evidence") or "").strip()
+            results.append(AttributionEvidenceItem(
+                factor=desc,
+                evidence=evidence or desc,
+                source=matched.get("announcement_title", ""),
+                anchor=f"evidence-{i}",
+            ))
+        else:
+            results.append(AttributionEvidenceItem(
+                factor=desc,
+                evidence=desc,
+                source="",
+                anchor=f"evidence-{i}",
+            ))
+    return results
+
+
+# ---------- 新增：全部风险因子（查看全部用） ----------
+
+def _map_risk_factor_details(report: dict) -> list[FactorItem]:
+    """返回更完整的因子列表（最多 12 个），含证据锚点。"""
+    scorecard = report.get("scorecard", {}) or {}
+    attribution = report.get("attribution", {}) or {}
+    top_factors = attribution.get("top_risk_factors", []) or []
+    shap_features = scorecard.get("shap_features", []) or []
+
+    name_map = _SHAP_NAME_MAP
+    tag_map = _SHAP_TAG_MAP
+    desc_map = _SHAP_DESC_MAP
+
+    factors = []
+    for i, f in enumerate(top_factors[:12]):
+        feat = f.get("feature", "")
+        shap_val = f.get("shap") or 0
+        desc = f.get("description", name_map.get(feat, feat))
+        label_ref = f.get("label_ref", "")
+        tag, tag_text = tag_map.get(label_ref, ("finance", "财务"))
+        score = min(abs(shap_val), 1.0)
+        if score > 0.3:
+            color = "#EF4444"
+        elif score > 0.15:
+            color = "#F59E0B"
+        else:
+            color = "#10B981"
+        factors.append(FactorItem(
+            name=desc,
+            tag=tag,
+            tagText=tag_text,
+            desc=desc_map.get(feat, f.get("theme_name", desc)),
+            score=round(score, 2),
+            color=color,
+            evidenceAnchor=f"evidence-{i}",
+        ))
+
+    # 若 attribution 为空，从 shap_features 补
+    if not factors:
+        for i, (feat, val) in enumerate(shap_features[:12]):
+            score = min(abs(val), 1.0)
+            if score > 0.3:
+                color = "#EF4444"
+            elif score > 0.15:
+                color = "#F59E0B"
+            else:
+                color = "#10B981"
+            factors.append(FactorItem(
+                name=name_map.get(feat, feat),
+                tag="finance",
+                tagText="财务",
+                desc=desc_map.get(feat, "SHAP 特征贡献"),
+                score=round(score, 2),
+                color=color,
+                evidenceAnchor=f"evidence-{i}",
+            ))
+    return factors
+
+
+# ---------- 新增：相似监管案例（结构化） ----------
+
+def _map_similar_cases(report: dict) -> list[SimilarCaseItem]:
+    raw = report.get("similar_cases", []) or []
+    items = []
+    for i, c in enumerate(raw[:10]):
+        items.append(SimilarCaseItem(
+            caseId=c.get("case_id", f"case-{i}"),
+            company=c.get("company", ""),
+            publishDate=c.get("publish_date", "") or "—",
+            inquiryType=c.get("inquiry_type", "") or "监管问询函",
+            topics=[t for t in (c.get("topics", []) or []) if t][:5],
+            similarity=round(c.get("similarity", 0) or c.get("cosine_similarity", 0) or 0, 4),
+            matchReason=[r for r in (c.get("match_reason", []) or []) if r][:3],
+        ))
+    return items
+
+
+def offline_to_response(company: str) -> AnalyzeResponse | None:
+    """核心映射：离线报告 JSON → AnalyzeResponse。"""
+    report = _load_report(company)
+    if not report:
+        return None
+
+    scorecard = report.get("scorecard", {}) or {}
+    risk_level_raw = scorecard.get("risk_level", "低")
+    level = _map_risk_level(risk_level_raw)
+    prob_60d = scorecard.get("probability_60d", 0) or 0
+    confidence = scorecard.get("confidence", 0) or 0
+    financial = report.get("financial", {}) or {}
+    semantic = report.get("semantic", {}) or {}
+    similar_cases = report.get("similar_cases", []) or []
+    attribution = report.get("attribution", {}) or {}
+
+    risk_factors_count = len(semantic.get("risk_factors", []) or [])
+    anomaly_count = len(financial.get("anomaly_list", []) or [])
+    total_factors = risk_factors_count + anomaly_count
+
+    # 构建 summary（带 HTML）
+    prob_pct = prob_60d * 100
+    top_factor_names = [
+        f.get("description", f.get("feature", ""))
+        for f in (attribution.get("top_risk_factors", []) or [])[:3]
+    ]
+    factor_text = "、".join(top_factor_names) if top_factor_names else "综合多维度指标"
+    summary = (
+        f"未来 60 天收到问询函的概率为 <b>{prob_pct:.1f}%</b>。"
+        f"主要风险来源为{factor_text}。"
+    )
+
+    # 构建 conclusion
+    conclusion = report.get("executive_summary", "")
+    if not conclusion:
+        conclusion = f"风险等级为{_LEVEL_TEXT.get(risk_level_raw[0] if risk_level_raw else '低', '低风险')}，建议持续跟踪。"
+
+    factors_list = _map_shap_to_factors(report)
+    return AnalyzeResponse(
+        code=report.get("company", company),
+        name=report.get("name", company),
+        risk=round(prob_pct, 1),
+        level=level,
+        levelText=_LEVEL_TEXT.get(risk_level_raw[0] if risk_level_raw else "低", "低风险"),
+        confidence=round(confidence, 2),
+        factors=total_factors,
+        summary=summary,
+        factorsList=factors_list,
+        financialTable=_map_financial_table(report),
+        textSummary=_build_text_summary(report),
+        caseMatch=f"{len(similar_cases)} 起",
+        attribution=_map_attribution_text(report),
+        conclusion=conclusion[:200],
+        advice=report.get("disclaimer", "本预测结果仅供参考，不构成投资建议。"),
+        reportMarkdown=_load_report_md(company),
+        traceLog=report.get("trace_log", []) or [],
+        similarCases=_map_similar_cases(report),
+        generatedAt=report.get("generated_at", ""),
+        announcementRisks=_map_announcement_risks(report),
+        attributionEvidence=_map_attribution_evidence(report),
+        riskFactorDetails=_map_risk_factor_details(report),
+    )
+
+
+def run_pipeline(codes: list, window: int = 60, use_llm: bool = False, use_bge: bool = True):
+    """方案 B：离线数据快速查询（同步实现，由 FastAPI 放入线程池执行）。"""
+    results = []
+    for code in codes:
+        resp = offline_to_response(code)
+        if resp:
+            results.append(resp)
+    return results
+
+
+def list_available_companies() -> list[dict]:
+    """返回所有有离线报告的公司列表。"""
+    manifest = _load_manifest()
+    seen = {}
+    for e in manifest:
+        code = e.get("company", "")
+        if code and code not in seen:
+            seen[code] = {
+                "code": code,
+                "name": e.get("name", code),
+                "generated_at": e.get("generated_at", ""),
+            }
+    return list(seen.values())
+
+
+# ============================================================
+# 方案 C：实时扫雷管道 + WebSocket 进度推送
+# ============================================================
+
+import asyncio
+import threading
+import time
+import uuid
+from collections import OrderedDict
+from dataclasses import dataclass, field
+from datetime import date
+from typing import Callable
+
+from .models import ProgressMessage, ScanRequest
+
+
+# ---------- Orchestrator 全局单例（避免每次请求都重新加载模型） ----------
+
+_orchestrator_pool: dict[str, "SweepingOrchestrator"] = {}
+
+
+def get_orchestrator(use_llm: bool, use_finbert: bool, use_semantic_cases: bool = True, max_documents: int | None = 5):
+    """获取全局单例 Orchestrator。key 按参数组合区分。"""
+    key = f"llm={use_llm}_finbert={use_finbert}_bge={use_semantic_cases}_docs={max_documents}"
+    if key not in _orchestrator_pool:
+        # 延迟导入，避免模块级报错
+        from backend.agents.orchestrator import SweepingOrchestrator
+        _orchestrator_pool[key] = SweepingOrchestrator(
+            use_llm=use_llm,
+            use_finbert=use_finbert,
+            use_semantic_cases=use_semantic_cases,
+            max_documents=max_documents,
+        )
+    return _orchestrator_pool[key]
+
+
+# ---------- StreamingOrchestrator：在关键节点推送进度 ----------
+
+class StreamingOrchestrator:
+    """包装 SweepingOrchestrator，在每个 Agent 前后回调进度。
+
+    注意：execute() 整体仍是同步阻塞的，必须在线程池中运行。
+    回调函数会被从工作线程调用，因此需要线程安全地写入 queue。
+    """
+
+    _AGENT_ORDER = [
+        ("AnnouncementReader", "announcement", "公告研读", "读取并解析最新公告、抽取语义风险"),
+        ("FinancialDetector", "financial", "财务异常", "检测财务指标异常与偏离度"),
+        ("Predictor", "prediction", "预测建模", "XGBoost + SHAP 计算问询概率"),
+        ("CaseRetriever", "case", "案例匹配", "BGE 语义检索历史问询案例"),
+        ("ChunkRetriever", "chunk", "段落召回", "chunk 级证据召回（可选）"),
+        ("Attributor", "attribution", "归因分析", "聚合归因解释与风险叙事"),
+        ("Reporter", "report", "报告生成", "渲染风控简报并落盘"),
+    ]
+
+    _AGENT_TIMEOUTS = {
+        "AnnouncementReader": 420,   # 公告研读最长（含 PDF/OCR/LLM）
+        "FinancialDetector": 240,
+        "Predictor": 120,
+        "CaseRetriever": 180,
+        "ChunkRetriever": 60,
+        "Attributor": 60,
+        "Reporter": 60,
+    }
+
+    # Agent 类名 → SweepingOrchestrator 的 dispatch 方法名（单一来源的映射）
+    _ORCH_DISPATCH = {
+        "AnnouncementReader": "_run_announcement",
+        "FinancialDetector": "_run_financial",
+        "Predictor": "_run_predict",
+        "CaseRetriever": "_run_cases",
+        "ChunkRetriever": "_run_chunks",
+        "Attributor": "_run_attribution",
+        "Reporter": "_run_report",
+    }
+
+    def __init__(self, callback: Callable[[ProgressMessage], None]):
+        self.callback = callback
+
+    def _run_agent(self, runner, company, ctx, timeout):
+        """在 daemon 线程执行单个 Agent，join(timeout) 看门狗。
+
+        返回 (outcome, error)：outcome ∈ {"ok", "timeout", "error"}。
+        超时后主流程跳过该 Agent 继续，避免单个挂死节点永久阻塞整条流水线
+        （配合 cancel_event 让整体超时后的旧线程在下一节点边界退出）。
+        """
+        box = {}
+
+        def worker():
+            try:
+                runner(company, ctx)
+            except Exception as e:  # noqa: BLE001
+                box["error"] = e
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        thread.join(timeout)
+        if thread.is_alive():
+            return "timeout", None
+        if "error" in box:
+            return "error", box["error"]
+        return "ok", None
+
+    def run(self, company: str, window: int = 60, as_of: str | None = None,
+            use_llm: bool = False, use_bge: bool = True, max_documents: int | None = 5,
+            cancel_event: threading.Event | None = None):
+        from backend.context import Context
+
+        orch = get_orchestrator(
+            use_llm=use_llm,
+            use_finbert=False,           # 前端未暴露 FinBERT 开关，固定关闭以提速
+            use_semantic_cases=use_bge,
+            max_documents=max_documents,
+        )
+        # 复用 SweepingOrchestrator 的 dispatch（单一来源），临时注入进度回调；
+        # 实时任务由 _scan_lock 串行，finally 恢复避免单例回调泄漏。
+        orch.progress_callback = self._detail_callback
+        try:
+            ctx = Context(company=company, window=window, as_of=as_of or str(date.today()))
+            ctx.use_llm_summary = bool(use_llm)
+            ctx.use_llm = bool(use_llm)
+            ctx.use_bge = bool(use_bge)
+            ctx.max_documents = max_documents
+            ctx.cancel_event = cancel_event
+
+            total = len(self._AGENT_ORDER)
+            start_total = time.time()
+
+            for idx, (agent_name, agent_key, display_name, desc) in enumerate(self._AGENT_ORDER, start=1):
+                if getattr(ctx, "cancel_event", None) is not None and ctx.cancel_event.is_set():
+                    raise PipelineCancelled("任务已取消")
+                step_start = time.time()
+                self._current_agent = (idx, total, agent_name, agent_key, display_name)
+                self._emit(idx, total, agent_name, agent_key, "running", f"{display_name} Agent 正在执行：{desc}", 0, 0)
+
+                runner = getattr(orch, self._ORCH_DISPATCH.get(agent_name, ""), None)
+                if runner is None:
+                    raise RuntimeError(f"未找到 Agent {agent_name} 的执行入口")
+
+                # 节点级看门狗：单个 Agent 挂死只跳过它，不阻塞后续环节
+                timeout = self._AGENT_TIMEOUTS.get(agent_name, 120)
+                outcome, error = self._run_agent(runner, company, ctx, timeout)
+                latency = int((time.time() - step_start) * 1000)
+
+                if outcome == "timeout":
+                    ctx.trace_log.append({"agent": agent_name, "status": "timeout",
+                                          "reason": f"{display_name} 超过 {timeout}s 看门狗触发", "trace_complete": True})
+                    self._emit(idx, total, agent_name, agent_key, "skipped",
+                               f"{display_name} Agent 超时跳过（{latency} ms）", latency, 100)
+                elif outcome == "error":
+                    # 段落召回失败可跳过，不打断流水线
+                    if agent_name == "ChunkRetriever":
+                        ctx.trace_log.append({"agent": agent_name, "status": "skipped", "reason": str(error), "trace_complete": True})
+                        self._emit(idx, total, agent_name, agent_key, "skipped", f"{display_name} Agent 跳过：{error}", latency, 100)
+                    else:
+                        self._emit(idx, total, agent_name, agent_key, "error", f"{display_name} Agent 失败：{error}", latency, 100)
+                        raise error
+                else:
+                    self._emit(idx, total, agent_name, agent_key, "done", f"{display_name} Agent 完成（{latency} ms）", latency, 100)
+
+            ctx.meta = {"total_elapsed_ms": int((time.time() - start_total) * 1000)}
+            return ctx
+        finally:
+            orch.progress_callback = None
+
+    def _emit(self, step: int, total: int, agent: str, agent_key: str, status: str,
+              message: str, elapsed_ms: int, progress_percent: int):
+        self.callback(ProgressMessage(
+            type="progress",
+            step=step,
+            total=total,
+            agent=agent,
+            agent_key=agent_key,
+            status=status,
+            progress_percent=progress_percent,
+            message=message,
+            elapsed_ms=elapsed_ms,
+        ))
+
+    def _detail_callback(self, payload):
+        """把 Agent 内部事件翻译为统一 WebSocket 进度消息。"""
+        idx, total, agent, agent_key, display_name = self._current_agent
+        event = str((payload or {}).get("event", "agent_progress"))
+        percent = int((payload or {}).get("percent", 0) or 0)
+        message = str((payload or {}).get("message", "") or "")
+        if event == "pdf_processing":
+            current = int((payload or {}).get("current", 0) or 0)
+            count = max(1, int((payload or {}).get("total", 1) or 1))
+            percent = 15 + int(25 * current / count)
+            message = f"正在下载/解析第 {current}/{count} 份公告 PDF"
+        event_map = {
+            "offline_snapshot_started": (8, "正在检查官方公告离线快照"),
+            "offline_snapshot_completed": (35, "已加载官方公告离线快照"),
+            "online_company_started": (8, "正在校验公司与交易所代码"),
+            "online_metadata_started": (12, "正在获取公告列表"),
+            "online_metadata_completed": (15, f"已获取公告列表，共 {(payload or {}).get('announcement_count', 0)} 份"),
+            "pdf_processing": (percent, message),
+            "pdf_processing_completed": (42, "公告 PDF 下载与 OCR 解析完成"),
+            "rule_analysis_started": (45, "正在匹配风险词典"),
+            "rule_analysis_completed": (65, "风险词典匹配完成"),
+            "finbert_started": (70, "正在执行 FinBERT 语义筛查"),
+            "finbert_completed": (82, "FinBERT 语义筛查完成"),
+            "llm_started": (84, "正在执行 LLM 精细抽取"),
+            "llm_completed": (92, "LLM 精细抽取完成"),
+            "finalizing": (96, "正在汇总公告风险证据"),
+            "analysis_completed": (100, "公告研读完成"),
+            "agent_progress": (percent, message),
+        }
+        percent, default_message = event_map.get(event, (percent or 20, message or f"{display_name} Agent 处理中"))
+        self._emit(idx, total, agent, agent_key, "running", message or default_message, 0, max(0, min(100, percent)))
+
+# ---------- 报告 ctx -> AnalyzeResponse ----------
+
+def report_ctx_to_response(ctx) -> AnalyzeResponse:
+    """把 SweepingOrchestrator 跑完后的 ctx.report['json'] 映射为前端格式。"""
+    report = ctx.report["json"]
+    return offline_to_response_from_report(report)
+
+
+def offline_to_response_from_report(report: dict) -> AnalyzeResponse:
+    """复用方案 B 的字段映射逻辑，但直接接收 report dict。"""
+    scorecard = report.get("scorecard", {}) or {}
+    risk_level_raw = scorecard.get("risk_level", "低")
+    level = _map_risk_level(risk_level_raw)
+    prob_60d = scorecard.get("probability_60d", 0) or 0
+    confidence = scorecard.get("confidence", 0) or 0
+    financial = report.get("financial", {}) or {}
+    semantic = report.get("semantic", {}) or {}
+    similar_cases = report.get("similar_cases", []) or []
+    attribution = report.get("attribution", {}) or {}
+
+    risk_factors_count = len(semantic.get("risk_factors", []) or [])
+    anomaly_count = len(financial.get("anomaly_list", []) or [])
+    total_factors = risk_factors_count + anomaly_count
+
+    prob_pct = prob_60d * 100
+    top_factor_names = [
+        f.get("description", f.get("feature", ""))
+        for f in (attribution.get("top_risk_factors", []) or [])[:3]
+    ]
+    factor_text = "、".join(top_factor_names) if top_factor_names else "综合多维度指标"
+    summary = (
+        f"未来 60 天收到问询函的概率为 <b>{prob_pct:.1f}%</b>。"
+        f"主要风险来源为{factor_text}。"
+    )
+
+    conclusion = report.get("executive_summary", "")
+    if not conclusion:
+        conclusion = f"风险等级为{_LEVEL_TEXT.get(risk_level_raw[0] if risk_level_raw else '低', '低风险')}，建议持续跟踪。"
+
+    factors_list = _map_shap_to_factors(report)
+    return AnalyzeResponse(
+        code=report.get("company", ""),
+        name=report.get("name", ""),
+        risk=round(prob_pct, 1),
+        level=level,
+        levelText=_LEVEL_TEXT.get(risk_level_raw[0] if risk_level_raw else "低", "低风险"),
+        confidence=round(confidence, 2),
+        factors=total_factors,
+        summary=summary,
+        factorsList=factors_list,
+        financialTable=_map_financial_table(report),
+        textSummary=_build_text_summary(report),
+        caseMatch=f"{len(similar_cases)} 起",
+        attribution=_map_attribution_text(report),
+        conclusion=conclusion[:200],
+        advice=report.get("disclaimer", "本预测结果仅供参考，不构成投资建议。"),
+        reportMarkdown=report.get("markdown", ""),
+        traceLog=report.get("trace_log", []) or [],
+        similarCases=_map_similar_cases(report),
+        generatedAt=report.get("generated_at", ""),
+        announcementRisks=_map_announcement_risks(report),
+        attributionEvidence=_map_attribution_evidence(report),
+        riskFactorDetails=_map_risk_factor_details(report),
+    )
+
+
+# ---------- 任务状态管理 ----------
+
+
+def agent_metadata() -> list[dict]:
+    """返回 7 个 Agent 的元数据（key/agent_key/显示名/描述），作为前端 Agent 清单的单一来源。"""
+    return [
+        {"key": agent_name, "agent_key": agent_key, "name": display_name, "description": desc}
+        for (agent_name, agent_key, display_name, desc) in StreamingOrchestrator._AGENT_ORDER
+    ]
+
+
+AGENT_TOTAL = len(StreamingOrchestrator._AGENT_ORDER)
+TERMINAL_STATUSES = {"completed", "failed", "fallback", "cancelled"}
+RESULT_CACHE_SIZE = 20
+TERMINAL_TASK_TTL = 600.0   # 终态任务保留时长（秒），供断线重连 / 状态查询
+MAX_TERMINAL_TASKS = 20     # 最多保留的终态任务数
+
+
+class PipelineCancelled(RuntimeError):
+    pass
+
+
+@dataclass
+class TaskState:
+    task_id: str
+    code: str
+    status: str = "pending"           # pending / running / completed / failed / fallback / cancelled
+    progress: list[ProgressMessage] = field(default_factory=list)
+    result: AnalyzeResponse | None = None
+    error: str | None = None
+    subscribers: set[asyncio.Queue] = field(default_factory=set)
+    cancel_event: threading.Event = field(default_factory=threading.Event)
+    created_at: float = field(default_factory=time.time)
+    finished_at: float | None = None
+
+
+_task_store: dict[str, TaskState] = {}
+_task_handles: dict[str, asyncio.Task] = {}
+_result_cache: OrderedDict[str, AnalyzeResponse] = OrderedDict()
+
+# 实时扫雷串行锁：SweepingOrchestrator 内部有全局模型/状态，并发容易竞争/死锁，
+# 因此同一时刻只跑一个实时任务，其他任务排队等待。
+_scan_lock = asyncio.Lock()
+
+
+def _cache_key(code: str, window: int) -> str:
+    return f"{str(code).strip().upper()}_{int(window)}"
+
+
+def get_cached_result(code: str, window: int = 60) -> AnalyzeResponse | None:
+    key = _cache_key(code, window)
+    result = _result_cache.get(key)
+    if result is None:
+        return None
+    _result_cache.move_to_end(key)
+    return result.model_copy(deep=True)
+
+
+def cache_result(code: str, window: int, result: AnalyzeResponse) -> None:
+    key = _cache_key(code, window)
+    _result_cache[key] = result.model_copy(deep=True)
+    _result_cache.move_to_end(key)
+    while len(_result_cache) > RESULT_CACHE_SIZE:
+        _result_cache.popitem(last=False)
+
+
+def get_offline_result(code: str, window: int = 60) -> AnalyzeResponse | None:
+    cached = get_cached_result(code, window)
+    if cached is not None:
+        return cached
+    try:
+        result = offline_to_response(code)
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError, KeyError):
+        result = None
+    if result is not None:
+        cache_result(code, window, result)
+    return result
+
+
+def _prune_finished_tasks() -> None:
+    """清理已终态的任务，避免 state.progress + result 永久驻留内存。
+
+    策略：超过 TERMINAL_TASK_TTL 的终态任务直接删除；否则仅保留最近
+    MAX_TERMINAL_TASKS 个（超出部分删最老的），保证状态查询与断线重连仍可用。
+    """
+    now = time.time()
+    for state in list(_task_store.values()):
+        if state.status in TERMINAL_STATUSES:
+            if state.finished_at and now - state.finished_at > TERMINAL_TASK_TTL:
+                _task_store.pop(state.task_id, None)
+    still_finished = sorted(
+        (s for s in _task_store.values() if s.status in TERMINAL_STATUSES),
+        key=lambda s: s.finished_at or 0,
+    )
+    overflow = len(still_finished) - MAX_TERMINAL_TASKS
+    for state in still_finished[:max(0, overflow)]:
+        _task_store.pop(state.task_id, None)
+
+
+def _persist_trace(company: str, task_id: str, trace_log: list) -> None:
+    """把 ctx.trace_log 落盘为 JSONL（赛后复盘审计），失败静默不影响主流程。"""
+    try:
+        from backend.config import TRACE_DIR
+        safe_code = str(company).replace(".", "_")
+        path = TRACE_DIR / f"{safe_code}_{task_id}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            for trace in trace_log:
+                f.write(json.dumps(trace, ensure_ascii=False, default=str) + "\n")
+    except Exception:
+        pass
+
+
+def create_task(code: str) -> TaskState:
+    _prune_finished_tasks()
+    task_id = f"scan_{uuid.uuid4().hex[:12]}"
+    state = TaskState(task_id=task_id, code=code)
+    _task_store[task_id] = state
+    return state
+
+
+def get_task(task_id: str) -> TaskState | None:
+    return _task_store.get(task_id)
+
+
+def active_tasks() -> list[TaskState]:
+    return [state for state in _task_store.values() if state.status in {"pending", "running"}]
+
+
+def bind_task_handle(task_id: str, handle: asyncio.Task) -> None:
+    _task_handles[task_id] = handle
+
+
+def subscribe_task(state: TaskState) -> asyncio.Queue:
+    queue: asyncio.Queue = asyncio.Queue()
+    state.subscribers.add(queue)
+    return queue
+
+
+def unsubscribe_task(state: TaskState, queue: asyncio.Queue) -> None:
+    state.subscribers.discard(queue)
+
+
+def _record_message(state: TaskState, msg: ProgressMessage) -> None:
+    # 历史由生产端记录，不依赖 WebSocket 是否已连接。
+    state.progress.append(msg)
+    for subscriber in tuple(state.subscribers):
+        try:
+            subscriber.put_nowait(msg)
+        except asyncio.QueueFull:
+            pass
+
+
+def emit_message(state: TaskState, msg: ProgressMessage) -> None:
+    _record_message(state, msg)
+
+
+def _thread_safe_emit(loop: asyncio.AbstractEventLoop, state: TaskState, msg: ProgressMessage):
+    """从工作线程写入历史并广播给所有 WebSocket 订阅者。"""
+    if not loop.is_closed():
+        loop.call_soon_threadsafe(_record_message, state, msg)
+
+
+async def cancel_task(task_id: str) -> TaskState | None:
+    state = get_task(task_id)
+    if state is None:
+        return None
+    if state.status in TERMINAL_STATUSES:
+        return state
+
+    state.cancel_event.set()
+    previous_status = state.status
+    state.status = "cancelled"
+    state.finished_at = time.time()
+    emit_message(state, ProgressMessage(
+        type="cancelled",
+        step=0,
+        total=AGENT_TOTAL,
+        agent="SweepingOrchestrator",
+        agent_key="orchestrator",
+        status="cancelled",
+        progress_percent=0,
+        message=f"任务 {task_id} 已取消",
+    ))
+
+    # 排队中的协程可直接取消；已进入同步 Agent 的任务采用边界点协作取消，
+    # 避免释放串行锁后底层线程仍在运行、与新任务抢模型资源。
+    handle = _task_handles.get(task_id)
+    if previous_status == "pending" and handle is not None and not handle.done():
+        handle.cancel()
+    return state
+
+
+async def run_scan_task(state: TaskState, req: ScanRequest):
+    """在后台执行实时扫雷，并通过 queue 推送进度。"""
+    loop = asyncio.get_running_loop()
+
+    def callback(msg: ProgressMessage):
+        _thread_safe_emit(loop, state, msg)
+
+    # 排队等待：同一时刻只跑一个实时任务
+    state.status = "pending"
+    emit_message(state, ProgressMessage(
+        type="progress",
+        step=0,
+        total=AGENT_TOTAL,
+        agent="SweepingOrchestrator",
+        agent_key="orchestrator",
+        status="running",
+        progress_percent=0,
+        message=f"任务 {state.task_id} 已排队，正在等待模型资源（当前有任务正在执行）...",
+        elapsed_ms=0,
+    ))
+    try:
+        async with _scan_lock:
+            if state.cancel_event.is_set():
+                raise PipelineCancelled("任务已取消")
+            state.status = "running"
+            emit_message(state, ProgressMessage(
+                type="progress",
+                step=0,
+                total=AGENT_TOTAL,
+                agent="SweepingOrchestrator",
+                agent_key="orchestrator",
+                status="running",
+                progress_percent=0,
+                message=f"正在为 {req.code} 启动 {AGENT_TOTAL}-Agent 实时扫雷流水线...",
+                elapsed_ms=0,
+            ))
+
+            streamer = StreamingOrchestrator(callback=callback)
+            # 去掉 asyncio.shield：超时后让 wait_for 及时返回并释放串行锁，
+            # 底层线程由 StreamingOrchestrator 的节点看门狗 + cancel_event 保证有界退出。
+            ctx = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: streamer.run(
+                        company=req.code,
+                        window=req.window,
+                        use_llm=req.use_llm,
+                        use_bge=req.use_bge,
+                        max_documents=req.max_documents,
+                        cancel_event=state.cancel_event,
+                    ),
+                ),
+                timeout=600,  # 10 分钟硬上限
+            )
+            if state.cancel_event.is_set():
+                raise PipelineCancelled("任务已取消")
+            result = report_ctx_to_response(ctx)
+            _persist_trace(req.code, state.task_id, getattr(ctx, "trace_log", []) or [])
+            state.result = result
+            state.status = "completed"
+            state.finished_at = time.time()
+            cache_result(req.code, req.window, result)
+            complete_msg = ProgressMessage(
+                type="complete",
+                step=AGENT_TOTAL,
+                total=AGENT_TOTAL,
+                agent="Reporter",
+                agent_key="report",
+                status="done",
+                progress_percent=100,
+                message="报告生成完成",
+                elapsed_ms=0,
+                result=result,
+            )
+            emit_message(state, complete_msg)
+    except (PipelineCancelled, asyncio.CancelledError):
+        state.cancel_event.set()
+        if state.status != "cancelled":
+            state.status = "cancelled"
+            state.finished_at = time.time()
+            emit_message(state, ProgressMessage(
+                type="cancelled", total=AGENT_TOTAL,
+                agent="SweepingOrchestrator", agent_key="orchestrator",
+                status="cancelled", message=f"任务 {state.task_id} 已取消",
+            ))
+    except asyncio.TimeoutError:
+        state.cancel_event.set()
+        await _fallback_after_error(state, req, "实时扫雷超过 10 分钟超时。")
+    except Exception as exc:
+        if state.cancel_event.is_set():
+            state.status = "cancelled"
+            state.finished_at = state.finished_at or time.time()
+        else:
+            await _fallback_after_error(state, req, f"{type(exc).__name__}: {exc}")
+    finally:
+        current = _task_handles.get(state.task_id)
+        if current is asyncio.current_task():
+            _task_handles.pop(state.task_id, None)
+
+
+async def _fallback_after_error(state: TaskState, req: ScanRequest, error: str) -> None:
+    state.error = error
+    emit_message(state, ProgressMessage(
+        type="error", total=AGENT_TOTAL,
+        agent="SweepingOrchestrator", agent_key="orchestrator",
+        status="error", progress_percent=0,
+        message=error, error=error, fatal=False,
+    ))
+    offline = get_offline_result(req.code, req.window)
+    state.finished_at = time.time()
+    if offline is not None:
+        state.result = offline
+        state.status = "fallback"
+        emit_message(state, ProgressMessage(
+            type="fallback", total=AGENT_TOTAL,
+            agent="SweepingOrchestrator", agent_key="orchestrator",
+            status="done", progress_percent=100,
+            message="实时扫雷失败，已自动切换离线快照",
+            error=error, result=offline,
+        ))
+    else:
+        state.status = "failed"
+        emit_message(state, ProgressMessage(
+            type="error", total=AGENT_TOTAL,
+            agent="SweepingOrchestrator", agent_key="orchestrator",
+            status="error", progress_percent=0,
+            message=f"{error}；且未找到可用离线快照",
+            error=error, fatal=True,
+        ))

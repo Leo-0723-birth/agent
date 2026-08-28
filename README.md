@@ -1,151 +1,186 @@
 # 上市公司监管问询扫雷预警系统
 
-基于 Agentic AI 的上市公司监管问询概率预测与扫雷预警（东吴证券赛题）。
+> 基于 Agentic AI 的上市公司监管问询概率预测与扫雷预警 · 东吴证券「智能风控与量化建模」赛题
+>
+> FastAPI 后端 + 多 Agent 流水线 + 单文件前端 + WebSocket 实时进度，支持离线快照秒出与实时扫雷双模式。
 
-## 目录结构
+---
+
+## 一、整体架构
 
 ```
-backend/          后端核心
-├── config.py     全局配置（路径/阈值/模型开关，单一来源）
-├── llm.py        共享 LLM 客户端（deepseek-v4-flash，一行 import 即用）
-├── context.py    共享 Context（Agent 间唯一通信）
-├── agents/       7 个 Agent + 基类 + 主控编排
-│   ├── base.py                AgentBase（统一 execute(company, ctx) + trace）
-│   ├── announcement_reader.py 公告研读（巨潮在线 + 规则/FinBERT/LLM + 可审计 F1）
-│   ├── financial_detector.py  财务检测（F2 67 维 + F3 35 维 + 双负兜底 + F2 规则）
-│   ├── case_retriever.py      案例检索（4785 案例库 + RRF + 三源标签通道 + 维度守卫）
-│   ├── chunk_retriever.py     chunk 级段落检索（段落证据召回）
-│   ├── predictor.py           预测建模（三模型集成 30/60/90d + SHAP，查表推理）
-│   ├── attributor.py          归因解释（SHAP + 证据白名单 + validate_narrative 防幻觉）
-│   └── orchestrator.py        主控编排（LangGraph 图编排首选，确定性串行兜底）
-│   └── graph.py               LangGraph 7 节点 StateGraph（可选 checkpointer 断点续跑）
-├── skills/       原子能力
-│   ├── announcement_search.py 巨潮在线公告检索、官方 PDF 下载与本地副本兼容
-│   ├── ocr_extract.py         扫描型 PDF 按页 OCR 与审计元数据
-│   ├── finbert_classify.py    FinBERT2-base 风险粗分类（门控）
-│   ├── rule_risk_extract.py   规则风险抽取（官方 risk_dictionary.yaml）
-│   ├── risk_labels.py         官方标签体系加载（任务1交付包 A-H/45 二级）
-│   ├── concern_store.py       关注点词典（规则类别→官方关注点词汇，覆盖率 55.9%）
-│   ├── embedding.py           统一 Embedding（bge 1024 维 / fallback 兜底）
-│   ├── vector_store.py        向量库（numpy，案例库读写 + meta 校验）
-│   ├── f2_calc.py             F2 67 维特征计算（Beneish/Piotroski/Benford/行业偏离）
-│   ├── market_fetch.py        F3 35 维市场特征（腾讯 K 线在线）
-│   └── financial_data_fetch.py 东财+腾讯行情爬虫
-├── models/       模型权重与训练产物（embedding/finbert/predictor）
-├── data/
-│   ├── vector_db/             ★ 案例库：case_db.json（4785 份问询函）+ case_vectors.npy（BGE 1024 维）+ case_meta.json + chunk 段落库
-│   ├── labels/                ★ 官方标签资产：risk_taxonomy / risk_dictionary / 分类结果 / concern_dict
-│   ├── modeling/              ★ 建模数据：processed_dataset.csv + 三窗口预测/SHAP/风险排序输出
-│   ├── index/                 公告索引缓存
-│   └── output/                报告 / 样例 context / 交付文档
-├── scripts/      离线任务
-│   ├── build_case_db.py       重建案例库（02_监管问询 源头 JSONL + 官方 GT）
-│   ├── enrich_case_db_reply.py 案例库补回复要点（4714/4785）
-│   ├── build_chunk_index.py   构建 chunk 段落向量索引
-│   ├── evaluate_case_retriever.py  案例检索 Top-5 命中率评测
-│   ├── build_modeling_dataset.py   建模数据合并（F1 Top-50 + F2-F6 + 标签）
-│   ├── train_models.py        三模型 × 三窗口训练 + SHAP（RF/LGB/XGB）
-│   ├── select_f1_top50.py     F1 语义特征 Spearman Top-50 选取
-│   └── build_concern_dict.py  关注点词典构建（骨架）
-└── tests/        单元测试
-导航入口.py       单入口导航壳（st.navigation，一个端口聚合全部页面，默认打开主控）
-启动导航入口.bat   一键启动导航入口（双击即用，终端显示 Local/Network/External 网址）
-主控agent.py       全流程 Streamlit 演示页（主控编排 Agent，经 导航入口.py 打开，也可独立运行）
-公告研读agent.py   公告研读 Agent 独立可审计展示页（端口 8502）
-财务异常agent.py   财务异常 Agent 独立审计页（端口 8503）
-预测建模agent.py   预测建模 Agent 独立审计页（端口 8504）
-案例匹配agent.py   案例匹配 Agent 独立审计页（端口 8505）
-归因分析agent.py   归因分析 Agent 独立审计页（端口 8506）
-报告生成agent.py   报告生成 Agent 独立审计页（端口 8507）
-公告研读agents/    旧版独立实现（保留参考，功能已迁入 backend/agents/）
-context/          公告研读输出的共享 context 样例（000004.SZ）
-无关文件夹/        与系统无关的历史文件
-```
-docs/竞赛技能包/    开发技能包（领域知识/数据特征/建模评估/Agent编排/开发验收/提示词模板）
+┌──────────────────────────────────────────────────────────┐
+│  浏览器 api/static/index.html （单文件前端）            │
+│  全局状态 + 发布订阅 · 6 Agent 流水线可视化 · 风险仪表盘 │
+│  WebSocket 进度 · 实时扫雷开关 · 离线兜底提示条          │
+└───────────────┬────────────────────────┬─────────────────┘
+        fetch /api/*               ws /ws/pipeline/{id}
+                ▼                            ▼
+┌──────────────────────────────────────────────────────────┐
+│  FastAPI 后端  api/main.py                              │
+│  路由 · CORS · 静态挂载 · WebSocket 推送                │
+└───────────────┬──────────────────────────────────────────┘
+                ▼
+┌──────────────────────────────────────────────────────────┐
+│  任务调度层  api/pipeline.py                             │
+│  串行锁 · 任务取消 · 内存缓存(LRU) · 离线兜底 · 终态机   │
+│  ProgressMessage 消息：progress/complete/error/fallback/ │
+│  cancelled · agent_key · progress_percent · fatal       │
+└───────────────┬──────────────────────────────────────────┘
+                ▼
+┌──────────────────────────────────────────────────────────┐
+│  Agent 流水线  backend/agents/  （6 个 Agent + 编排器）   │
+│  公告研读 → 财务异常 → 预测建模 → 案例匹配 → 归因分析     │
+│  → 报告生成  （SweepingOrchestrator 串行编排 + 进度回调） │
+└───────────────┬──────────────────────────────────────────┘
+                ▼
+┌──────────────────────────────────────────────────────────┐
+│  Skills 能力层  backend/skills/                          │
+│  公告检索/OCR/Embedding/案例向量/财务抓取/特征加载…      │
+└──────────────────────────────────────────────────────────┘
 ```
 
-## 快速开始
+- **离线模式**：POST `/api/scan` 默认秒返离线快照（`cached:true`），不建任务、不连 WebSocket。
+- **实时模式**：`realtime:true` 创建 Agent 任务，WebSocket 实时推送每个 Agent 的开始/进度/完成；失败自动回退离线快照（`fallback` 消息）。
+- **串行锁**：同一时间只跑一个实时任务，切换公司时先 `DELETE` 取消旧任务，冲突返回 `409` 由前端弹框确认后 `force:true` 重发。
+
+## 二、目录结构
+
+```
+competition_agent/
+├── api/                      # FastAPI 后端
+│   ├── main.py               # 路由入口（10 个端点 + WebSocket + 静态挂载）
+│   ├── pipeline.py           # 任务调度：串行锁/取消/缓存/兜底/消息推送
+│   ├── models.py             # Pydantic 数据模型（与前端 JS 结构对齐）
+│   ├── requirements.txt      # 后端依赖
+│   ├── static/
+│   │   └── index.html        # 前端单文件（全局状态 + 6 Agent 可视化）
+│   └── tests/                # 后端运行时测试
+├── backend/
+│   ├── config.py             # 全局配置（路径/参数/模型，单一来源）
+│   ├── context.py            # 公司分析上下文
+│   ├── llm.py                # LLM 调用封装
+│   ├── dashboard_utils.py    # 仪表盘数据组装
+│   ├── agents/               # Agent 流水线
+│   │   ├── base.py           # AgentBase（含 progress_callback 进度回调）
+│   │   ├── orchestrator.py   # SweepingOrchestrator 串行编排
+│   │   ├── announcement_reader.py   # 公告研读 Agent
+│   │   ├── financial_detector.py    # 财务异常 Agent
+│   │   ├── predictor.py            # 预测建模 Agent（SHAP 归因）
+│   │   ├── case_retriever.py       # 案例匹配 Agent（RRF 融合）
+│   │   ├── attributor.py           # 归因分析 Agent
+│   │   ├── reporter.py             # 报告生成 Agent
+│   │   ├── graph.py / risk_mapper.py / label_keywords_v2.py
+│   ├── skills/               # 能力层（公告检索/OCR/embedding/财务/特征…）
+│   │   └── stock_code.py     # 股票代码归一化
+│   ├── data/                 # 离线快照/向量库/模型/标签
+│   ├── models/               # 预测模型（predictor/生存模型）
+│   └── tests/                # 各 Agent 单测
+├── docs/                     # 设计文档与 specs
+├── .env / .env.example       # 环境变量（密钥与公告研读配置）
+├── requirements.txt          # 项目依赖
+└── README.md
+```
+
+## 三、后端模块
+
+| 模块 | 职责 |
+|------|------|
+| `api/main.py` | FastAPI 入口，10 个路由 + WebSocket + 静态挂载，CORS 全开 |
+| `api/pipeline.py` | 任务调度核心：`_scan_lock` 串行锁、`cancel_task` 取消、`_result_cache` LRU 缓存、`get_offline_result` 离线快照、`_fallback_after_error` 失败兜底、`run_scan_task` 实时流水线、`ProgressMessage` 消息推送 |
+| `api/models.py` | Pydantic 模型：`AnalyzeRequest/Response`、`ScanRequest{realtime,force}`、`ScanResponse{cached,result}`、`ProgressMessage{type,agent_key,progress_percent,fatal}` |
+| `backend/agents/*` | 6 个 Agent + 编排器，`AgentBase` 提供 `_report_progress` 细粒度进度回调 |
+| `backend/skills/*` | 公告检索(cninfo)、OCR、Embedding(bge/fallback)、案例向量、财务抓取、特征加载、风险词典 |
+| `backend/config.py` | 全局配置单一来源，路径/阈值/模型路径集中，业务代码禁止硬编码 |
+
+## 四、前端模块（`api/static/index.html`）
+
+单 HTML 文件（原生 JS，无构建工具），核心机制：
+
+- **全局状态** `AppState`：`currentCompany`/`scanStatus`/`currentTaskId`/`agentStates`/`agentResults`/`resultCache`/`realtimeMode`，带发布订阅 `subscribe/set`。
+- **API 调用**：`fetchSingleCompany`(→GET `/api/company/{code}`)、`fetchAnalysis`(→POST `/api/analyze`)、`startRealtimeScan`(→POST `/api/scan` + WS + DELETE 取消)。
+- **WebSocket**：`/ws/pipeline/{taskId}`，`onmessage` 按 `type` 分发（progress/complete/error/fallback/cancelled/heartbeat），断线指数退避重连，消息 id 去重。
+- **6 Agent 流水线可视化**：左侧 Agent 卡片灰→蓝(脉冲)→绿(完成)，顶部 5 步步骤条，全局进度条。
+- **主控仪表盘**：问询概率大数字(变色)、风险等级徽章、SHAP 因子卡、风险证据表(可排序)、执行摘要、4 项模型指标卡。
+- **实时扫雷开关 + 离线兜底**：默认离线秒出，开关开启走真实流水线，失败黄色兜底条 + 自动回退离线。
+- **前端结果缓存** `resultCache`：看过的公司秒出（与后端 LRU 双重保障）。
+
+## 五、环境配置
+
+复制 `.env.example` 为 `.env`，填入真实密钥与配置：
+
+| 变量 | 说明 | 默认/示例 |
+|------|------|-----------|
+| `LLM_PROVIDER` | LLM 供应商：deepseek / anthropic / openai | deepseek |
+| `DEEPSEEK_API_KEY` | DeepSeek API 密钥 | sk-xxx |
+| `DEEPSEEK_BASE_URL` | DeepSeek 接口地址（可接本地代理） | https://api.deepseek.com |
+| `DEEPSEEK_MODEL` | 模型名 | deepseek-v4-flash |
+| `ANTHROPIC_API_KEY` | Anthropic 密钥（选用） | sk-ant-xxx |
+| `OPENAI_API_KEY` / `OPENAI_BASE_URL` | OpenAI 密钥/地址（选用） | — |
+| `ANNOUNCE_SOURCE` | 公告数据源 | cninfo |
+| `ANNOUNCE_MAX_DOCUMENTS` | 公告研读最大文档数 | 120 |
+| `ANNOUNCE_OFFLINE_ENABLED` | 启用离线公告快照 | true |
+| `OCR_ENABLED` | 启用 OCR | true |
+| `EMBEDDING_BACKEND` | 向量后端：bge(需权重,与案例库兼容) / fallback(零依赖) | fallback |
+| `EMBEDDING_ALLOW_DOWNLOAD` | 是否允许下载大模型 | false |
+| `FINBERT_ENABLED` / `FINBERT_GATE_ENABLED` | FinBERT 门控（未校准前关闭） | false |
+| `API_KEY` | 可选 API 鉴权密钥；设置后 `/api/*` 需带 `X-API-Key` 头、WS 握手需带 `?token=` | 空（不启用） |
+
+> 数据路径默认读仓库内「公告解析」可移植数据包；本机持有完整外部数据集时可设 `COMPETITION_DATA_ROOT` 覆盖。
+
+## 六、启动方式
 
 ```bash
 # 1. 安装依赖
-pip install -r requirements.txt        # 含 pandas/numpy/scipy/requests/pymupdf
-# 2.（可选）配置 LLM：复制 .env.example 为 .env，填 DEEPSEEK_API_KEY
-# 3. 一键演示（公告研读 → 财务检测 → 案例检索 → 归因）
-python -m backend.agents.orchestrator   # 000004.SZ 全流程自测
-# 4. 单入口导航（推荐，一个端口切换全部页面）
-streamlit run 导航入口.py               # http://localhost:8501 侧边栏切换 7 页
-#    或双击 启动导航入口.bat（终端窗口显示 Local/Network/External 网址，便于分享给他人）
-#    或在 PyCharm 运行配置中选择「导航入口 (streamlit)」点 ▶
-# 5. 各 Agent 独立审计页面（端口固定，便于联调）：
-streamlit run 公告研读agent.py --server.port 8502
-streamlit run 财务异常agent.py --server.port 8503
-streamlit run 预测建模agent.py --server.port 8504
-streamlit run 案例匹配agent.py --server.port 8505
-streamlit run 归因分析agent.py --server.port 8506
-streamlit run 报告生成agent.py --server.port 8507
-#    独立页面仅在需要"逐 Agent 审计"时使用；日常演示只用 8501 导航入口即可
+cd D:/competition_agent
+pip install -r requirements.txt
+
+# 2. 配置 .env（见上节）
+
+# 3. 启动后端（FastAPI + WebSocket）
+python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+#   或 python api/main.py
+
+# 4. 打开前端
+#    浏览器访问 http://127.0.0.1:8000/
+#    接口文档 http://127.0.0.1:8000/docs
 ```
 
-公告研读查询顺序固定为：①检查比赛历史库；②访问巨潮获取近一年最新公告；
-③分层展示。历史库命中时会显示 2020—2024 年公告、旧规则候选证据及历史
-BGE+PCA 特征锚点；这些历史候选不会混入当前 30/60/90 天 F1。
+## 七、API 接口
 
-仓库已内置 `公告解析/` 可移植运行包（规则风险 JSONL 的无损 gzip 版 + 语义特征
-Parquet），其他人克隆分支后无需配置本机 D 盘路径即可使用。若要改用完整的
-`Announcement_NLP_Project_Final` 交付目录，可在 `.env` 中设置：
-
-```dotenv
-COMPETITION_DATA_ROOT=D:\your-path\Announcement_NLP_Project_Final
-```
-
-也可用 `COMPETITION_RULE_RISKS` 和 `COMPETITION_SEMANTIC_FEATURES` 分别覆盖单个
-文件。详见 `公告解析/README.md`。
-
-为便于团队快速演示，`backend/data/offline_announcements/` 还内置了
-`000004.SZ` 的巨潮官方公告全文快照和默认规则分析结果。查询 `000004`、
-`000004SZ`、`000004.SZ` 或快照内公司简称，且截止日/运行开关与快照一致时，
-页面会直接加载预计算结果；更改截止日、FinBERT/LLM 开关或快照覆盖范围后自动
-重新计算或回退巨潮联网。页面始终显示快照锚点，不把离线数据称为实时数据。
-
-## 数据产物（非官方源文件，已内置）
-
-| 数据 | 位置 | 说明 |
+| 方法 | 路径 | 说明 |
 |------|------|------|
-| 案例库（**4785 份问询函**） | `backend/data/vector_db/` | case_db.json + case_vectors.npy（BGE 1024 维，队友交付）+ case_meta.json |
-| 关注点词典 | `backend/data/labels/concern_dict.json` | 规则类别 → 官方关注点词汇（标签通道覆盖率 1.3%→55.9%） |
-| 官方标签体系 | `backend/data/labels/` | risk_taxonomy（A-H/45 二级）、risk_dictionary、分类结果 10481 条 |
-| 公告索引（000004） | `backend/data/index/` | 其余公司首次运行自动建 |
-| 样例 context | `backend/data/output/sample_context_000004.json` | 共享 Context 结构参考 |
-| 建模数据集 | `backend/data/modeling/processed_dataset.csv` | 37222×204（F1 Top-50 + F2-F6 + 30/60/90d 标签） |
-| 预测模型 | `backend/models/predictor/` | RF/LGB/XGB × 30/60/90d + models_manifest.json |
+| GET | `/` | 返回前端 `index.html` |
+| GET | `/api/health` | 健康检查 |
+| GET | `/api/companies` | 所有有离线报告的公司列表 |
+| GET | `/api/agents` | 7 个 Agent 的元数据（前端流水线清单单一来源） |
+| POST | `/api/analyze` | 批量风险分析（离线） |
+| GET | `/api/company/{code}` | 单公司离线查询 |
+| POST | `/api/scan` | 实时扫雷：`realtime=false` 秒返离线快照(cached)，`true` 创建任务，冲突返回 409 |
+| DELETE | `/api/scan/{task_id}` | 取消实时任务 |
+| GET | `/api/scan/{task_id}` | 查询任务状态（断线重连补历史） |
+| GET | `/api/mock/{code}` | 联调用：有离线快照优先返回真实，否则 404 |
+| WS | `/ws/pipeline/{task_id}` | 实时推送进度（progress/complete/error/fallback/cancelled/heartbeat） |
 
-> 源头文件在 `D:\BaiduNetdiskDownload` 与 `D:\新建文件夹\02_监管问询`（结构化 JSONL），
-> 重建案例库：`python -m backend.scripts.build_case_db --force --backend bge`
+## 八、核心功能
 
-## 开发状态
+1. **6 Agent 流水线**：公告研读→财务异常→预测建模→案例匹配→归因分析→报告生成，串行编排 + 细粒度进度回调。
+2. **问询概率预测**：XGBoost 三模型集成（30/60/90d），SHAP 因子归因，可选 XGBoost-Cox 生存模型。
+3. **风险证据表**：公告研读 Agent 输出日期/等级/L1L2/描述/原文证据，支持排序筛选。
+4. **案例语义匹配**：BGE 向量检索 + RRF 融合得分，Top-5 相似历史问询案例。
+5. **离线 + 实时双模**：离线秒出保证演示流畅，实时模式展示真实流水线，失败自动兜底。
+6. **任务管理**：串行锁防并发、取消接口、内存 LRU 缓存、断线重连。
 
-- [x] 公告研读 Agent（比赛历史库优先检索 + 近一年巨潮公告 + OCR + 规则/FinBERT/LLM 三通道 + 30/60/90 天 F1）
-- [x] 财务检测 Agent（F2 67 维 + F3 35 维 + 双负兜底 + F2 规则，110+ 特征）
-- [x] 预测建模 Agent（三模型集成 RF/LGB/XGB × 30/60/90d，60d AUC 0.8335 / Top10% 46.1%）
-- [x] 案例检索 Agent（4785 案例库 + RRF + 三源标签通道 + 时间穿越控制 + 回复要点）
-- [x] chunk 段落检索 Agent（段落级证据召回）
-- [x] 归因解释 Agent（SHAP + 证据白名单 + validate_narrative 防幻觉 + 单测）
-- [x] 报告生成 Agent（Markdown/JSON 六章报告）
-- [x] 主控编排 Agent（7 环节完整流水线 + trace，7-Agent 全闭环）
-- [x] 公告研读 Streamlit 独立展示页 + 全流程 主控agent.py
-- [ ] 正样本率提升（月度采样/多标签，见 backend/data/output/正样本率提升方案.md）
+## 九、演示流程
 
-## 环境修复（常见问题）
+1. 打开页面 → 默认离线模式秒出五粮液主控仪表盘。
+2. 顶部「实时扫雷」开关 → 蓝色脉冲，进入实时模式。
+3. 切换公司（搜索/快捷标签）→ 旧任务自动取消，新任务 WebSocket 推送 Agent 进度。
+4. 连续点击「开始扫雷」→ 后续触发 409 弹框确认。
+5. 实时失败（断网）→ 黄色兜底条 + 自动回退离线快照。
+6. 各 Agent 详情页：财务异常指标卡、案例匹配 Top-5 卡片、归因贡献度。
 
-| 问题 | 修复 |
-|------|------|
-| 首次启动卡在 `Welcome to Streamlit! ... Email:` 输入（服务不启动、网页拒绝连接） | 已内置 `.streamlit/config.toml`（`gatherUsageStats=false`）关闭引导；若仍出现，删除 `C:\Users\<你>\.streamlit\credentials.toml` 后重试 |
-| `.bat` 双击后中文乱码/启动失败 | 批处理必须 CRLF 换行 + GBK 编码（本项目的 启动导航入口.bat 已按要求生成；不要用编辑器改成 UTF-8/LF） |
-| `rapidocr` / `onnxruntime` 未安装（扫描型 PDF OCR 不可用） | `pip install "rapidocr>=3.9,<4" "onnxruntime>=1.29,<2"` |
-| `xgboost` 未安装（预测三模型集成缺第三腿） | `pip install "xgboost>=2.0"`（lightgbm 同理已内置） |
-| FinBERT 权重不完整（`models/embedding/hub` 下存在 `.incomplete`） | 删除该模型目录后重下：`Remove-Item backend\models\embedding\hub\models--valuesimplex-ai-lab--FinBERT2-base -Recurse -Force`，然后运行一次任意启用 FinBERT 的页面（走 hf-mirror.com，约 1.3GB），或直接 `python -c "from backend.skills.finbert_classify import FinBERTClient; FinBERTClient()"` |
-| 预测显示"未预测" | 确认公司代码在 `backend/data/modeling/processed_dataset.csv` 内（如 000004.SZ）；`models/predictor/` 下 9 个模型文件齐全时自动推理 |
-| Windows 下随机森林推理报 `WinError 5` | predictor.py 已内置 `n_jobs=1` 修复（单条样本推理不需要多线程） |
+---
 
 ## 说明
 
@@ -180,3 +215,5 @@ COMPETITION_DATA_ROOT=D:\your-path\Announcement_NLP_Project_Final
 12. **F2 特征列与训练表对齐**：`f2_calc.py` 删除恒 NaN 占位列（f2_gross_margin/f2_current_ratio/f2_interest_coverage），新增 `f2_neg_pe_flag/f2_neg_pb_flag/f2_market_cap_quintile`（负 PE/PB 标志 + 市值五分位），与建模数据集/模型 manifest 完全一致。
 13. **F4/F5/F6 实时化分工**：F4 股吧舆情 / F5 股东治理在线爬取优先（每族 30s 超时，失败回退离线表）；**F6 监管问询函特征改由公告研读 Agent 提供**（新增 `backend/skills/inquiry_features.py`：从巨潮公告列表识别问询函/关注函，口径与离线 F6 表一致），财务侧不再输出 F6。
 14. **流水线稳定性**：公告 PDF 下载加总预算（180s/轮）；LangGraph 图节点级看门狗（daemon 线程 + join(timeout)，节点永不永久挂起）；BGE 模型改为**本地快照直载**（修复 HF 缓存元数据损坏导致的联网重试风暴；实测 000004.SZ 全流程约 3 分钟有界完成，预测 `data_source=realtime`、60d 概率 0.314）。
+
+*本项目为研究生创新大赛参赛作品，东吴证券赞助。*

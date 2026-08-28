@@ -1,0 +1,2963 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>监管问询扫雷预警系统 · 高保真 Demo</title>
+<style>
+  :root {
+    --brand-primary: #1E40AF;
+    --brand-secondary: #3B82F6;
+    --brand-light: #EFF6FF;
+    --brand-accent: #F59E0B;
+    --risk-low: #10B981;
+    --risk-mid: #F59E0B;
+    --risk-high: #EF4444;
+    --text-primary: #0F172A;
+    --text-secondary: #64748B;
+    --text-muted: #94A3B8;
+    --bg-page: #F1F5F9;
+    --bg-card: #FFFFFF;
+    --border: #E2E8F0;
+    --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+    --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.06);
+    --shadow-lg: 0 12px 24px -8px rgba(30, 64, 175, 0.15);
+    --shadow-modal: 0 24px 48px -12px rgba(15, 23, 42, 0.25);
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-xl: 16px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(180deg, #FAFBFD 0%, #F1F5F9 100%);
+    color: var(--text-primary);
+    min-height: 100vh;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  .app-header {
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .header-left { display: flex; align-items: center; gap: 12px; }
+
+  .logo {
+    width: 36px; height: 36px;
+    background: linear-gradient(135deg, #1E40AF 0%, #3B82F6 100%);
+    border-radius: 10px;
+    display: grid; place-items: center;
+    color: white; font-weight: 700; font-size: 16px;
+    letter-spacing: -0.5px;
+  }
+
+  .brand-name { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; color: var(--text-primary); }
+
+  .header-right {
+    display: flex; align-items: center; gap: 16px;
+    font-size: 13px; color: var(--text-secondary);
+  }
+
+  .agent-status {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 12px; background: var(--brand-light);
+    border-radius: 999px; color: var(--brand-primary); font-weight: 500;
+  }
+
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--risk-low);
+    box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.15);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+  .header-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 14px; border-radius: 8px;
+    border: 1px solid var(--brand-secondary); background: white;
+    color: var(--brand-primary); font-size: 13px; font-weight: 500;
+    cursor: pointer; transition: all 0.2s;
+  }
+  .header-btn:hover { background: var(--brand-light); transform: translateY(-1px); box-shadow: var(--shadow-md); }
+  .header-btn.on { background: #FEF3C7; border-color: #F59E0B; color: #92400E; }
+
+  .icon-btn {
+    width: 36px; height: 36px; border-radius: 8px;
+    border: 1px solid var(--border); background: white;
+    display: grid; place-items: center; cursor: pointer;
+    transition: all 0.2s; color: var(--text-secondary); font-size: 14px;
+  }
+  .icon-btn:hover { background: var(--brand-light); color: var(--brand-primary); border-color: var(--brand-secondary); }
+
+  .app-body {
+    display: grid; grid-template-columns: 260px 1fr;
+    min-height: calc(100vh - 60px);
+  }
+
+  .sidebar {
+    background: white; border-right: 1px solid var(--border);
+    padding: 20px 16px; display: flex; flex-direction: column; gap: 8px;
+  }
+
+  .sidebar-section {
+    font-size: 11px; font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.08em;
+    margin: 12px 0 6px; padding-left: 8px;
+  }
+
+  .master-agent {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px;
+    background: linear-gradient(135deg, #1E40AF 0%, #3B82F6 100%);
+    border-radius: var(--radius-lg); color: white;
+    cursor: pointer; transition: all 0.2s; box-shadow: var(--shadow-md);
+  }
+  .master-agent:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+
+  .master-icon {
+    width: 40px; height: 40px; background: rgba(255,255,255,0.2);
+    border-radius: 10px; display: grid; place-items: center; font-size: 18px;
+  }
+
+  .master-info .master-title { font-weight: 600; font-size: 14px; }
+  .master-info .master-sub { font-size: 11px; opacity: 0.8; margin-top: 2px; }
+
+  .pipeline-step {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 12px; border-radius: var(--radius-md);
+    position: relative; cursor: pointer; transition: all 0.2s;
+    color: var(--text-secondary);
+  }
+
+  .pipeline-step::before {
+    content: ''; position: absolute; left: 27px; top: 100%;
+    width: 2px; height: 8px; background: var(--border); z-index: 0;
+  }
+  .pipeline-step:last-child::before { display: none; }
+
+  .pipeline-step .step-icon {
+    width: 32px; height: 32px; border-radius: 9px; background: #DBEAFE;
+    display: grid; place-items: center; font-size: 14px;
+    color: #1E40AF; position: relative; z-index: 1;
+    transition: all 0.2s; flex-shrink: 0;
+  }
+
+  .pipeline-step .step-title { font-weight: 500; font-size: 13px; }
+  .pipeline-step .step-status { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+
+  .pipeline-step:hover { background: #F8FAFC; }
+  .pipeline-step.active { background: var(--brand-light); color: var(--brand-primary); }
+  .pipeline-step.active .step-icon { background: var(--brand-primary); color: white; box-shadow: 0 0 0 4px rgba(59,130,246,0.15); }
+  .pipeline-step.done { color: var(--text-primary); }
+  .pipeline-step.done .step-icon { background: #BFDBFE; color: #1E40AF; }
+  .pipeline-step.running { color: var(--brand-primary); }
+  .pipeline-step.running .step-icon { background: #93C5FD; color: #1E3A8A; }
+  .pipeline-step.running .step-icon::after {
+    content: ''; position: absolute; inset: -4px;
+    border-radius: 12px; border: 2px solid #3B82F6;
+    animation: ring 1.5s ease-in-out infinite;
+  }
+  .pipeline-step.error { color: #EF4444; }
+  .pipeline-step.error .step-icon { background: #FEE2E2; color: #EF4444; }
+
+  @keyframes ring { 0% { transform: scale(0.9); opacity: 1; } 100% { transform: scale(1.15); opacity: 0; } }
+
+  .params-trigger {
+    margin-top: auto; display: flex; align-items: center; justify-content: space-between;
+    padding: 12px; border: 1px dashed var(--border); border-radius: var(--radius-md);
+    cursor: pointer; color: var(--text-secondary); font-size: 13px; transition: all 0.2s;
+  }
+  .params-trigger:hover { border-color: var(--brand-secondary); color: var(--brand-primary); background: var(--brand-light); }
+  .params-trigger .arrow { transition: transform 0.2s; }
+  .params-trigger.open .arrow { transform: rotate(180deg); }
+
+  .params-panel { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
+  .params-panel.open { max-height: 600px; }
+
+  .params-content {
+    padding: 16px 12px; background: #F8FAFC; border-radius: var(--radius-md);
+    margin-top: 8px; border: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 14px;
+  }
+
+  .param-row label { display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; font-weight: 500; }
+
+  .param-input, .param-select, .param-textarea {
+    width: 100%; padding: 8px 12px; border: 1px solid var(--border);
+    border-radius: 8px; font-size: 13px; background: white;
+    color: var(--text-primary); outline: none; transition: all 0.2s;
+  }
+  .param-input:focus, .param-select:focus, .param-textarea:focus { border-color: var(--brand-secondary); box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+
+  .param-textarea { min-height: 70px; resize: vertical; line-height: 1.5; font-family: 'SF Mono', 'Consolas', monospace; }
+
+  .param-toggle { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; }
+
+  .switch {
+    width: 36px; height: 20px; background: #CBD5E1; border-radius: 999px;
+    position: relative; cursor: pointer; transition: background 0.2s; flex-shrink: 0;
+  }
+  .switch::after {
+    content: ''; position: absolute; left: 2px; top: 2px;
+    width: 16px; height: 16px; background: white; border-radius: 50%;
+    transition: transform 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+  }
+  .switch.on { background: var(--risk-low); }
+  .switch.on::after { transform: translateX(16px); }
+
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(15,23,42,0.45);
+    backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center;
+    z-index: 200; opacity: 0; visibility: hidden; transition: all 0.25s ease;
+  }
+  .modal-overlay.open { opacity: 1; visibility: visible; }
+
+  .company-modal {
+    background: white; border-radius: var(--radius-xl); width: 720px;
+    max-width: calc(100% - 32px); max-height: calc(100vh - 40px);
+    box-shadow: var(--shadow-modal); display: flex; flex-direction: column;
+    overflow: hidden; transform: translateY(16px) scale(0.98); transition: all 0.25s ease;
+  }
+  .modal-overlay.open .company-modal { transform: translateY(0) scale(1); }
+
+  .modal-header {
+    padding: 20px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .modal-title { font-size: 16px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 8px; }
+  .modal-subtitle { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .modal-close {
+    width: 32px; height: 32px; border-radius: 8px;
+    border: 1px solid var(--border); background: white; cursor: pointer;
+    display: grid; place-items: center; color: var(--text-secondary); font-size: 16px;
+  }
+  .modal-close:hover { background: #F8FAFC; color: var(--text-primary); }
+
+  .modal-body { padding: 20px 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
+
+  .search-row { display: flex; gap: 12px; align-items: center; position: relative; }
+
+  .search-input {
+    flex: 1; padding: 10px 14px; border: 1px solid var(--border);
+    border-radius: 10px; font-size: 14px; background: white; outline: none; transition: all 0.2s;
+  }
+  .search-input:focus { border-color: var(--brand-secondary); box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+
+  .search-dropdown {
+    position: absolute; top: 100%; left: 0; right: 0; margin-top: 6px;
+    background: white; border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: var(--shadow-modal); max-height: 260px; overflow-y: auto;
+    z-index: 10; display: none;
+  }
+  .search-dropdown.open { display: block; }
+  .search-dropdown-item {
+    padding: 10px 14px; cursor: pointer; display: flex; align-items: center; gap: 10px;
+    border-bottom: 1px solid var(--border); transition: background 0.15s;
+  }
+  .search-dropdown-item:last-child { border-bottom: none; }
+  .search-dropdown-item:hover, .search-dropdown-item.active { background: var(--brand-light); }
+  .search-dropdown-item .dd-code { font-family: 'SF Mono', monospace; font-size: 12px; color: var(--text-muted); }
+  .search-dropdown-item .dd-name { font-weight: 500; font-size: 13px; color: var(--text-primary); }
+  .search-dropdown-item .dd-tag { margin-left: auto; font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #F1F5F9; color: var(--text-secondary); }
+
+  .filter-badges { display: flex; gap: 8px; }
+  .filter-badge {
+    padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 500;
+    cursor: pointer; border: 1px solid var(--border); background: white; color: var(--text-secondary); transition: all 0.2s;
+  }
+  .filter-badge.active { background: var(--brand-light); color: var(--brand-primary); border-color: var(--brand-secondary); }
+  .filter-badge:hover { border-color: var(--brand-secondary); }
+
+  .company-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+
+  .company-item {
+    display: flex; align-items: center; gap: 12px; padding: 12px 14px;
+    border: 1px solid var(--border); border-radius: var(--radius-md);
+    cursor: pointer; transition: all 0.2s;
+  }
+  .company-item:hover { border-color: var(--brand-secondary); background: var(--brand-light); }
+  .company-item.selected { border-color: var(--brand-primary); background: var(--brand-light); box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
+
+  .company-item .check {
+    width: 20px; height: 20px; border-radius: 6px; border: 2px solid var(--border);
+    display: grid; place-items: center; font-size: 12px; color: transparent;
+    transition: all 0.2s; flex-shrink: 0;
+  }
+  .company-item.selected .check { background: var(--brand-primary); border-color: var(--brand-primary); color: white; }
+
+  .company-item-info { flex: 1; }
+  .company-item-name { font-weight: 600; font-size: 13px; color: var(--text-primary); }
+  .company-item-code { font-size: 11px; color: var(--text-muted); font-family: 'SF Mono', 'Consolas', monospace; margin-top: 2px; }
+
+  .company-item-risk { text-align: right; }
+  .company-item-risk .risk-pct { font-size: 16px; font-weight: 700; font-family: 'SF Mono', 'Consolas', monospace; }
+  .company-item-risk .risk-level { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+
+  .batch-area {
+    background: #F8FAFC; border: 1px solid var(--border);
+    border-radius: var(--radius-md); padding: 16px;
+  }
+  .batch-area label { display: block; font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; }
+  .batch-area .hint { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+
+  .modal-footer {
+    padding: 16px 24px; border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .modal-selected-count { font-size: 13px; color: var(--text-secondary); }
+
+  .main-content {
+    padding: 24px; display: flex; flex-direction: column; gap: 20px;
+    max-width: 1400px; margin: 0 auto; width: 100%;
+  }
+
+  .welcome-empty {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 80px 24px; gap: 24px;
+  }
+  .hidden { display: none !important; }
+  .welcome-empty.hidden { display: none; }
+  .welcome-empty .welcome-icon {
+    width: 80px; height: 80px; border-radius: 20px;
+    background: linear-gradient(135deg, #1E40AF 0%, #3B82F6 100%);
+    color: white; font-size: 40px; display: grid; place-items: center;
+    box-shadow: var(--shadow-lg);
+  }
+  .welcome-empty h2 { font-size: 24px; font-weight: 700; color: var(--text-primary); }
+  .welcome-empty p { font-size: 14px; color: var(--text-secondary); max-width: 480px; }
+  .welcome-chips { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+  .welcome-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 10px 16px; border-radius: 999px; border: 1px solid var(--border);
+    background: white; color: var(--text-primary); font-size: 13px;
+    cursor: pointer; transition: all 0.2s; font-weight: 500;
+  }
+  .welcome-chip:hover { border-color: var(--brand-secondary); background: var(--brand-light); color: var(--brand-primary); transform: translateY(-1px); }
+
+  .dashboard-title {
+    display: flex; align-items: center; gap: 16px; padding: 8px 4px 4px;
+  }
+  .dashboard-title-icon {
+    width: 48px; height: 48px; border-radius: 12px;
+    background: linear-gradient(135deg, #1E40AF 0%, #3B82F6 100%);
+    color: white; display: grid; place-items: center; font-size: 24px;
+    box-shadow: var(--shadow-md);
+  }
+  .dashboard-title h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; color: var(--text-primary); line-height: 1.2; }
+  .dashboard-title p { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
+
+  .tech-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+
+  .tech-metric-card {
+    background: white; border: 1px solid var(--border); border-radius: var(--radius-md);
+    padding: 14px 16px; text-align: left; box-shadow: var(--shadow-sm);
+  }
+  .tech-metric-card .metric-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+  .tech-metric-card .metric-label .target { font-size: 10px; color: var(--text-muted); padding: 2px 6px; background: #F1F5F9; border-radius: 4px; }
+  .tech-metric-card .metric-value { font-size: 22px; font-weight: 700; color: var(--text-primary); font-family: 'SF Mono', 'Consolas', monospace; letter-spacing: -0.02em; }
+  .tech-metric-card .metric-sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+  .risk-dashboard {
+    background: linear-gradient(135deg, #EFF6FF 0%, #FFFFFF 60%, #FAFBFF 100%);
+    border: 1px solid #DBEAFE; border-radius: var(--radius-xl);
+    padding: 24px 28px; display: grid; grid-template-columns: 1.2fr 1fr 1fr 1fr;
+    gap: 24px; align-items: center; box-shadow: var(--shadow-sm);
+  }
+
+  .company-info .company-tag {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; background: var(--brand-light);
+    color: var(--brand-primary); border-radius: 999px;
+    font-size: 12px; font-weight: 500; margin-bottom: 8px;
+  }
+  .company-info .company-name { font-size: 18px; font-weight: 700; color: var(--text-primary); margin-bottom: 4px; }
+  .company-info .company-code { font-size: 12px; color: var(--text-muted); font-family: 'SF Mono', 'Consolas', monospace; }
+
+  .risk-main { text-align: center; position: relative; }
+  .risk-main .risk-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; font-weight: 500; }
+  .risk-main .risk-value { font-size: 44px; font-weight: 700; color: var(--risk-low); font-family: 'SF Mono', 'Consolas', monospace; letter-spacing: -0.03em; line-height: 1; margin-bottom: 12px; }
+  .risk-bar { height: 10px; background: #E2E8F0; border-radius: 999px; overflow: hidden; position: relative; margin-bottom: 8px; }
+  .risk-bar-fill { height: 100%; width: 0%; border-radius: 999px; transition: width 1.5s cubic-bezier(0.4, 0, 0.2, 1); }
+  .risk-scale { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted); }
+  .risk-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; margin-top: 8px;
+  }
+  .risk-badge.low { background: #D1FAE5; color: #065F46; }
+  .risk-badge.mid { background: #FEF3C7; color: #92400E; }
+  .risk-badge.high { background: #FEE2E2; color: #991B1B; }
+  .risk-badge .dot { display: none; }
+
+  .snapshot-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 999px;
+    background: #F1F5F9; color: var(--text-muted);
+    font-size: 11px; font-weight: 500; margin-left: 8px;
+  }
+  .snapshot-badge.realtime { background: #DBEAFE; color: var(--brand-primary); }
+
+  .metric-card {
+    background: rgba(255,255,255,0.7); border-radius: var(--radius-md); padding: 16px; text-align: left;
+  }
+  .metric-card .metric-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
+  .metric-card .metric-value { font-size: 24px; font-weight: 600; color: var(--text-primary); font-family: 'SF Mono', 'Consolas', monospace; letter-spacing: -0.02em; }
+  .metric-card .metric-sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+  .pipeline-status {
+    background: white; border: 1px solid var(--border); border-radius: var(--radius-lg);
+    padding: 16px 20px; display: flex; align-items: center; gap: 0; box-shadow: var(--shadow-sm);
+  }
+  .pipe-node { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+  .pipe-node .node-dot { width: 8px; height: 8px; border-radius: 2px; background: #93C5FD; flex-shrink: 0; }
+  .pipe-node.done { color: var(--brand-primary); }
+  .pipe-node.done .node-dot { background: var(--brand-primary); }
+  .pipe-node.running { color: var(--brand-primary); font-weight: 600; }
+  .pipe-node.running .node-dot { background: var(--brand-primary); animation: pulse 1.5s infinite; }
+  .pipe-node.pending { color: var(--text-muted); }
+  .pipe-link { flex: 1; height: 2px; background: #BFDBFE; margin: 0 12px; min-width: 20px; position: relative; }
+  .pipe-link.done { background: var(--brand-primary); }
+
+  .section-header { display: flex; align-items: center; justify-content: space-between; }
+  .section-title { font-size: 16px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 8px; }
+  .section-title::before { content: ''; width: 4px; height: 18px; background: linear-gradient(180deg, #1E40AF, #3B82F6); border-radius: 2px; }
+  .section-sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+  .tabs-nav {
+    display: flex; gap: 4px; border-bottom: 1px solid var(--border); padding-bottom: 1px;
+  }
+  .tab-btn {
+    padding: 10px 18px; border-radius: 8px 8px 0 0;
+    border: none; background: transparent; color: var(--text-secondary);
+    font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .tab-btn:hover { color: var(--brand-primary); background: #F8FAFC; }
+  .tab-btn.active { color: var(--brand-primary); border-bottom-color: var(--brand-primary); background: var(--brand-light); }
+
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  .factors-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+
+  .factor-card {
+    background: white; border: 1px solid var(--border); border-radius: var(--radius-lg);
+    padding: 16px; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer; position: relative; overflow: hidden;
+  }
+  .factor-card:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); border-color: var(--brand-secondary); }
+
+  .factor-card .factor-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .factor-card .factor-name { font-weight: 600; font-size: 13px; color: var(--text-primary); }
+  .factor-tag { font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 500; }
+  .factor-tag.finance { background: #EEF2FF; color: #4338CA; }
+  .factor-tag.text { background: #ECFDF5; color: #047857; }
+  .factor-tag.market { background: #FFF7ED; color: #C2410C; }
+
+  .factor-card .factor-desc { font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.5; }
+
+  .factor-contribution { display: flex; align-items: center; gap: 8px; }
+  .factor-bar { flex: 1; height: 6px; background: #F1F5F9; border-radius: 3px; overflow: hidden; }
+  .factor-bar-fill { height: 100%; border-radius: 3px; transition: width 1s ease; }
+  .factor-score { font-size: 13px; font-weight: 600; font-family: 'SF Mono', 'Consolas', monospace; color: var(--text-primary); }
+
+  .reports-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+
+  .report-card {
+    background: white; border: 1px solid var(--border); border-radius: var(--radius-lg);
+    padding: 20px; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); cursor: pointer;
+  }
+  .report-card:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); border-color: var(--brand-secondary); }
+  .report-card.featured { border: 2px solid #BFDBFE; background: linear-gradient(135deg, #F8FAFF 0%, #FFFFFF 100%); }
+
+  .report-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .report-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+  .report-meta { display: flex; gap: 12px; font-size: 12px; color: var(--text-muted); margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+  .report-summary { font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 16px; }
+  .report-actions { display: flex; gap: 8px; }
+
+  .btn-primary { background: var(--brand-primary); color: white; padding: 8px 14px; border-radius: 8px; font-weight: 500; border: none; font-size: 13px; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; }
+  .btn-primary:hover { background: #1D4ED8; transform: translateY(-1px); box-shadow: var(--shadow-md); }
+
+  .btn-secondary { background: white; color: var(--brand-primary); padding: 8px 14px; border-radius: 8px; border: 1px solid var(--brand-secondary); font-weight: 500; font-size: 13px; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; }
+  .btn-secondary:hover { background: var(--brand-light); }
+
+  .btn-ghost { background: transparent; color: var(--text-secondary); padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border); font-size: 13px; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; }
+  .btn-ghost:hover { background: #F8FAFC; color: var(--text-primary); }
+
+  .btn-danger { background: #FEE2E2; color: #991B1B; padding: 8px 14px; border-radius: 8px; border: none; font-weight: 500; font-size: 13px; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; }
+  .btn-danger:hover { background: #FECACA; }
+
+  .report-preview {
+    background: white; border: 1px solid var(--border); border-radius: var(--radius-lg);
+    overflow: hidden; box-shadow: var(--shadow-sm);
+  }
+  .report-preview-header {
+    padding: 16px 24px; background: #F8FAFC; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .report-preview-title { font-size: 14px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 8px; }
+  .report-preview-body { padding: 24px; max-height: 520px; overflow-y: auto; }
+
+  .report-section { margin-bottom: 24px; }
+  .report-section-title { font-size: 13px; font-weight: 600; color: var(--brand-primary); margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+  .report-section-title .num { width: 20px; height: 20px; background: var(--brand-light); border-radius: 6px; display: grid; place-items: center; font-size: 11px; color: var(--brand-primary); font-weight: 600; }
+  .report-section p { font-size: 13px; color: var(--text-secondary); line-height: 1.8; margin-bottom: 8px; }
+
+  .highlight-box { background: #FFFBEB; border-left: 3px solid var(--brand-accent); padding: 12px 16px; border-radius: 0 8px 8px 0; font-size: 13px; color: #92400E; line-height: 1.7; margin: 12px 0; }
+
+  .data-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+  .data-table th { text-align: left; padding: 8px 12px; background: #F8FAFC; color: var(--text-secondary); font-weight: 500; border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; }
+  .data-table th:hover { background: #EFF6FF; }
+  .data-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table tr.high-risk-row { background: #FEF2F2; }
+  .num-pos { color: #059669; font-weight: 600; font-family: 'SF Mono', 'Consolas', monospace; }
+  .num-neg { color: #DC2626; font-weight: 600; font-family: 'SF Mono', 'Consolas', monospace; }
+
+  .content-section { display: flex; flex-direction: column; gap: 12px; }
+
+  .evidence-table-card {
+    background: white; border: 1px solid var(--border); border-radius: var(--radius-lg);
+    padding: 16px; box-shadow: var(--shadow-sm); overflow-x: auto;
+  }
+  .evidence-table th { white-space: nowrap; font-size: 12px; }
+  .evidence-table td { font-size: 12px; vertical-align: top; }
+  .evidence-table td .risk-level-tag { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .evidence-table td .risk-level-tag.high { background: #FEE2E2; color: #991B1B; }
+  .evidence-table td .risk-level-tag.mid { background: #FEF3C7; color: #92400E; }
+  .evidence-table td .risk-level-tag.low { background: #D1FAE5; color: #065F46; }
+  .evidence-table td .l-tag { display: inline-block; padding: 2px 6px; border-radius: 4px; background: #F1F5F9; color: var(--text-secondary); font-size: 11px; font-weight: 500; }
+  .evidence-table td .evidence-text { color: var(--text-secondary); font-style: italic; max-width: 320px; }
+  .evidence-table td .desc-text { color: var(--text-primary); font-weight: 500; }
+  .evidence-table td .title-text { color: var(--text-muted); font-size: 11px; }
+
+  .cases-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+
+  .case-card {
+    background: white; border: 1px solid var(--border); border-radius: var(--radius-lg);
+    padding: 16px; box-shadow: var(--shadow-sm); transition: all 0.2s;
+  }
+  .case-card:hover { border-color: var(--brand-secondary); box-shadow: var(--shadow-md); }
+  .case-card .case-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .case-card .case-company { font-weight: 600; font-size: 14px; color: var(--text-primary); }
+  .case-card .case-date { font-size: 11px; color: var(--text-muted); }
+  .case-card .case-type { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; background: var(--brand-light); color: var(--brand-primary); font-size: 11px; font-weight: 500; margin-bottom: 10px; }
+  .case-card .case-topics { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .case-card .case-topics span { padding: 3px 8px; border-radius: 4px; background: #F1F5F9; color: var(--text-secondary); font-size: 11px; }
+  .case-card .case-reason { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+  .case-card .case-reason li { margin-bottom: 4px; }
+  .case-card .case-similarity { margin-top: 10px; font-size: 12px; color: var(--text-muted); }
+  .case-card .case-similarity b { color: var(--brand-primary); font-family: 'SF Mono', 'Consolas', monospace; }
+
+  .attribution-list { display: flex; flex-direction: column; gap: 12px; }
+
+  .attribution-item {
+    background: white; border: 1px solid var(--border); border-radius: var(--radius-lg);
+    padding: 16px; box-shadow: var(--shadow-sm); transition: all 0.2s; scroll-margin-top: 80px;
+  }
+  .attribution-item.highlight { border-color: var(--brand-secondary); box-shadow: 0 0 0 3px rgba(59,130,246,0.12), var(--shadow-md); background: #F8FAFF; }
+  .attribution-item .attr-factor { font-weight: 600; font-size: 14px; color: var(--text-primary); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  .attribution-item .attr-factor::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--brand-primary); }
+  .attribution-item .attr-source { font-size: 11px; color: var(--text-muted); margin-bottom: 8px; }
+  .attribution-item .attr-evidence { font-size: 13px; color: var(--text-secondary); line-height: 1.7; padding: 10px 12px; background: #F8FAFC; border-radius: 8px; border-left: 3px solid var(--brand-secondary); }
+
+  .fallback-banner {
+    display: none; align-items: center; gap: 10px;
+    padding: 12px 16px; background: #FEF3C7; border: 1px solid #FDE68A;
+    border-radius: var(--radius-md); color: #92400E; font-size: 13px;
+  }
+  .fallback-banner.show { display: flex; }
+  .fallback-banner .close { margin-left: auto; cursor: pointer; font-size: 16px; }
+
+  .empty-state {
+    text-align: center; padding: 40px; color: var(--text-muted); font-size: 13px;
+    background: white; border: 1px dashed var(--border); border-radius: var(--radius-lg);
+  }
+
+  .footer { text-align: center; padding: 24px; color: var(--text-muted); font-size: 12px; border-top: 1px solid var(--border); margin-top: auto; }
+
+  @media (max-width: 1024px) {
+    .app-body { grid-template-columns: 220px 1fr; }
+    .risk-dashboard { grid-template-columns: 1fr 1fr; }
+    .tech-metrics { grid-template-columns: repeat(2, 1fr); }
+    .company-list { grid-template-columns: 1fr; }
+  }
+
+  @media (max-width: 768px) {
+    .app-body { grid-template-columns: 1fr; }
+    .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
+    .risk-dashboard { grid-template-columns: 1fr; }
+    .tech-metrics { grid-template-columns: 1fr; }
+    .pipeline-status { flex-wrap: wrap; gap: 8px; }
+    .pipe-link { display: none; }
+    .header-right .agent-status span { display: none; }
+  }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+
+  .loading-overlay {
+    position: fixed; inset: 0; background: rgba(255,255,255,0.7);
+    backdrop-filter: blur(4px); z-index: 500;
+    display: none; align-items: center; justify-content: center;
+    flex-direction: column; gap: 16px;
+  }
+  .loading-overlay.show { display: flex; }
+  .loading-spinner { width: 48px; height: 48px; border: 4px solid #E2E8F0; border-top-color: #1E40AF; border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { font-size: 14px; color: #64748B; }
+  .loading-agent { font-size: 12px; color: #94A3B8; margin-top: 4px; }
+
+  .detail-view { display: none; }
+  .detail-view.active { display: block; }
+  .detail-view-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .detail-back { cursor: pointer; color: var(--brand-primary); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-text" id="loadingText">Agent 流水线执行中...</div>
+  <div class="loading-agent" id="loadingAgent">公告研读 Agent 启动</div>
+  <div class="loading-progress" id="loadingProgress" style="display:none; width:280px; height:6px; background:#E2E8F0; border-radius:3px; margin-top:16px; overflow:hidden;">
+    <div id="loadingProgressBar" style="width:0%; height:100%; background:var(--brand-primary); transition:width 0.3s;"></div>
+  </div>
+  <div class="loading-status" id="loadingStatus" style="display:none; margin-top:10px; font-size:12px; color:var(--text-secondary);">0 / 7</div>
+</div>
+
+<header class="app-header">
+  <div class="header-left">
+    <div class="logo">◎</div>
+    <div>
+      <div class="brand-name">监管问询扫雷预警系统</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="agent-status">
+      <div class="status-dot"></div>
+      <span id="agentStatusText">Agent 就绪</span>
+    </div>
+    <button class="header-btn" id="realtimeBtn" onclick="toggleRealtimeMode()">
+      <span>⚡</span> <span id="realtimeBtnText">实时扫雷：关</span>
+    </button>
+    <button class="header-btn" onclick="openCompanyModal()">
+      <span>🔍</span> 切换公司
+    </button>
+    <span id="clock">2026-08-26 22:30:00</span>
+    <button class="icon-btn" title="深色模式（预留）">◐</button>
+  </div>
+</header>
+
+<!-- 公司选择弹窗 -->
+<div class="modal-overlay" id="companyModalOverlay" onclick="closeCompanyModal(event)">
+  <div class="company-modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">🎯 选择目标公司</div>
+        <div class="modal-subtitle">演示用 · 当前仅加载 3 家示例公司</div>
+      </div>
+      <button class="modal-close" onclick="closeCompanyModal()">×</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="search-row">
+        <input type="text" class="search-input" id="companySearch" placeholder="搜索公司代码或简称，如 000858 / 五粮液" oninput="filterCompanyList()" onkeydown="handleSearchKey(event)">
+        <div class="search-dropdown" id="searchDropdown"></div>
+        <div class="filter-badges">
+          <button class="filter-badge active" data-filter="all" onclick="setRiskFilter('all')">全部</button>
+          <button class="filter-badge" data-filter="low" onclick="setRiskFilter('low')">低风险</button>
+          <button class="filter-badge" data-filter="mid" onclick="setRiskFilter('mid')">中风险</button>
+          <button class="filter-badge" data-filter="high" onclick="setRiskFilter('high')">高风险</button>
+        </div>
+      </div>
+
+      <div class="company-list" id="companyList"></div>
+
+      <div class="batch-area">
+        <label>📋 批量扫雷名单</label>
+        <textarea class="param-textarea" id="batchCompanies" placeholder="粘贴多个公司代码，用空格、逗号或换行分隔&#10;例如：000001.SZ 000063.SZ 000858.SZ"></textarea>
+        <div class="hint">当前演示仅支持已缓存公司；后续接入 LLM 实时爬取</div>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <span class="modal-selected-count" id="modalSelectedCount">已选 0 家公司</span>
+      <div style="display: flex; gap: 10px;">
+        <button class="btn-ghost" onclick="closeCompanyModal()">取消</button>
+        <button class="btn-danger" onclick="runBatchDemo()">⚡ 批量扫雷</button>
+        <button class="btn-primary" onclick="confirmCompanySelection()">确认切换</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 全部风险因子弹窗 -->
+<div class="modal-overlay" id="factorModalOverlay" onclick="closeFactorModal(event)">
+  <div class="company-modal" style="width: 880px;" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">📊 全部风险因子</div>
+        <div class="modal-subtitle">按模型贡献度排序，点击因子可定位到风险原文</div>
+      </div>
+      <button class="modal-close" onclick="closeFactorModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="factors-grid" id="factorModalGrid"></div>
+    </div>
+  </div>
+</div>
+
+<div class="app-body">
+  <aside class="sidebar">
+    <div class="sidebar-section">主控调度</div>
+    <div class="master-agent" onclick="showView('dashboard')">
+      <div class="master-icon">◎</div>
+      <div class="master-info">
+        <div class="master-title">主控 Agent</div>
+        <div class="master-sub">任务编排 · 结果聚合</div>
+      </div>
+    </div>
+
+    <div class="sidebar-section">执行流水线</div>
+    <div class="pipeline-step" data-agent="AnnouncementReader" data-section="section-announcement" onclick="selectStep(this, '公告研读')">
+      <div class="step-icon">📄</div>
+      <div>
+        <div class="step-title">公告研读 Agent</div>
+        <div class="step-status">待执行</div>
+      </div>
+    </div>
+    <div class="pipeline-step" data-agent="FinancialDetector" data-section="section-financial" onclick="selectStep(this, '财务异常')">
+      <div class="step-icon">📊</div>
+      <div>
+        <div class="step-title">财务异常 Agent</div>
+        <div class="step-status">待执行</div>
+      </div>
+    </div>
+    <div class="pipeline-step" data-agent="Predictor" data-section="section-risk" onclick="selectStep(this, '预测建模')">
+      <div class="step-icon">🧮</div>
+      <div>
+        <div class="step-title">预测建模 Agent</div>
+        <div class="step-status">待执行</div>
+      </div>
+    </div>
+    <div class="pipeline-step" data-agent="CaseRetriever" data-section="section-cases" onclick="selectStep(this, '案例匹配')">
+      <div class="step-icon">🔍</div>
+      <div>
+        <div class="step-title">案例匹配 Agent</div>
+        <div class="step-status">待执行</div>
+      </div>
+    </div>
+    <div class="pipeline-step" data-agent="ChunkRetriever" data-section="section-attribution" onclick="selectStep(this, '段落召回')">
+      <div class="step-icon">🧩</div>
+      <div>
+        <div class="step-title">段落召回 Agent</div>
+        <div class="step-status">待执行</div>
+      </div>
+    </div>
+    <div class="pipeline-step" data-agent="Attributor" data-section="section-attribution" onclick="selectStep(this, '归因分析')">
+      <div class="step-icon">💡</div>
+      <div>
+        <div class="step-title">归因分析 Agent</div>
+        <div class="step-status">待执行</div>
+      </div>
+    </div>
+    <div class="pipeline-step" data-agent="Reporter" data-section="section-report" onclick="selectStep(this, '报告生成')">
+      <div class="step-icon">📝</div>
+      <div>
+        <div class="step-title">报告生成 Agent</div>
+        <div class="step-status">待执行</div>
+      </div>
+    </div>
+
+    <div class="params-trigger" id="paramsTrigger" onclick="toggleParams()">
+      <span>⚙️ 参数设置</span>
+      <span class="arrow">▾</span>
+    </div>
+    <div class="params-panel" id="paramsPanel">
+      <div class="params-content">
+        <div class="param-row">
+          <label>公司代码</label>
+          <input class="param-input" id="paramCode" type="text" value="" placeholder="如 000858.SZ">
+        </div>
+        <div class="param-row">
+          <label>批量公司列表</label>
+          <textarea class="param-textarea" id="paramBatch" placeholder="多个代码用空格/逗号/换行分隔"></textarea>
+        </div>
+        <div class="param-row">
+          <label>预测窗口（天）</label>
+          <select class="param-select" id="paramWindow">
+            <option value="30">30 天</option>
+            <option value="60" selected>60 天</option>
+            <option value="90">90 天</option>
+          </select>
+        </div>
+        <div class="param-row">
+          <label>公告研读上限</label>
+          <select class="param-select" id="paramMaxDocs">
+            <option value="3" selected>3 份（极速）</option>
+            <option value="5">5 份（标准）</option>
+            <option value="10">10 份（完整）</option>
+          </select>
+        </div>
+        <div class="param-toggle">
+          <span style="font-size: 13px; color: var(--text-primary);">LLM 精细抽取</span>
+          <div class="switch" id="switchLLM" onclick="this.classList.toggle('on')"></div>
+        </div>
+        <div class="param-toggle">
+          <span style="font-size: 13px; color: var(--text-primary);">BGE 语义检索</span>
+          <div class="switch on" id="switchBGE" onclick="this.classList.toggle('on')"></div>
+        </div>
+        <div class="param-row" id="realtimeHint" style="display:none; margin-top:8px;">
+          <div style="font-size:12px;color:var(--text-secondary);background:#FEF3C7;padding:8px 10px;border-radius:6px;">
+            ⚡ 实时扫雷会真实调用 7 个 Agent，首次加载 BGE/OCR 模型约 15-30 秒，全程约 1-4 分钟。演示推荐默认使用离线快照。
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main-content">
+
+    <!-- 干净首页 -->
+    <div class="welcome-empty" id="welcomeEmpty">
+      <div class="welcome-icon">◎</div>
+      <h2>监管问询扫雷预警系统</h2>
+      <p>点击上方「切换公司」或下方快捷按钮，加载离线快照查看公司风险报告。默认使用离线数据，可开启「实时扫雷」运行真实 7-Agent 流水线。</p>
+      <div class="welcome-chips" id="welcomeChips">
+        <button class="welcome-chip" onclick="switchToDemoCompany('000001.SZ')">🏦 000001.SZ 平安银行</button>
+        <button class="welcome-chip" onclick="switchToDemoCompany('000063.SZ')">📡 000063.SZ 中兴通讯</button>
+        <button class="welcome-chip" onclick="switchToDemoCompany('000858.SZ')">🍶 000858.SZ 五粮液</button>
+      </div>
+    </div>
+
+    <!-- 主控视图 -->
+    <div class="dashboard-view hidden" id="dashboardView">
+      <div class="dashboard-title" id="section-top">
+        <div class="dashboard-title-icon"></div>
+        <div>
+          <h1>监管问询扫雷预警系统</h1>
+          <p>多 Agent 协同 · 实时特征 · 可解释风控</p>
+        </div>
+      </div>
+
+      <div class="fallback-banner" id="fallbackBanner">
+        <span>⚠️</span>
+        <span id="fallbackText">实时扫雷失败，已自动切换离线快照</span>
+        <span class="close" onclick="hideFallbackBanner()">×</span>
+      </div>
+
+      <div class="risk-dashboard" id="section-risk">
+        <div class="company-info">
+          <div class="company-tag">
+            <span>⚡</span> 最新预测
+          </div>
+          <div class="company-name" id="companyName">—</div>
+          <div class="company-code" id="companyCode">—</div>
+        </div>
+
+        <div class="risk-main">
+          <div class="risk-label">问询概率预测</div>
+          <div class="risk-value" id="riskValue">—</div>
+          <div class="risk-bar">
+            <div class="risk-bar-fill" id="riskBarFill"></div>
+          </div>
+          <div class="risk-scale"><span>0%</span><span>50%</span><span>100%</span></div>
+          <div class="risk-badge low" id="riskBadge"><span class="dot"></span>—</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-label">预测置信度</div>
+          <div class="metric-value" id="confidenceValue">—</div>
+          <div class="metric-sub">AUC 0.8335 · 5 折交叉验证</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-label">风险因子数</div>
+          <div class="metric-value" id="factorCount">—</div>
+          <div class="metric-sub">文本/财务/市场多维度</div>
+        </div>
+      </div>
+
+      <div class="pipeline-status" id="pipelineStatus">
+        <div class="pipe-node pending"><div class="node-dot"></div>数据接入</div>
+        <div class="pipe-link"></div>
+        <div class="pipe-node pending"><div class="node-dot"></div>特征抽取</div>
+        <div class="pipe-link"></div>
+        <div class="pipe-node pending"><div class="node-dot"></div>模型推理</div>
+        <div class="pipe-link"></div>
+        <div class="pipe-node pending"><div class="node-dot"></div>归因分析</div>
+        <div class="pipe-link"></div>
+        <div class="pipe-node pending"><div class="node-dot"></div>报告生成</div>
+      </div>
+
+      <div class="section-header">
+        <div>
+          <div class="section-title">关键风险因子</div>
+          <div class="section-sub">模型贡献度 Top 5 · 点击因子可跳转到对应风险原文</div>
+        </div>
+        <button class="btn-ghost" id="viewAllFactorsBtn" onclick="openFactorModal()">查看全部 <span id="factorTotalCount">0</span> 项 →</button>
+      </div>
+
+      <div class="factors-grid" id="factorsGrid"></div>
+
+      <!-- Tab 导航 -->
+      <div class="tabs-nav" id="tabNav">
+        <button class="tab-btn active" data-tab="tab-overview" onclick="switchTab('tab-overview')">风险概览</button>
+        <button class="tab-btn" data-tab="tab-evidence" onclick="switchTab('tab-evidence')">风险证据</button>
+        <button class="tab-btn" data-tab="tab-history" onclick="switchTab('tab-history')">比赛历史库</button>
+        <button class="tab-btn" data-tab="tab-announcements" onclick="switchTab('tab-announcements')">公告清单</button>
+        <button class="tab-btn" data-tab="tab-audit" onclick="switchTab('tab-audit')">审计信息</button>
+      </div>
+
+      <!-- Tab 1: 风险概览 -->
+      <div class="tab-panel active" id="tab-overview">
+        <div class="content-section">
+          <div class="section-header">
+            <div>
+              <div class="section-title">执行摘要</div>
+              <div class="section-sub">模型预测与自然语言结论</div>
+            </div>
+          </div>
+          <div class="report-preview">
+            <div class="report-preview-body" id="overviewBody">
+              <div class="empty-state">请先选择公司查看风险概览</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 2: 风险证据 -->
+      <div class="tab-panel" id="tab-evidence">
+        <div class="content-section" id="section-announcement">
+          <div class="section-header">
+            <div>
+              <div class="section-title">公告研读风险证据</div>
+              <div class="section-sub">已迁移至「公告研读 Agent」详情页</div>
+            </div>
+            <button class="btn-primary" onclick="showAgentDetail('AnnouncementReader')">查看公告研读详情 →</button>
+          </div>
+          <div class="evidence-table-card" style="padding: 20px; font-size: 13px; color: var(--text-secondary); line-height: 1.7;">
+            公告研读 Agent 已作为独立详情页承载，包含风险信号统计、L1/L2 分类、原文证据与公告标题。
+            点击右上角按钮或左侧流水线「公告研读」进入专属页面，避免与主控风险证据 Tab 职责重叠。
+          </div>
+        </div>
+
+        <div class="content-section" id="section-cases">
+          <div class="section-header">
+            <div>
+              <div class="section-title">相似监管案例</div>
+              <div class="section-sub">BGE 语义检索匹配到的历史问询案例</div>
+            </div>
+          </div>
+          <div class="cases-grid" id="casesGrid"></div>
+          <div class="empty-state" id="casesEmpty" style="display:none;">暂无相似案例数据</div>
+        </div>
+
+        <div class="content-section" id="section-attribution">
+          <div class="section-header">
+            <div>
+              <div class="section-title">风险归因原文</div>
+              <div class="section-sub">模型归因对应的风险原文证据</div>
+            </div>
+          </div>
+          <div class="attribution-list" id="attributionEvidenceList"></div>
+          <div class="empty-state" id="attributionEmpty" style="display:none;">暂无归因原文</div>
+        </div>
+      </div>
+
+      <!-- Tab 3: 比赛历史库 -->
+      <div class="tab-panel" id="tab-history">
+        <div class="content-section">
+          <div class="section-header">
+            <div>
+              <div class="section-title">比赛历史库</div>
+              <div class="section-sub">离线预计算报告与历史扫描记录</div>
+            </div>
+          </div>
+          <div class="evidence-table-card">
+            <table class="data-table" id="historyTable">
+              <thead>
+                <tr><th>公司代码</th><th>公司名称</th><th>生成时间</th><th>风险等级</th><th>问询概率</th><th>模式</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 4: 公告清单 -->
+      <div class="tab-panel" id="tab-announcements">
+        <div class="content-section">
+          <div class="section-header">
+            <div>
+              <div class="section-title">公告清单</div>
+              <div class="section-sub">本次扫描研读的公告列表</div>
+            </div>
+          </div>
+          <div class="evidence-table-card">
+            <table class="data-table" id="announcementListTable">
+              <thead>
+                <tr><th>日期</th><th>标题</th><th>类型</th><th>操作</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+            <div class="empty-state" id="announcementListEmpty" style="display:none;">暂无公告清单数据</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 5: 审计信息 -->
+      <div class="tab-panel" id="tab-audit">
+        <div class="content-section">
+          <div class="section-header">
+            <div>
+              <div class="section-title">审计信息</div>
+              <div class="section-sub">Agent 执行 trace 与审计日志</div>
+            </div>
+          </div>
+          <div class="report-preview">
+            <div class="report-preview-body" id="auditBody">
+              <div class="empty-state">暂无审计信息</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-header">
+        <div>
+          <div class="section-title">已生成报告</div>
+          <div class="section-sub" id="reportCountSub">共 0 份 · 当前聚焦 —</div>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn-secondary" onclick="downloadCurrentReport('json')">📊 导出 JSON</button>
+          <button class="btn-primary" onclick="downloadCurrentReport('md')">⬇ 下载报告</button>
+        </div>
+      </div>
+
+      <div class="reports-grid" id="reportsGrid"></div>
+
+      <div class="report-preview" id="section-report">
+        <div class="report-preview-header">
+          <div class="report-preview-title">
+            📄 <span id="previewTitle">— · 监管问询风险简报</span>
+            <span class="risk-badge low" id="previewBadge"><span class="dot"></span>—</span>
+          </div>
+        </div>
+        <div class="report-preview-body" id="previewBody">
+          <div class="empty-state">选择公司后查看完整报告</div>
+        </div>
+      </div>
+
+      <div class="footer">
+        监管问询扫雷预警系统 · 研究生创新大赛"智能风控与量化建模"赛道 · Demo 演示版
+      </div>
+    </div>
+
+    <!-- Agent 详情视图 -->
+    <div class="detail-view" id="detailView">
+      <div class="detail-view-header">
+        <span class="detail-back" onclick="showView('dashboard')">← 返回主控</span>
+        <span class="section-title" id="detailTitle">Agent 详情</span>
+      </div>
+      <div class="report-preview">
+        <div class="report-preview-body" id="detailBody">
+          <div class="empty-state">Agent 详情页占位，后续逐个实现</div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+  // ==================== API 配置 ====================
+  const API_BASE = '';
+
+  // ==================== 全局状态 ====================
+  const AppState = {
+    currentCompany: null,
+    currentTaskId: null,
+    currentDetailAgent: null, // 当前打开的 Agent 详情页 key
+    predictorWindow: 60,      // 预测建模详情页当前窗口
+    realtimeMode: false,
+    scanStatus: 'idle', // idle / pending / running / completed / failed / cancelled
+    agentStates: {},
+    agentResults: {},
+    resultCache: new Map(),
+    currentTab: 'tab-overview',
+    selectedCompany: '',
+    currentFilter: 'all',
+    wsConnection: null,
+    messageIds: new Set(),
+    subscribers: {},
+    subscribe(key, cb) {
+      if (!this.subscribers[key]) this.subscribers[key] = [];
+      this.subscribers[key].push(cb);
+    },
+    set(key, value) {
+      this[key] = value;
+      (this.subscribers[key] || []).forEach(cb => cb(value));
+    }
+  };
+
+  // 演示公司：仅作兜底；优先从 /api/companies 拉取全部可用离线公司
+  const DEMO_COMPANIES = [
+    { code: '000001.SZ', name: '平安银行', market: 'SZ' },
+    { code: '000063.SZ', name: '中兴通讯', market: 'SZ' },
+    { code: '000858.SZ', name: '五粮液', market: 'SZ' },
+  ];
+
+  let allCompanies = [];
+
+  async function fetchCompanies() {
+    try {
+      const resp = await fetch(`${API_BASE}/api/companies`);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data && data.length) { allCompanies = data; return; }
+      }
+    } catch (e) { console.warn('拉取公司列表失败，用默认演示公司兜底', e); }
+    allCompanies = DEMO_COMPANIES;
+  }
+
+  const AGENT_ORDER = [
+    { key: 'AnnouncementReader', name: '公告研读', icon: '📄', section: 'section-announcement', detail: 'announcement' },
+    { key: 'FinancialDetector', name: '财务异常', icon: '📊', section: 'section-financial', detail: 'financial' },
+    { key: 'Predictor', name: '预测建模', icon: '🧮', section: 'section-risk', detail: 'predictor' },
+    { key: 'CaseRetriever', name: '案例匹配', icon: '🔍', section: 'section-cases', detail: 'cases' },
+    { key: 'ChunkRetriever', name: '段落召回', icon: '🧩', section: 'section-attribution', detail: 'attribution' },
+    { key: 'Attributor', name: '归因分析', icon: '💡', section: 'section-attribution', detail: 'attribution' },
+    { key: 'Reporter', name: '报告生成', icon: '📝', section: 'section-report', detail: 'report' },
+  ];
+
+  let wsConnection = null;
+  let lastResultIsRealtime = false;
+
+  // ==================== 工具函数 ====================
+  function getRiskColor(level) {
+    if (level === 'low') return '#10B981';
+    if (level === 'mid') return '#F59E0B';
+    return '#EF4444';
+  }
+  function getRiskFillColor(level) {
+    if (level === 'low') return '#D1FAE5';
+    if (level === 'mid') return '#FEF3C7';
+    return '#FEE2E2';
+  }
+  function getRiskTextColor(level) {
+    if (level === 'low') return '#065F46';
+    if (level === 'mid') return '#92400E';
+    return '#991B1B';
+  }
+  function getLevelText(level) {
+    if (level === 'low') return '低风险';
+    if (level === 'mid') return '中风险';
+    return '高风险';
+  }
+  function parseWindow() {
+    const sel = document.getElementById('paramWindow');
+    return parseInt(sel.value) || 60;
+  }
+  function getParamSwitch(id) {
+    return document.getElementById(id).classList.contains('on');
+  }
+  function generateMessageId() {
+    return Math.random().toString(36).slice(2) + Date.now().toString(36);
+  }
+
+  // ==================== Loading ====================
+  function showLoading(show, options = {}) {
+    const overlay = document.getElementById('loadingOverlay');
+    overlay.classList.toggle('show', show);
+    const progress = document.getElementById('loadingProgress');
+    const status = document.getElementById('loadingStatus');
+    const text = document.getElementById('loadingText');
+
+    if (show) {
+      if (options.realtime) {
+        progress.style.display = 'block';
+        status.style.display = 'block';
+        text.textContent = '实时扫雷运行中（真实 7-Agent 流水线）...';
+        updateLoadingProgress(options.step || 0, options.total || 7, options.message || '准备启动...');
+      } else {
+        progress.style.display = 'none';
+        status.style.display = 'none';
+        text.textContent = 'Agent 流水线执行中...';
+      }
+    } else {
+      clearInterval(window._loadingTimer);
+      progress.style.display = 'none';
+      status.style.display = 'none';
+      document.getElementById('loadingProgressBar').style.width = '0%';
+    }
+  }
+
+  function updateLoadingProgress(step, total, message) {
+    const bar = document.getElementById('loadingProgressBar');
+    const status = document.getElementById('loadingStatus');
+    const agent = document.getElementById('loadingAgent');
+    const pct = total > 0 ? (step / total) * 100 : 0;
+    bar.style.width = pct + '%';
+    status.textContent = `${step} / ${total}`;
+    agent.textContent = message;
+  }
+
+  // ==================== API 调用 ====================
+  async function fetchAnalysis(codes, window = 60, useLLM = false, useBGE = true) {
+    showLoading(true);
+    try {
+      const resp = await fetch(`${API_BASE}/api/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ codes, window, use_llm: useLLM, use_bge: useBGE })
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      lastResultIsRealtime = false;
+      data.forEach(item => { AppState.resultCache.set(item.code, item); });
+      return data;
+    } catch (err) {
+      console.error('API 调用失败:', err);
+      alert('后端服务未启动或请求失败，请检查 FastAPI 是否运行在 http://localhost:8000');
+      return null;
+    } finally {
+      showLoading(false);
+    }
+  }
+
+  async function fetchSingleCompany(code) {
+    if (AppState.resultCache.has(code)) return AppState.resultCache.get(code);
+    try {
+      const resp = await fetch(`${API_BASE}/api/company/${encodeURIComponent(code)}`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      AppState.resultCache.set(code, data);
+      return data;
+    } catch (err) {
+      console.warn(`获取 ${code} 失败:`, err);
+      return null;
+    }
+  }
+
+  // ==================== 公司切换 ====================
+  async function switchToDemoCompany(code) {
+    const found = allCompanies.find(c => c.code === code);
+    if (!found) return;
+    document.getElementById('paramCode').value = code;
+    await loadCompanyData(code, false);
+  }
+
+  async function loadCompanyData(code, realtime = false) {
+    AppState.set('currentCompany', { code });
+    AppState.set('scanStatus', realtime ? 'pending' : 'idle');
+    resetAgentStates();
+
+    if (realtime) {
+      await startRealtimeScan(code);
+      return;
+    }
+
+    // 离线快照
+    showLoading(true);
+    const data = await fetchSingleCompany(code);
+    showLoading(false);
+    if (data) {
+      AppState.set('scanStatus', 'completed');
+      markAllAgentsDone();
+      showDashboard();
+      renderDashboard(data);
+    } else {
+      alert(`未找到 ${code} 的离线快照。当前可用公司：${allCompanies.map(c => c.name).join('、')}`);
+    }
+  }
+
+  function resetAgentStates() {
+    AppState.agentStates = {};
+    AGENT_ORDER.forEach(a => { AppState.agentStates[a.key] = { status: 'pending', message: '待执行' }; });
+    renderPipelineSteps();
+    renderTopPipeline(0, 5, null);
+  }
+
+  function markAllAgentsDone() {
+    AGENT_ORDER.forEach(a => { AppState.agentStates[a.key] = { status: 'done', message: '✓ 完成' }; });
+    renderPipelineSteps();
+    renderTopPipeline(5, 5, null);
+  }
+
+  // ==================== WebSocket 实时扫雷 ====================
+  async function startRealtimeScan(code) {
+    // 切换公司前先取消旧的实时任务（任务 A1/B1-4：避免串行锁冲突 / 409）
+    const oldTaskId = AppState.currentTaskId;
+    if (oldTaskId) {
+      try { await fetch(`${API_BASE}/api/scan/${oldTaskId}`, { method: 'DELETE' }); } catch (e) {}
+      AppState.set('currentTaskId', null);
+    }
+    if (wsConnection) { try { wsConnection.close(); } catch (e) {} wsConnection = null; }
+
+    const windowVal = parseWindow();
+    const maxDocs = parseInt(document.getElementById('paramMaxDocs').value) || 3;
+    const useLLM = getParamSwitch('switchLLM');
+    const useBGE = getParamSwitch('switchBGE');
+
+    showLoading(true, { realtime: true, step: 0, total: 7, message: '创建实时扫雷任务...' });
+    AppState.set('scanStatus', 'pending');
+    resetAgentStates();
+
+    let taskId;
+    try {
+      let resp = await fetch(`${API_BASE}/api/scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, window: windowVal, use_llm: useLLM, use_bge: useBGE, max_documents: maxDocs, realtime: true })
+      });
+      // 409 冲突：已有实时任务在跑，弹框确认后带 force 重发（任务 A1-3 / B1-4）
+      if (resp.status === 409) {
+        const shouldSwitch = confirm('当前有实时任务正在运行，是否终止并切换公司？');
+        if (!shouldSwitch) { showLoading(false); return; }
+        resp = await fetch(`${API_BASE}/api/scan`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, window: windowVal, use_llm: useLLM, use_bge: useBGE, max_documents: maxDocs, realtime: true, force: true })
+        });
+      }
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      // 离线快照 / 缓存命中：秒出，不建 WebSocket（任务 A2-5 / B3-1）
+      if (data.cached && data.result) {
+        showLoading(false);
+        AppState.set('scanStatus', 'completed');
+        AppState.resultCache.set(data.result.code, data.result);
+        markAllAgentsDone();
+        showDashboard();
+        renderDashboard(data.result);
+        return;
+      }
+      taskId = data.task_id;
+      AppState.set('currentTaskId', taskId);
+    } catch (err) {
+      console.error('创建任务失败:', err);
+      showLoading(false);
+      const msg = err && err.message ? err.message : '创建实时扫雷任务失败';
+      showFallback(`${msg}，已自动切换离线快照`);
+      await loadCompanyData(code, false);
+      return;
+    }
+
+    const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/pipeline/${taskId}`;
+    const ws = new WebSocket(wsUrl);
+    wsConnection = ws;
+    let reconnectCount = 0;
+    const maxReconnect = 3;
+
+    ws.onopen = () => {
+      reconnectCount = 0;
+      updateLoadingProgress(0, 7, '已连接，等待模型预热...');
+    };
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'heartbeat') return;
+      if (data.id && AppState.messageIds.has(data.id)) return;
+      if (data.id) AppState.messageIds.add(data.id);
+
+      if (data.type === 'progress') {
+        AppState.set('scanStatus', 'running');
+        updateAgentState(data.agent, data.status, data.message);
+        updateLoadingProgress(data.step, data.total, data.message);
+        renderPipelineSteps();
+        const topIdx = mapStepToTopPipeline(data.step);
+        renderTopPipeline(topIdx, 5, data.status === 'error' ? topIdx - 1 : null);
+      } else if (data.type === 'complete') {
+        showLoading(false);
+        AppState.set('scanStatus', 'completed');
+        AppState.set('currentTaskId', null);
+        if (data.result) {
+          lastResultIsRealtime = true;
+          AppState.resultCache.set(data.result.code, data.result);
+          markAllAgentsDone();
+          showDashboard();
+          renderDashboard(data.result);
+        }
+        setTimeout(() => { try { ws.close(); } catch (e) {} }, 500);
+      } else if (data.type === 'error') {
+        // fatal=true 表示无离线兜底，需降级；非 fatal 等待后端随后推送的 fallback 消息
+        if (data.fatal) {
+          showLoading(false);
+          AppState.set('scanStatus', 'failed');
+          AppState.set('currentTaskId', null);
+          showFallback('实时扫雷失败，已自动切换离线快照');
+          fallbackToOffline(code);
+          setTimeout(() => { try { ws.close(); } catch (e) {} }, 500);
+        }
+      } else if (data.type === 'fallback') {
+        showLoading(false);
+        AppState.set('scanStatus', 'completed');
+        AppState.set('currentTaskId', null);
+        showFallback(data.message || '已切换离线快照');
+        if (data.result) {
+          AppState.resultCache.set(data.result.code, data.result);
+          markAllAgentsDone();
+          showDashboard();
+          renderDashboard(data.result);
+        }
+        setTimeout(() => { try { ws.close(); } catch (e) {} }, 500);
+      } else if (data.type === 'cancelled') {
+        showLoading(false);
+        AppState.set('scanStatus', 'idle');
+        AppState.set('currentTaskId', null);
+        resetAgentStates();
+        setTimeout(() => { try { ws.close(); } catch (e) {} }, 500);
+      }
+    };
+
+    ws.onerror = (err) => { console.error('WebSocket 错误:', err); };
+
+    ws.onclose = () => {
+      wsConnection = null;
+      if (AppState.scanStatus === 'running' || AppState.scanStatus === 'pending') {
+        if (reconnectCount < maxReconnect) {
+          reconnectCount++;
+          const delay = 1000 * Math.pow(2, reconnectCount - 1);
+          setTimeout(() => { startRealtimeScan(code); }, delay);
+        } else {
+          showLoading(false);
+          showFallback('WebSocket 连接断开，已自动切换离线快照');
+          fallbackToOffline(code);
+        }
+      }
+    };
+  }
+
+  async function fallbackToOffline(code) {
+    await loadCompanyData(code, false);
+  }
+
+  function mapStepToTopPipeline(step) {
+    if (step <= 2) return 1;
+    if (step === 3) return 2;
+    if (step === 4) return 3;
+    if (step <= 6) return 4;
+    return 5;
+  }
+
+  function updateAgentState(agentKey, status, message) {
+    const agent = AGENT_ORDER.find(a => a.key === agentKey);
+    if (!agent) return;
+    AppState.agentStates[agentKey] = { status, message: message || status };
+  }
+
+  // ==================== 侧边栏 & 顶部流水线渲染 ====================
+  function renderPipelineSteps() {
+    document.querySelectorAll('.pipeline-step').forEach(el => {
+      const key = el.dataset.agent;
+      const state = AppState.agentStates[key] || { status: 'pending', message: '待执行' };
+      el.classList.remove('done', 'running', 'active', 'error');
+      const statusEl = el.querySelector('.step-status');
+      if (state.status === 'done') {
+        el.classList.add('done');
+        statusEl.textContent = '✓ 完成';
+      } else if (state.status === 'running') {
+        el.classList.add('running', 'active');
+        statusEl.textContent = state.message || '正在执行…';
+      } else if (state.status === 'error' || state.status === 'skipped') {
+        el.classList.add(state.status === 'error' ? 'error' : 'done');
+        statusEl.textContent = state.message || (state.status === 'error' ? '✗ 失败' : '跳过');
+      } else {
+        statusEl.textContent = '待执行';
+      }
+    });
+  }
+
+  function renderTopPipeline(activeIdx, total, errorIdx) {
+    const nodes = [
+      { label: '数据接入' }, { label: '特征抽取' }, { label: '模型推理' },
+      { label: '归因分析' }, { label: '报告生成' }
+    ];
+    if (errorIdx !== null && errorIdx !== undefined) activeIdx = errorIdx;
+    let html = '';
+    nodes.forEach((n, i) => {
+      let cls = 'pending';
+      if (i < activeIdx) cls = 'done';
+      else if (i === activeIdx - 1 && AppState.scanStatus === 'running') cls = 'running';
+      else if (i === activeIdx - 1 && AppState.scanStatus === 'completed') cls = 'done';
+      html += `<div class="pipe-node ${cls}"><div class="node-dot"></div>${n.label}</div>`;
+      if (i < nodes.length - 1) html += `<div class="pipe-link ${i < activeIdx - 1 ? 'done' : ''}"></div>`;
+    });
+    document.getElementById('pipelineStatus').innerHTML = html;
+  }
+
+  // ==================== 视图切换 ====================
+  function showView(view) {
+    document.getElementById('welcomeEmpty').classList.add('hidden');
+    document.getElementById('dashboardView').classList.toggle('hidden', view !== 'dashboard');
+    document.getElementById('detailView').classList.toggle('active', view !== 'dashboard');
+  }
+
+  function showDashboard() {
+    showView('dashboard');
+  }
+
+  function switchTab(tabId) {
+    AppState.currentTab = tabId;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === tabId));
+  }
+
+  function selectStep(el, name) {
+    document.querySelectorAll('.pipeline-step').forEach(s => s.classList.remove('active'));
+    el.classList.add('active');
+    // 有独立详情页的 Agent 进入详情视图
+    if (el.dataset.agent && AGENT_ORDER.find(a => a.key === el.dataset.agent && a.detail)) {
+      showAgentDetail(el.dataset.agent);
+    } else {
+      showView('dashboard');
+      const sectionId = el.dataset.section;
+      if (sectionId) {
+        const target = document.getElementById(sectionId);
+        if (target) {
+          // 若目标在 Tab 内，先切换到对应 Tab
+          const panel = target.closest('.tab-panel');
+          if (panel) switchTab(panel.id);
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }
+    }
+  }
+
+  function showAgentDetail(agentKey) {
+    const agent = AGENT_ORDER.find(a => a.key === agentKey);
+    if (!agent) return;
+    AppState.currentDetailAgent = agentKey;
+    document.getElementById('detailTitle').textContent = `${agent.name} Agent 详情`;
+
+    const code = AppState.currentCompany ? AppState.currentCompany.code : null;
+    const data = code ? AppState.resultCache.get(code) : null;
+
+    if (agent.detail === 'announcement') {
+      renderAnnouncementDetail(data);
+    } else if (agent.detail === 'financial') {
+      renderFinancialDetail(data);
+    } else if (agent.detail === 'predictor') {
+      renderPredictorDetail(data);
+    } else if (agent.detail === 'cases') {
+      renderCasesDetail(data);
+    } else if (agent.detail === 'attribution') {
+      renderAttributionDetail(data);
+    } else if (agent.detail === 'report') {
+      renderReportDetail(data);
+    } else {
+      const companyLine = code ? `<div style="margin-bottom:12px;font-weight:500;color:var(--text-primary);">当前公司：${data ? data.name : code}</div>` : '';
+      const msg = code ? `${companyLine}${agent.name} Agent 详情页正在开发中，后续将与主控数据联动展示。` : '请先选择公司';
+      document.getElementById('detailBody').innerHTML = `<div class="empty-state">${msg}</div>`;
+    }
+    showView('detail');
+  }
+
+  // ==================== 公告研读 Agent 详情页 ====================
+  function renderAnnouncementDetail(data) {
+    if (!data) {
+      document.getElementById('detailBody').innerHTML = '<div class="empty-state">请先选择公司</div>';
+      return;
+    }
+
+    const risks = data.announcementRisks || [];
+    const highCount = risks.filter(r => r.level === '高').length;
+    const midCount = risks.filter(r => r.level === '中').length;
+    const lowCount = risks.filter(r => r.level === '低').length;
+    const uniqueTitles = new Set(risks.map(r => r.title).filter(Boolean));
+    const docCount = uniqueTitles.size;
+    const total = risks.length;
+
+    // 排序状态（本次渲染使用默认按日期降序）
+    let sortKey = 'date';
+    let sortAsc = false;
+
+    function riskLevelColor(level) {
+      if (level === '高') return '#EF4444';
+      if (level === '中') return '#F59E0B';
+      return '#10B981';
+    }
+
+    function renderRows() {
+      const rows = risks.slice().sort((a, b) => {
+        let va = a[sortKey] || '';
+        let vb = b[sortKey] || '';
+        if (sortKey === 'level') {
+          const rank = { '高': 3, '中': 2, '低': 1 };
+          va = rank[va] || 0;
+          vb = rank[vb] || 0;
+        }
+        if (va < vb) return sortAsc ? -1 : 1;
+        if (va > vb) return sortAsc ? 1 : -1;
+        return 0;
+      });
+      const tbody = document.getElementById('announcementDetailTableBody');
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px;">暂无公告风险信号</td></tr>';
+        return;
+      }
+      tbody.innerHTML = rows.map((r, i) => `
+        <tr class="${r.level === '高' ? 'high-risk-row' : ''}">
+          <td>${r.date || '—'}</td>
+          <td><span class="risk-level-tag ${r.level === '高' ? 'high' : r.level === '中' ? 'mid' : 'low'}">${r.level || '—'}</span></td>
+          <td><span class="l-tag">${r.l1 || '—'}</span></td>
+          <td><span class="l-tag">${r.l2 || '—'}</span></td>
+          <td><div class="desc-text" title="${escapeHtml(r.description || '')}">${escapeHtml(r.description || '—')}</div></td>
+          <td><div class="evidence-text" title="${escapeHtml(r.evidence || '')}">${escapeHtml(r.evidence || '—')}</div></td>
+          <td>
+            <div class="title-text" title="${escapeHtml(r.title || '')}">${escapeHtml(r.title || '—')}</div>
+            ${r.sourceUrl ? `<a href="${escapeHtml(r.sourceUrl)}" target="_blank" style="font-size:11px;color:#185FA5;">查看原文 →</a>` : ''}
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    document.getElementById('detailBody').innerHTML = `
+      <div style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 24px; margin-bottom: 24px;">
+        <div>
+          <div class="company-name" style="font-size: 18px; font-weight: 700;">${data.name || '—'}</div>
+          <div class="company-code" style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">${data.code || '—'} · 离线快照</div>
+        </div>
+        <div style="display: flex; gap: 16px; align-items: baseline; justify-content: flex-end;">
+          <div style="display: flex; align-items: baseline; gap: 4px;">
+            <span style="font-size: 28px; font-weight: 600; color: ${total ? '#EF4444' : '#10B981'}; line-height: 1;">${total}</span>
+            <span style="font-size: 11px; color: var(--text-muted); line-height: 1;">风险信号</span>
+          </div>
+          <div style="display: flex; align-items: baseline; gap: 4px;">
+            <span style="font-size: 22px; font-weight: 600; line-height: 1;">${docCount}</span>
+            <span style="font-size: 11px; color: var(--text-muted); line-height: 1;">研读公告</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="tech-metrics" style="margin-bottom: 24px;">
+        <div class="tech-metric-card">
+          <div class="metric-label">高风险信号</div>
+          <div class="metric-value" style="color: #EF4444;">${highCount}</div>
+          <div class="metric-sub">需重点复核</div>
+        </div>
+        <div class="tech-metric-card">
+          <div class="metric-label">中风险信号</div>
+          <div class="metric-value" style="color: #F59E0B;">${midCount}</div>
+          <div class="metric-sub">持续关注</div>
+        </div>
+        <div class="tech-metric-card">
+          <div class="metric-label">低风险信号</div>
+          <div class="metric-value" style="color: #10B981;">${lowCount}</div>
+          <div class="metric-sub">常规提示</div>
+        </div>
+        <div class="tech-metric-card">
+          <div class="metric-label">抽取通道</div>
+          <div class="metric-value">3</div>
+          <div class="metric-sub">规则引擎 / FinBERT / LLM</div>
+        </div>
+      </div>
+
+      <div class="report-section" style="margin-bottom: 24px;">
+        <div class="report-section-title"><span class="num">1</span>公告风险信号清单</div>
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">
+          共 ${total} 条信号 · 高风险 ${highCount} · 中风险 ${midCount} · 低风险 ${lowCount}
+        </div>
+        <div class="evidence-table-card" style="padding: 0;">
+          <table class="data-table evidence-table" style="margin: 0;">
+            <thead>
+              <tr>
+                <th style="width:90px; cursor:pointer;" id="annSortDate">日期 ↕</th>
+                <th style="width:70px; cursor:pointer;" id="annSortLevel">等级 ↕</th>
+                <th style="width:60px; cursor:pointer;" id="annSortL1">L1 ↕</th>
+                <th style="width:60px; cursor:pointer;" id="annSortL2">L2 ↕</th>
+                <th>风险描述</th>
+                <th>原文证据</th>
+                <th style="width:160px;">公告标题</th>
+              </tr>
+            </thead>
+            <tbody id="announcementDetailTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="report-section" style="margin-bottom: 24px;">
+        <div class="report-section-title"><span class="num">2</span>公告研读说明</div>
+        <div class="evidence-table-card" style="padding: 16px; font-size: 13px; color: var(--text-secondary); line-height: 1.7;">
+          公告研读 Agent 通过规则引擎、FinBERT 语义分类和可选 LLM 精细抽取三通道，从上市公司公告中识别监管问询相关风险信号。
+          每条信号给出日期、风险等级、L1/L2 分类、风险描述、原文证据及公告标题，并预留查看原文链接。
+          当前展示数据来自离线快照；后续可通过 <code>/api/announcements/{code}</code> 接口补充原始公告列表与全文。
+        </div>
+      </div>
+    `;
+
+    renderRows();
+
+    document.getElementById('annSortDate').onclick = () => { sortKey = 'date'; sortAsc = !sortAsc; renderRows(); };
+    document.getElementById('annSortLevel').onclick = () => { sortKey = 'level'; sortAsc = !sortAsc; renderRows(); };
+    document.getElementById('annSortL1').onclick = () => { sortKey = 'l1'; sortAsc = !sortAsc; renderRows(); };
+    document.getElementById('annSortL2').onclick = () => { sortKey = 'l2'; sortAsc = !sortAsc; renderRows(); };
+  }
+
+  // ==================== 财务异常 Agent 详情页 ====================
+  function renderFinancialDetail(data) {
+    if (!data) {
+      document.getElementById('detailBody').innerHTML = '<div class="empty-state">请先选择公司</div>';
+      return;
+    }
+
+    const anomalies = data.financialAnomalies || [];
+    const highCount = anomalies.filter(a => a.severity >= 4).length;
+    const midCount = anomalies.filter(a => a.severity >= 2 && a.severity < 4).length;
+    const lowCount = anomalies.filter(a => a.severity < 2).length;
+
+    // 财务健康评分：100 - 异常信号加权扣分
+    let score = 100;
+    anomalies.forEach(a => {
+      score -= a.severity >= 4 ? 25 : a.severity >= 2 ? 12 : 5;
+    });
+    score = Math.max(0, Math.min(100, score));
+
+    // 关键指标卡（从 financialTable 读取前 4 个）
+    const metrics = (data.financialTable || []).slice(0, 4).map(row => ({
+      name: row[0] || '—',
+      value: row[1] || '—',
+      benchmark: row[2] || '—',
+      deviation: row[3] || '—'
+    }));
+    while (metrics.length < 4) {
+      metrics.push({ name: '—', value: '—', benchmark: '—', deviation: '—' });
+    }
+
+    const fmt = (v) => {
+      if (v === null || v === undefined || v === '—') return '—';
+      const n = Number(v);
+      if (isNaN(n)) return v;
+      return n.toFixed(2);
+    };
+
+    const metricCards = metrics.map(m => `
+      <div class="metric-card">
+        <div class="metric-label">${m.name}</div>
+        <div class="metric-value">${fmt(m.value)}</div>
+        <div class="metric-sub">行业均值/阈值：${m.benchmark}</div>
+        <div class="metric-sub">偏离度：${fmt(m.deviation)}</div>
+      </div>
+    `).join('');
+
+    const rows = anomalies.length ? anomalies.map((a, i) => {
+      const level = a.severity >= 4 ? '高' : a.severity >= 2 ? '中' : '低';
+      const cls = a.severity >= 4 ? 'high' : a.severity >= 2 ? 'mid' : 'low';
+      return `
+        <tr class="${a.severity >= 4 ? 'high-risk-row' : ''}">
+          <td>${a.type}</td>
+          <td><span class="risk-level-tag ${cls}">${level}</span></td>
+          <td>${a.indicator}</td>
+          <td class="num-neg">${fmt(a.value)}</td>
+          <td>${a.threshold}</td>
+          <td>${a.evidence}</td>
+          <td><span class="l-tag">${a.label_ref}</span></td>
+        </tr>
+      `;
+    }).join('') : '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px;">暂无财务异常信号</td></tr>';
+
+    const evidenceHtml = anomalies.length ? `
+      <div class="report-section">
+        <div class="report-section-title"><span class="num">2</span>关联证据片段</div>
+        ${anomalies.map((a, i) => `
+          <div class="attribution-item" style="margin-bottom: 12px;">
+            <div class="attr-factor">${a.type} · ${a.indicator}</div>
+            <div class="attr-evidence">${a.evidence}</div>
+          </div>
+        `).join('')}
+      </div>
+    ` : '';
+
+    document.getElementById('detailBody').innerHTML = `
+      <div style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 24px; margin-bottom: 24px;">
+        <div>
+          <div class="company-name" style="font-size: 18px; font-weight: 700;">${data.name || '—'}</div>
+          <div class="company-code" style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">${data.code || '—'} · 离线快照</div>
+        </div>
+        <div style="display: flex; gap: 16px; align-items: baseline; justify-content: flex-end;">
+          <div style="display: flex; align-items: baseline; gap: 4px;">
+            <span style="font-size: 28px; font-weight: 600; color: ${anomalies.length ? '#EF4444' : '#10B981'}; line-height: 1;">${anomalies.length}</span>
+            <span style="font-size: 11px; color: var(--text-muted); line-height: 1;">异常信号</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="tech-metrics" style="margin-bottom: 24px;">
+        ${metricCards}
+      </div>
+
+      <div class="report-section">
+        <div class="report-section-title"><span class="num">1</span>财务异常信号清单</div>
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">
+          共 ${anomalies.length} 条 · 高风险 ${highCount} · 中风险 ${midCount} · 低风险 ${lowCount}
+        </div>
+        <div class="evidence-table-card" style="padding: 0;">
+          <table class="data-table evidence-table" style="margin: 0;">
+            <thead>
+              <tr>
+                <th>异常类型</th>
+                <th>严重度</th>
+                <th>指标</th>
+                <th>本期值</th>
+                <th>阈值</th>
+                <th>证据</th>
+                <th>标签</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>
+
+      ${evidenceHtml}
+    `;
+  }
+
+  // ==================== 预测建模 Agent 详情页 ====================
+  function renderPredictorDetail(data) {
+    if (!data) {
+      document.getElementById('detailBody').innerHTML = '<div class="empty-state">请先选择公司</div>';
+      return;
+    }
+
+    const windows = (data.windowPredictions && data.windowPredictions.length)
+      ? data.windowPredictions
+      : [{
+          window: 60,
+          risk: data.risk || 0,
+          confidence: data.confidence || 0,
+          factors: (data.factorsList || []).slice().sort((a, b) => (b.score || 0) - (a.score || 0))
+        }];
+
+    const selected = windows.find(w => w.window === AppState.predictorWindow) || windows[0];
+    const m = selected.metrics || {};
+    const risk = selected.risk || 0;
+    const level = risk >= 70 ? 'high' : risk >= 30 ? 'mid' : 'low';
+    const levelText = getLevelText(level);
+    const confidence = selected.confidence || 0;
+    const riskColor = getRiskColor(level);
+    const factors = (selected.factors || []).slice(0, 8);
+
+    const windowButtons = [30, 60, 90].map(w => {
+      const active = w === selected.window ? 'background: #E6F1FB; color: #185FA5; border-color: #185FA5; font-weight: 500;' : '';
+      return `<button class="filter-badge" style="padding: 6px 14px; cursor: pointer; ${active}" onclick="switchPredictorWindow(${w})">${w}天</button>`;
+    }).join('');
+
+    const factorsHtml = factors.length ? factors.map(f => `
+      <div style="margin-bottom: 14px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; margin-bottom: 5px;">
+          <span style="font-weight: 500;">${f.name || '—'} <span class="l-tag" style="margin-left: 4px;">${f.tagText || f.tag || '其他'}</span></span>
+          <span style="font-weight: 600; color: ${f.color || '#3B82F6'};">${((f.score || 0) * 100).toFixed(1)}%</span>
+        </div>
+        <div style="background: #F1F5F9; height: 8px; border-radius: 4px; overflow: hidden;">
+          <div style="width: ${Math.min((f.score || 0) * 100, 100)}%; height: 100%; background: ${f.color || '#3B82F6'}; border-radius: 4px;"></div>
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">${f.desc || ''}</div>
+      </div>
+    `).join('') : '<div class="empty-state" style="padding: 20px;">暂无特征重要性数据</div>';
+
+    // 简易仪表盘 SVG
+    const gaugeAngle = 180 + (risk / 100) * 180;
+    const rad = (gaugeAngle * Math.PI) / 180;
+    const x2 = 100 + 70 * Math.cos(rad);
+    const y2 = 100 + 70 * Math.sin(rad);
+    const largeArc = risk > 50 ? 1 : 0;
+    const pathD = `M 30 100 A 70 70 0 ${largeArc} 1 ${x2} ${y2}`;
+
+    document.getElementById('detailBody').innerHTML = `
+      <div style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 24px; margin-bottom: 24px;">
+        <div>
+          <div class="company-name" style="font-size: 18px; font-weight: 700;">${data.name || '—'}</div>
+          <div class="company-code" style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">${data.code || '—'} · 离线快照</div>
+        </div>
+        <div style="display: flex; gap: 16px; align-items: center; justify-content: flex-end;">
+          <div style="text-align: center;">
+            <div style="font-size: 28px; font-weight: 600; color: ${riskColor};">${risk.toFixed(1)}%</div>
+            <div style="font-size: 11px; color: var(--text-muted);">问询概率</div>
+          </div>
+          <div style="text-align: center;">
+            <div style="font-size: 22px; font-weight: 600;">${(confidence * 100).toFixed(0)}%</div>
+            <div style="font-size: 11px; color: var(--text-muted);">置信度</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tech-metrics" style="margin-bottom: 24px;">
+        <div class="tech-metric-card">
+          <div class="metric-label">问询概率</div>
+          <div class="metric-value" style="color: ${riskColor};">${risk.toFixed(1)}%</div>
+          <div class="metric-sub">未来 ${selected.window} 天 · ${levelText}</div>
+        </div>
+        <div class="tech-metric-card">
+          <div class="metric-label">置信度</div>
+          <div class="metric-value">${(confidence * 100).toFixed(0)}%</div>
+          <div class="metric-sub">预测结果可信程度</div>
+        </div>
+        <div class="tech-metric-card">
+          <div class="metric-label">当前窗口</div>
+          <div class="metric-value">${selected.window} 天</div>
+          <div class="metric-sub">切换下方窗口查看对应 SHAP</div>
+        </div>
+      </div>
+
+      <div class="report-section" style="margin-bottom: 24px;">
+        <div class="report-section-title" style="margin-bottom: 12px;"><span class="num">0</span>模型性能指标</div>
+        <div class="tech-metrics" style="margin-bottom: 0;">
+          <div class="tech-metric-card">
+            <div class="metric-label">预测 AUC <span class="target">目标 ≥ 0.75</span></div>
+            <div class="metric-value" id="predAuc">${(m.AUC || 0.8335).toFixed(4)}</div>
+            <div class="metric-sub">${selected.window} 天问询概率 · 5 折交叉验证</div>
+          </div>
+          <div class="tech-metric-card">
+            <div class="metric-label">Top 10% 覆盖率 <span class="target">目标 ≥ 35%</span></div>
+            <div class="metric-value" id="predCoverage">${((m['Top10%Recall'] || 0.461) * 100).toFixed(1)}%</div>
+            <div class="metric-sub">高风险公司命中真实问询样本比例</div>
+          </div>
+          <div class="tech-metric-card">
+            <div class="metric-label">二分类 F1-Score <span class="target">目标 ≥ 0.65</span></div>
+            <div class="metric-value" id="predF1">${(m.F1 || 0.3386).toFixed(4)}</div>
+            <div class="metric-sub">问询 / 未问询 二分类</div>
+          </div>
+          <div class="tech-metric-card">
+            <div class="metric-label">分类阈值 <span class="target">动态</span></div>
+            <div class="metric-value" id="predThreshold">${(m.threshold || 0.5).toFixed(4)}</div>
+            <div class="metric-sub">该窗口下 Ensemble 二分类决策阈值</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="report-section" style="margin-bottom: 24px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+          <div class="report-section-title" style="margin: 0;"><span class="num">1</span>预测窗口与风险概率</div>
+          <div style="display: flex; gap: 8px;">${windowButtons}</div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1.5fr; gap: 24px;">
+          <div class="report-preview" style="margin: 0;">
+            <div style="display: flex; flex-direction: column; align-items: center; padding: 20px;">
+              <svg width="200" height="120" viewBox="0 0 200 120">
+                <path d="M 30 100 A 70 70 0 0 1 170 100" fill="none" stroke="#E6F1FB" stroke-width="12" stroke-linecap="round" />
+                <path d="${pathD}" fill="none" stroke="${riskColor}" stroke-width="12" stroke-linecap="round" />
+                <text x="100" y="100" text-anchor="middle" font-size="26" font-weight="600" fill="${riskColor}">${risk.toFixed(1)}%</text>
+                <text x="100" y="120" text-anchor="middle" font-size="11" fill="#5F5E5A">${levelText}</text>
+              </svg>
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 8px;">未来 ${selected.window} 天 · 综合文本 / 财务 / 市场三类特征</div>
+            </div>
+          </div>
+
+          <div class="report-preview" style="margin: 0;">
+            <div class="report-preview-header" style="border-bottom: none; padding-bottom: 0;">
+              <div class="report-preview-title">特征重要性 (SHAP) — ${selected.window}天</div>
+            </div>
+            <div style="padding: 20px;">
+              ${factorsHtml}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="report-section">
+        <div class="report-section-title"><span class="num">2</span>模型指标与解释</div>
+        <div class="evidence-table-card" style="padding: 0;">
+          <table class="data-table evidence-table" style="margin: 0;">
+            <thead>
+              <tr>
+                <th style="width: 120px;">指标</th>
+                <th style="width: 180px;">数值</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>模型</td>
+                <td>XGBoost + 5 折交叉验证</td>
+                <td>融合文本 / 财务 / 市场三类特征，输出未来 ${selected.window} 天问询概率</td>
+              </tr>
+              <tr>
+                <td>样本窗口</td>
+                <td>${selected.window} 天</td>
+                <td>以公告日期为锚点，预测未来 ${selected.window} 个交易日是否收到监管问询函</td>
+              </tr>
+              <tr>
+                <td>置信度</td>
+                <td>${(confidence * 100).toFixed(1)}%</td>
+                <td>综合特征一致性与历史回测表现给出的预测可信程度</td>
+              </tr>
+              <tr>
+                <td>风险等级</td>
+                <td><span class="risk-level-tag ${level}">${levelText}</span></td>
+                <td>基于概率阈值划分：高 ≥ 70% / 中 30%-70% / 低 < 30%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  function switchPredictorWindow(window) {
+    AppState.predictorWindow = window;
+    const code = AppState.currentCompany ? AppState.currentCompany.code : null;
+    const data = code ? AppState.resultCache.get(code) : null;
+    if (data) renderPredictorDetail(data);
+  }
+
+  // ==================== 案例匹配 Agent 详情页 ====================
+  function renderCasesDetail(data) {
+    if (!data) {
+      document.getElementById('detailBody').innerHTML = '<div class="empty-state">请先选择公司</div>';
+      return;
+    }
+
+    const cases = (data.similarCases || []).slice();
+    const count = cases.length;
+    const sims = cases.map(c => c.similarity || 0);
+    const avgSim = count ? sims.reduce((a, b) => a + b, 0) / count : 0;
+    const maxSim = count ? Math.max(...sims) : 0;
+
+    // 相似度排名条形图（用实际最大值做归一化，避免低相似度下分布桶无意义）
+    const sortedCases = cases.slice().sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
+    const maxSimVal = Math.max(0.001, ...sims);
+    const rankingHtml = sortedCases.length ? sortedCases.slice(0, 6).map(c => {
+      const pct = Math.min(100, ((c.similarity || 0) / maxSimVal) * 100);
+      return `
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+          <div style="width: 70px; font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${c.company || '—'}</div>
+          <div style="flex: 1; background: #F1F5F9; height: 10px; border-radius: 5px; overflow: hidden;">
+            <div style="width: ${pct}%; height: 100%; background: #378ADD; border-radius: 5px;"></div>
+          </div>
+          <div style="width: 44px; text-align: right; font-size: 11px; color: var(--text-secondary);">${(c.similarity * 100).toFixed(2)}%</div>
+        </div>
+      `;
+    }).join('') : '<div class="empty-state" style="padding: 20px;">暂无相似案例数据</div>';
+
+    const caseCards = cases.length ? sortedCases.map((c, i) => `
+      <div style="background: #F8FAFC; border: 0.5px solid #D3D1C7; border-radius: 8px; padding: 14px; margin-bottom: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+          <div>
+            <div style="font-size: 13px; font-weight: 500; color: var(--text-primary);">${c.company || '—'}</div>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">${c.publishDate || '—'} · ${c.inquiryType || '监管问询函'}</div>
+          </div>
+          <div style="background: #E6F1FB; color: #185FA5; font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 999px;">${(c.similarity * 100).toFixed(2)}%</div>
+        </div>
+        ${(c.topics || []).length ? `<div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 8px;">问询要点：${c.topics.slice(0, 3).join(' · ')}</div>` : ''}
+        ${(c.matchReason || []).length ? `
+          <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;">
+            ${c.matchReason.map(r => `<span class="l-tag" style="font-size: 10px;">${r}</span>`).join('')}
+          </div>
+        ` : ''}
+      </div>
+    `).join('') : '<div class="empty-state" style="padding: 24px;">暂无相似案例数据</div>';
+
+    document.getElementById('detailBody').innerHTML = `
+      <div style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 24px; margin-bottom: 24px;">
+        <div>
+          <div class="company-name" style="font-size: 18px; font-weight: 700;">${data.name || '—'}</div>
+          <div class="company-code" style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">${data.code || '—'} · 离线快照</div>
+        </div>
+      </div>
+
+      <div class="tech-metrics" style="margin-bottom: 24px;">
+        <div class="tech-metric-card">
+          <div class="metric-label">匹配案例数</div>
+          <div class="metric-value">${count}</div>
+          <div class="metric-sub">BGE 语义检索命中数量</div>
+        </div>
+        <div class="tech-metric-card">
+          <div class="metric-label">平均相似度</div>
+          <div class="metric-value">${(avgSim * 100).toFixed(2)}%</div>
+          <div class="metric-sub">余弦相似度平均</div>
+        </div>
+        <div class="tech-metric-card">
+          <div class="metric-label">检索模型</div>
+          <div class="metric-value">BGE</div>
+          <div class="metric-sub">bge-large-zh 语义向量</div>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1.5fr; gap: 24px; margin-bottom: 24px;">
+        <div class="report-preview" style="margin: 0;">
+          <div class="report-preview-header" style="border-bottom: none; padding-bottom: 0;">
+            <div class="report-preview-title">相似度排名（Top 6）</div>
+          </div>
+          <div style="padding: 20px;">
+            ${rankingHtml}
+          </div>
+        </div>
+
+        <div class="report-preview" style="margin: 0;">
+          <div class="report-preview-header" style="border-bottom: none; padding-bottom: 0;">
+            <div class="report-preview-title">相似监管案例</div>
+          </div>
+          <div style="padding: 14px 14px 6px; max-height: 320px; overflow-y: auto;">
+            ${caseCards}
+          </div>
+        </div>
+      </div>
+
+      <div class="report-section">
+        <div class="report-section-title"><span class="num">1</span>匹配逻辑说明</div>
+        <div class="evidence-table-card" style="padding: 16px; font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
+          基于 bge-large-zh 将当前公司公告文本、风险画像向量化，在历史监管问询案例库中检索语义最相近的 ${count} 起案例。每个案例给出余弦相似度、问询类型、问询要点与匹配理由，用于辅助风险归因与报告生成。
+        </div>
+      </div>
+    `;
+  }
+
+  // ==================== 归因分析 Agent 详情页（含段落召回） ====================
+  function renderAttributionDetail(data) {
+    if (!data) {
+      document.getElementById('detailBody').innerHTML = '<div class="empty-state">请先选择公司</div>';
+      return;
+    }
+
+    const factors = (data.riskFactorDetails || []).slice().sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 8);
+    const evidence = data.attributionEvidence || [];
+    const narrative = data.attribution || '';
+
+    const factorHtml = factors.length ? factors.map(f => `
+      <div style="margin-bottom: 14px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; margin-bottom: 5px;">
+          <span style="font-weight: 500;">${f.name || '—'} <span class="l-tag" style="margin-left: 4px;">${f.tagText || f.tag || '其他'}</span></span>
+          <span style="font-weight: 600; color: ${f.color || '#3B82F6'};">${((f.score || 0) * 100).toFixed(1)}%</span>
+        </div>
+        <div style="background: #F1F5F9; height: 8px; border-radius: 4px; overflow: hidden;">
+          <div style="width: ${Math.min((f.score || 0) * 100, 100)}%; height: 100%; background: ${f.color || '#3B82F6'}; border-radius: 4px;"></div>
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">${f.desc || ''}</div>
+      </div>
+    `).join('') : '<div class="empty-state" style="padding: 20px;">暂无归因因子数据</div>';
+
+    const evidenceHtml = evidence.length ? evidence.map((e, i) => `
+      <div class="attribution-item" style="margin-bottom: 14px;">
+        <div class="attr-factor" style="font-size: 12px;">${e.factor || '风险因子'} ${e.source ? `<span style="color: var(--text-muted); margin-left: 6px;">来源：${e.source}</span>` : ''}</div>
+        <div class="attr-evidence" style="font-size: 12px; line-height: 1.6; margin-top: 4px;">${e.evidence || '—'}</div>
+      </div>
+    `).join('') : '<div class="empty-state" style="padding: 20px;">暂无段落召回证据</div>';
+
+    const narrativeHtml = narrative ? `
+      <div class="report-section">
+        <div class="report-section-title"><span class="num">3</span>综合归因叙述</div>
+        <div class="evidence-table-card" style="padding: 16px; font-size: 13px; color: var(--text-secondary); line-height: 1.7;">
+          ${narrative}
+        </div>
+      </div>
+    ` : '';
+
+    document.getElementById('detailBody').innerHTML = `
+      <div style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 24px; margin-bottom: 24px;">
+        <div>
+          <div class="company-name" style="font-size: 18px; font-weight: 700;">${data.name || '—'}</div>
+          <div class="company-code" style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">${data.code || '—'} · 离线快照</div>
+        </div>
+        <div style="display: flex; gap: 16px; align-items: center; justify-content: flex-end;">
+          <div style="text-align: center;">
+            <div style="font-size: 28px; font-weight: 600; color: ${getRiskColor(data.level)};">${data.risk || 0}%</div>
+            <div style="font-size: 11px; color: var(--text-muted);">问询概率</div>
+          </div>
+          <div style="text-align: center;">
+            <div style="font-size: 22px; font-weight: 600;">${factors.length}</div>
+            <div style="font-size: 11px; color: var(--text-muted);">归因因子</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1.5fr; gap: 24px; margin-bottom: 24px;">
+        <div class="report-preview" style="margin: 0;">
+          <div class="report-preview-header" style="border-bottom: none; padding-bottom: 0;">
+            <div class="report-preview-title">Top 归因因子</div>
+          </div>
+          <div style="padding: 20px;">
+            ${factorHtml}
+          </div>
+        </div>
+
+        <div class="report-preview" style="margin: 0;">
+          <div class="report-preview-header" style="border-bottom: none; padding-bottom: 0;">
+            <div class="report-preview-title">段落召回 / 归因证据</div>
+          </div>
+          <div style="padding: 20px;">
+            ${evidenceHtml}
+          </div>
+        </div>
+      </div>
+
+      ${narrativeHtml}
+    `;
+  }
+
+  // ==================== 报告生成 Agent 详情页 ====================
+  function renderReportDetail(data) {
+    if (!data) {
+      document.getElementById('detailBody').innerHTML = '<div class="empty-state">请先选择公司</div>';
+      return;
+    }
+
+    const reportMd = data.reportMarkdown || '';
+    const wordCount = reportMd.length;
+    const summary = data.summary || data.conclusion || '暂无执行摘要';
+    const generatedAt = data.generatedAt || '—';
+
+    // 简单的 markdown → HTML 渲染
+    const mdHtml = reportMd
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/^### (.*$)/gim, '<h4 style="font-size: 13px; margin: 14px 0 6px; color: var(--text-primary);">$1</h4>')
+      .replace(/^## (.*$)/gim, '<h3 style="font-size: 14px; margin: 16px 0 8px; color: var(--text-primary);">$1</h3>')
+      .replace(/^# (.*$)/gim, '<h2 style="font-size: 15px; margin: 18px 0 8px; color: var(--text-primary);">$1</h2>')
+      .replace(/\*\*(.*?)\*\*/g, '<strong style="font-weight: 500;">$1</strong>')
+      .replace(/^\* (.*$)/gim, '<li style="margin-left: 16px; margin-bottom: 4px;">$1</li>')
+      .replace(/\n/g, '<br>');
+
+    document.getElementById('detailBody').innerHTML = `
+      <div style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 24px; margin-bottom: 24px;">
+        <div>
+          <div class="company-name" style="font-size: 18px; font-weight: 700;">${data.name || '—'}</div>
+          <div class="company-code" style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">${data.code || '—'} · 离线快照</div>
+        </div>
+      </div>
+
+      <div class="tech-metrics" style="margin-bottom: 24px;">
+        <div class="tech-metric-card">
+          <div class="metric-label">风险等级</div>
+          <div class="metric-value" style="color: ${getRiskColor(data.level)};">${data.levelText || getLevelText(data.level || 'low')}</div>
+          <div class="metric-sub">综合评估结果</div>
+        </div>
+        <div class="tech-metric-card">
+          <div class="metric-label">生成时间</div>
+          <div class="metric-value" style="font-size: 16px;">${generatedAt.slice(0, 10) || '—'}</div>
+          <div class="metric-sub">${generatedAt.slice(11, 19) || ''}</div>
+        </div>
+        <div class="tech-metric-card">
+          <div class="metric-label">报告字数</div>
+          <div class="metric-value">${wordCount.toLocaleString()}</div>
+          <div class="metric-sub">Markdown 原文长度</div>
+        </div>
+        <div class="tech-metric-card">
+          <div class="metric-label">报告状态</div>
+          <div class="metric-value" style="color: #10B981;">已生成</div>
+          <div class="metric-sub">基于离线快照聚合</div>
+        </div>
+      </div>
+
+      <div class="report-section" style="margin-bottom: 24px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+          <div class="report-section-title" style="margin: 0;"><span class="num">1</span>执行摘要</div>
+          <div style="display: flex; gap: 8px;">
+            <button class="filter-badge" style="padding: 6px 14px; cursor: pointer;" onclick="copyReportSummary()">复制摘要</button>
+            <button class="filter-badge" style="padding: 6px 14px; cursor: pointer; background: #E6F1FB; color: #185FA5;" onclick="toggleFullReport()">查看/收起全文</button>
+          </div>
+        </div>
+        <div class="evidence-table-card" id="reportSummaryBox" style="padding: 16px; font-size: 13px; color: var(--text-secondary); line-height: 1.7;">
+          ${summary}
+        </div>
+      </div>
+
+      <div class="report-section" id="fullReportSection" style="display: none;">
+        <div class="report-section-title"><span class="num">2</span>完整报告预览</div>
+        <div class="evidence-table-card" style="padding: 16px; font-size: 13px; color: var(--text-secondary); line-height: 1.7; max-height: 600px; overflow-y: auto;">
+          ${mdHtml || '<div class="empty-state">暂无报告正文</div>'}
+        </div>
+      </div>
+    `;
+  }
+
+  function copyReportSummary() {
+    const text = document.getElementById('reportSummaryBox').innerText;
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(() => alert('摘要已复制'));
+    } else {
+      alert(text);
+    }
+  }
+
+  function toggleFullReport() {
+    const el = document.getElementById('fullReportSection');
+    if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  }
+
+  function renderModelMetrics(data) {
+    const window60 = (data.windowPredictions || []).find(w => w.window === 60);
+    const metrics = window60 && window60.metrics ? window60.metrics : {};
+    const aucEl = document.getElementById('dashAuc');
+    const covEl = document.getElementById('dashCoverage');
+    const f1El = document.getElementById('dashF1');
+    if (aucEl) aucEl.textContent = (metrics.AUC || 0).toFixed(4);
+    if (covEl) covEl.textContent = ((metrics['Top10%Recall'] || 0) * 100).toFixed(1) + '%';
+    if (f1El) f1El.textContent = (metrics.F1 || 0).toFixed(4);
+  }
+
+  function computeHealthScore(data) {
+    if (!data) return '—';
+    let score = 100;
+    score -= (data.risk || 0);
+    const anomalies = data.financialAnomalies || [];
+    anomalies.forEach(a => {
+      score -= (a.severity || 0) >= 4 ? 15 : (a.severity || 0) >= 2 ? 8 : 4;
+    });
+    const annRisks = data.announcementRisks || [];
+    score -= annRisks.filter(r => r.level === 'high').length * 4;
+    score -= annRisks.filter(r => r.level === 'mid').length * 2;
+    const maxSim = Math.max(0, ...(data.similarCases || []).map(c => c.similarity || 0));
+    score -= maxSim * 100 * 0.5;
+    return Math.max(0, Math.min(100, Math.round(score)));
+  }
+
+  // ==================== 主界面渲染 ====================
+  function renderDashboard(data) {
+    if (!data) return;
+
+    document.getElementById('companyName').textContent = data.name || '—';
+    const healthScore = computeHealthScore(data);
+    const healthEl = document.getElementById('healthScoreValue');
+    if (healthEl) {
+      healthEl.textContent = typeof healthScore === 'number' ? healthScore : '—';
+      healthEl.style.color = healthScore >= 80 ? '#10B981' : healthScore >= 50 ? '#F59E0B' : '#EF4444';
+    }
+    const modeBadge = lastResultIsRealtime
+      ? `<span class="snapshot-badge realtime">⚡ 实时扫雷</span>`
+      : `<span class="snapshot-badge">📷 离线快照</span>`;
+    document.getElementById('companyCode').innerHTML = `${data.code || '—'} · ${parseWindow()} 天窗口${modeBadge}`;
+    document.getElementById('confidenceValue').textContent = (data.confidence !== undefined ? data.confidence.toFixed(2) : '—');
+    document.getElementById('factorCount').textContent = (data.factors !== undefined ? data.factors : '—');
+
+    const riskValue = data.risk !== undefined ? data.risk : 0;
+    animateNumber('riskValue', riskValue, '%', 1);
+    const barFill = document.getElementById('riskBarFill');
+    barFill.style.width = '0%';
+    barFill.style.background = getRiskColor(data.level);
+    setTimeout(() => { barFill.style.width = riskValue + '%'; }, 100);
+
+    const badge = document.getElementById('riskBadge');
+    badge.className = 'risk-badge ' + (data.level || 'low');
+    badge.innerHTML = `<span class="dot"></span>${data.levelText || '—'}`;
+    document.getElementById('riskValue').style.color = getRiskColor(data.level);
+
+    document.getElementById('paramCode').value = data.code || '';
+
+    // 因子卡片
+    const topFactors = (data.factorsList || []).slice(0, 5);
+    const factorsGrid = document.getElementById('factorsGrid');
+    factorsGrid.innerHTML = topFactors.map((f, idx) => `
+      <div class="factor-card" onclick="scrollToEvidence('${escapeHtml(f.evidenceAnchor || 'evidence-' + idx)}')">
+        <div class="factor-top">
+          <span class="factor-name">${escapeHtml(f.name)}</span>
+          <span class="factor-tag ${f.tag}">${escapeHtml(f.tagText)}</span>
+        </div>
+        <div class="factor-desc">${escapeHtml(f.desc)}</div>
+        <div class="factor-contribution">
+          <div class="factor-bar"><div class="factor-bar-fill" style="width: ${(f.score * 100).toFixed(1)}%; background: ${f.color};"></div></div>
+          <span class="factor-score">${f.score.toFixed(2)}</span>
+        </div>
+      </div>
+    `).join('');
+
+    const allFactors = data.riskFactorDetails && data.riskFactorDetails.length > 0 ? data.riskFactorDetails : data.factorsList || [];
+    document.getElementById('factorTotalCount').textContent = allFactors.length;
+
+    renderModelMetrics(data);
+    renderSimilarCases(data);
+    renderAttributionEvidence(data);
+    renderOverview(data);
+    renderReports(data);
+    renderPreview(data);
+    renderHistory(data);
+    renderAnnouncementList(data);
+    renderAudit(data);
+
+    switchTab('tab-overview');
+  }
+
+  // ==================== 数字滚动动画 ====================
+  function animateNumber(elId, target, suffix, decimals) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const startTime = performance.now();
+    const duration = 1500;
+    function tick(now) {
+      const p = Math.min((now - startTime) / duration, 1);
+      const eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = (target * eased).toFixed(decimals) + suffix;
+      if (p < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  // ==================== 公告风险证据表 ====================
+  let currentRisks = [];
+  let riskSort = { key: 'date', asc: false };
+
+  function renderAnnouncementRisks(data) {
+    const tbody = document.querySelector('#announcementRiskTable tbody');
+    const empty = document.getElementById('announcementEmpty');
+    const risks = data.announcementRisks || [];
+    currentRisks = risks.slice();
+    if (!risks.length) {
+      tbody.innerHTML = '';
+      empty.style.display = 'block';
+      return;
+    }
+    empty.style.display = 'none';
+    sortRisksData();
+  }
+
+  function sortRisks(key) {
+    if (riskSort.key === key) riskSort.asc = !riskSort.asc;
+    else { riskSort.key = key; riskSort.asc = true; }
+    sortRisksData();
+  }
+
+  function sortRisksData() {
+    const tbody = document.querySelector('#announcementRiskTable tbody');
+    const risks = currentRisks.slice();
+    risks.sort((a, b) => {
+      let va = a[riskSort.key] || '';
+      let vb = b[riskSort.key] || '';
+      if (riskSort.key === 'level') { va = levelRank(va); vb = levelRank(vb); }
+      if (va < vb) return riskSort.asc ? -1 : 1;
+      if (va > vb) return riskSort.asc ? 1 : -1;
+      return 0;
+    });
+    tbody.innerHTML = risks.map((r, i) => `
+      <tr class="${r.level === '高' ? 'high-risk-row' : ''}" id="ann-risk-${i}">
+        <td>${r.date}</td>
+        <td><span class="risk-level-tag ${r.level === '高' ? 'high' : r.level === '中' ? 'mid' : 'low'}">${r.level}</span></td>
+        <td><span class="l-tag">${r.l1}</span></td>
+        <td><span class="l-tag">${r.l2}</span></td>
+        <td><div class="desc-text" title="${escapeHtml(r.description)}">${escapeHtml(r.description)}</div></td>
+        <td><div class="evidence-text" title="${escapeHtml(r.evidence)}">${escapeHtml(r.evidence)}</div></td>
+        <td><div class="title-text" title="${escapeHtml(r.title)}">${escapeHtml(r.title)}</div></td>
+      </tr>
+    `).join('');
+  }
+
+  function levelRank(level) {
+    if (level === '高') return 3;
+    if (level === '中') return 2;
+    return 1;
+  }
+
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text || '';
+    return div.innerHTML;
+  }
+
+  // ==================== 相似监管案例 ====================
+  function renderSimilarCases(data) {
+    const grid = document.getElementById('casesGrid');
+    const empty = document.getElementById('casesEmpty');
+    const cases = data.similarCases || [];
+    if (!cases.length) {
+      grid.innerHTML = '';
+      empty.style.display = 'block';
+      return;
+    }
+    empty.style.display = 'none';
+    grid.innerHTML = cases.map(c => `
+      <div class="case-card">
+        <div class="case-header">
+          <span class="case-company">${escapeHtml(c.company)}</span>
+          <span class="case-date">${escapeHtml(c.publishDate)}</span>
+        </div>
+        <div class="case-type">${escapeHtml(c.inquiryType)}</div>
+        <div class="case-topics">${(c.topics || []).map(t => `<span>${escapeHtml(t)}</span>`).join('')}</div>
+        ${(c.matchReason || []).length ? `<ul class="case-reason">${c.matchReason.map(r => `<li>• ${escapeHtml(r)}</li>`).join('')}</ul>` : ''}
+        <div class="case-similarity">相似度：<b>${(c.similarity * 100).toFixed(2)}%</b></div>
+      </div>
+    `).join('');
+  }
+
+  // ==================== 风险归因原文 ====================
+  function renderAttributionEvidence(data) {
+    const list = document.getElementById('attributionEvidenceList');
+    const empty = document.getElementById('attributionEmpty');
+    const items = data.attributionEvidence || [];
+    if (!items.length) {
+      list.innerHTML = '';
+      empty.style.display = 'block';
+      return;
+    }
+    empty.style.display = 'none';
+    list.innerHTML = items.map((item, i) => `
+      <div class="attribution-item" id="${escapeHtml(item.anchor || 'evidence-' + i)}">
+        <div class="attr-factor">${escapeHtml(item.factor)}</div>
+        ${item.source ? `<div class="attr-source">来源：${escapeHtml(item.source)}</div>` : ''}
+        <div class="attr-evidence">${escapeHtml(item.evidence)}</div>
+      </div>
+    `).join('');
+  }
+
+  // ==================== 风险因子弹窗与跳转 ====================
+  function openFactorModal() {
+    const code = AppState.currentCompany ? AppState.currentCompany.code : null;
+    const data = code ? AppState.resultCache.get(code) : null;
+    if (!data) return;
+    const factors = data.riskFactorDetails && data.riskFactorDetails.length > 0 ? data.riskFactorDetails : data.factorsList || [];
+    const grid = document.getElementById('factorModalGrid');
+    grid.innerHTML = factors.map((f, idx) => `
+      <div class="factor-card" onclick="closeFactorModal(); scrollToEvidence('${escapeHtml(f.evidenceAnchor || 'evidence-' + idx)}');">
+        <div class="factor-top">
+          <span class="factor-name">${escapeHtml(f.name)}</span>
+          <span class="factor-tag ${f.tag}">${escapeHtml(f.tagText)}</span>
+        </div>
+        <div class="factor-desc">${escapeHtml(f.desc)}</div>
+        <div class="factor-contribution">
+          <div class="factor-bar"><div class="factor-bar-fill" style="width: ${(f.score * 100).toFixed(1)}%; background: ${f.color};"></div></div>
+          <span class="factor-score">${f.score.toFixed(2)}</span>
+        </div>
+      </div>
+    `).join('');
+    document.getElementById('factorModalOverlay').classList.add('open');
+  }
+
+  function closeFactorModal(e) {
+    if (e && e.target !== e.currentTarget) return;
+    document.getElementById('factorModalOverlay').classList.remove('open');
+  }
+
+  function scrollToEvidence(anchor) {
+    if (!anchor) return;
+    showView('dashboard');
+    switchTab('tab-evidence');
+    const target = document.getElementById(anchor);
+    if (target) {
+      setTimeout(() => {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        target.classList.add('highlight');
+        setTimeout(() => target.classList.remove('highlight'), 2000);
+      }, 100);
+    }
+  }
+
+  // ==================== 报告卡片 ====================
+  function renderReports(data) {
+    const reportsGrid = document.getElementById('reportsGrid');
+    const others = Array.from(AppState.resultCache.values()).filter(c => c.code !== data.code);
+
+    reportsGrid.innerHTML = `
+      <div class="report-card featured">
+        <div class="report-top">
+          <span class="report-title">${data.name || data.code} · 监管问询风险简报</span>
+          <span class="risk-badge ${data.level || 'low'}"><span class="dot"></span>${data.levelText || '—'}</span>
+        </div>
+        <div class="report-meta">
+          <span>📄 ${data.code}</span>
+          <span>🕐 ${(data.generatedAt || '').substring(0, 10) || '—'}</span>
+          <span>⏱ ${lastResultIsRealtime ? '实时扫雷' : '离线快照'}</span>
+        </div>
+        <div class="report-summary">${data.summary || '暂无摘要'}</div>
+        <div class="report-actions">
+          <button class="btn-primary" onclick="switchTab('tab-overview')">预览报告</button>
+          <button class="btn-secondary" onclick="downloadCurrentReport('md')">下载</button>
+        </div>
+      </div>
+      ${others.map(c => `
+        <div class="report-card" onclick="switchToDemoCompany('${c.code}')">
+          <div class="report-top">
+            <span class="report-title">${c.name || c.code} · 风险简报</span>
+            <span class="risk-badge ${c.level || 'low'}"><span class="dot"></span>${c.levelText || '—'}</span>
+          </div>
+          <div class="report-meta">
+            <span>📄 ${c.code}</span>
+            <span>🕐 ${(c.generatedAt || '').substring(0, 10) || '—'}</span>
+            <span>⏱ 离线快照</span>
+          </div>
+          <div class="report-summary">未来 60 天问询概率 <b>${c.risk !== undefined ? c.risk.toFixed(1) : '—'}%</b>。${(c.summary || '').replace(/<[^>]+>/g, '').substring(0, 40)}…</div>
+          <div class="report-actions">
+            <button class="btn-secondary">切换查看</button>
+          </div>
+        </div>
+      `).join('')}
+    `;
+
+    document.getElementById('reportCountSub').textContent = `共 ${AppState.resultCache.size} 份 · 当前聚焦 ${data.name || data.code}`;
+  }
+
+  // ==================== 报告预览 / 执行摘要 ====================
+  function renderPreview(data) {
+    document.getElementById('previewTitle').textContent = `${data.name || data.code} · 监管问询风险简报`;
+    const previewBadge = document.getElementById('previewBadge');
+    previewBadge.className = 'risk-badge ' + (data.level || 'low');
+    previewBadge.innerHTML = `<span class="dot"></span>${data.levelText || '—'} · ${data.risk !== undefined ? data.risk.toFixed(1) : '—'}%`;
+
+    const tableRows = (data.financialTable || []).map(row => `
+      <tr>
+        <td>${row[0] || '—'}</td>
+        <td class="${String(row[1]).startsWith('-') ? 'num-neg' : 'num-pos'}">${row[1] || '—'}</td>
+        <td>${row[2] || '—'}</td>
+        <td class="${String(row[3]).startsWith('-') ? 'num-neg' : 'num-pos'}">${row[3] || '—'}</td>
+      </tr>
+    `).join('');
+
+    document.getElementById('previewBody').innerHTML = `
+      <div class="report-section">
+        <div class="report-section-title"><span class="num">1</span>执行摘要</div>
+        <p>基于多 Agent 协同分析，对 ${data.name || '—'}（${data.code || '—'}）未来 <b>${parseWindow()}</b> 天内收到交易所监管问询函的概率预测为 <b>${data.risk !== undefined ? data.risk.toFixed(1) : '—'}%</b>，风险等级为 <b>${data.levelText || '—'}</b>。</p>
+        <div class="highlight-box">💡 核心结论：${data.conclusion || '暂无结论'}</div>
+      </div>
+      <div class="report-section" id="section-financial">
+        <div class="report-section-title"><span class="num">2</span>财务维度分析</div>
+        <table class="data-table">
+          <thead><tr><th>指标</th><th>本期值</th><th>行业均值</th><th>偏离度</th></tr></thead>
+          <tbody>${tableRows || '<tr><td colspan="4" style="text-align:center;color:var(--text-muted)">暂无财务异常数据</td></tr>'}</tbody>
+        </table>
+      </div>
+      <div class="report-section">
+        <div class="report-section-title"><span class="num">3</span>文本语义与案例匹配</div>
+        <p>${data.textSummary || '暂无文本语义摘要'}</p>
+        <p>BGE 语义检索匹配到历史问询案例 <b>${data.caseMatch || '0'}</b>。</p>
+      </div>
+      <div class="report-section">
+        <div class="report-section-title"><span class="num">4</span>风险归因与建议</div>
+        <p>模型归因显示，问询概率的主要贡献来自：${data.attribution || '暂无归因'}。</p>
+        <div class="highlight-box">📌 ${data.advice || '本预测结果仅供参考，不构成投资建议。'}</div>
+      </div>
+    `;
+  }
+
+  function renderOverview(data) {
+    document.getElementById('overviewBody').innerHTML = `
+      <div class="report-section">
+        <div class="report-section-title"><span class="num">1</span>风险总览</div>
+        <p>公司名称：<b>${data.name || '—'}</b>（${data.code || '—'}）</p>
+        <p>未来 ${parseWindow()} 天收到问询函概率：<b style="color:${getRiskColor(data.level)}">${data.risk !== undefined ? data.risk.toFixed(1) : '—'}%</b>，风险等级：<b>${data.levelText || '—'}</b>。</p>
+        <p>预测置信度：<b>${data.confidence !== undefined ? data.confidence.toFixed(2) : '—'}</b>，风险因子数：<b>${data.factors !== undefined ? data.factors : '—'}</b>。</p>
+      </div>
+      <div class="report-section">
+        <div class="report-section-title"><span class="num">2</span>核心结论</div>
+        <div class="highlight-box">${data.conclusion || '暂无核心结论'}</div>
+      </div>
+      <div class="report-section">
+        <div class="report-section-title"><span class="num">3</span>免责声明</div>
+        <p>${data.advice || '本报告由 AI 自动生成，风险信号必须结合公告原文复核，不构成事实认定或投资建议。'}</p>
+      </div>
+    `;
+  }
+
+  // ==================== 比赛历史库 / 公告清单 / 审计信息 ====================
+  function renderHistory(data) {
+    const tbody = document.querySelector('#historyTable tbody');
+    const rows = Array.from(AppState.resultCache.values()).map(c => `
+      <tr>
+        <td>${c.code}</td>
+        <td>${c.name}</td>
+        <td>${(c.generatedAt || '').substring(0, 10) || '—'}</td>
+        <td><span class="risk-level-tag ${c.level === 'high' ? 'high' : c.level === 'mid' ? 'mid' : 'low'}">${c.levelText || '—'}</span></td>
+        <td>${c.risk !== undefined ? c.risk.toFixed(1) + '%' : '—'}</td>
+        <td>${c.code === data.code && lastResultIsRealtime ? '实时' : '离线快照'}</td>
+      </tr>
+    `).join('');
+    tbody.innerHTML = rows || '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">暂无历史记录</td></tr>';
+  }
+
+  function renderAnnouncementList(data) {
+    const tbody = document.querySelector('#announcementListTable tbody');
+    const empty = document.getElementById('announcementListEmpty');
+    // 尝试从 data.announcementRisks 提取公告列表
+    const seen = new Set();
+    const list = [];
+    (data.announcementRisks || []).forEach(r => {
+      const key = (r.title || '') + (r.date || '');
+      if (!seen.has(key)) {
+        seen.add(key);
+        list.push({ date: r.date, title: r.title, type: '公告', url: r.sourceUrl });
+      }
+    });
+    if (!list.length) {
+      tbody.innerHTML = '';
+      empty.style.display = 'block';
+      return;
+    }
+    empty.style.display = 'none';
+    tbody.innerHTML = list.map(a => `
+      <tr>
+        <td>${a.date}</td>
+        <td>${a.title}</td>
+        <td>${a.type}</td>
+        <td>${a.url ? `<a href="${a.url}" target="_blank" rel="noopener">原文 ↗</a>` : '—'}</td>
+      </tr>
+    `).join('');
+  }
+
+  function renderAudit(data) {
+    const trace = data.traceLog || [];
+    const html = trace.length ? `
+      <div class="report-section">
+        <div class="report-section-title"><span class="num">1</span>Agent 执行 Trace</div>
+        <table class="data-table">
+          <thead><tr><th>Agent</th><th>状态</th><th>耗时</th><th>输出摘要</th></tr></thead>
+          <tbody>
+            ${trace.map(t => {
+              let summary = '';
+              if (t.output_summary) {
+                summary = typeof t.output_summary === 'object' ? JSON.stringify(t.output_summary).slice(0, 120) : String(t.output_summary).slice(0, 120);
+              }
+              return `<tr>
+                <td>${t.agent || 'Agent'}</td>
+                <td>${t.status || '—'}</td>
+                <td>${t.latency_ms !== undefined ? t.latency_ms + ' ms' : '—'}</td>
+                <td>${summary || '—'}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    ` : '<div class="empty-state">暂无审计日志</div>';
+    document.getElementById('auditBody').innerHTML = html;
+  }
+
+  // ==================== 下载当前报告 ====================
+  function downloadCurrentReport(format) {
+    const code = AppState.currentCompany ? AppState.currentCompany.code : null;
+    const data = code ? AppState.resultCache.get(code) : null;
+    if (!code || !data) { alert('请先选择公司'); return; }
+    if (format === 'json') {
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `${code}_risk_report.json`; a.click();
+      URL.revokeObjectURL(url);
+    } else {
+      // 调用后端 /api/reports/{code}/download?format=md
+      window.open(`/api/reports/${code}/download?format=md`, '_blank');
+    }
+  }
+
+  // ==================== 公司弹窗 ====================
+  function openCompanyModal() {
+    document.getElementById('companyModalOverlay').classList.add('open');
+    renderCompanyList();
+  }
+
+  function closeCompanyModal(e) {
+    if (e && e.target !== e.currentTarget) return;
+    document.getElementById('companyModalOverlay').classList.remove('open');
+    document.getElementById('searchDropdown').classList.remove('open');
+  }
+
+  function setRiskFilter(filter) {
+    AppState.currentFilter = filter;
+    document.querySelectorAll('.filter-badge').forEach(b => {
+      b.classList.toggle('active', b.dataset.filter === filter);
+    });
+    renderCompanyList();
+  }
+
+  function filterCompanyList() {
+    renderCompanyList();
+    renderSearchDropdown();
+  }
+
+  function renderCompanyList() {
+    const list = document.getElementById('companyList');
+    const search = document.getElementById('companySearch').value.toLowerCase();
+    list.innerHTML = '';
+
+    Array.from(AppState.resultCache.values()).forEach(c => {
+      if (AppState.currentFilter !== 'all' && c.level !== AppState.currentFilter) return;
+      if (search && !c.name.toLowerCase().includes(search) && !c.code.toLowerCase().includes(search)) return;
+
+      const item = document.createElement('div');
+      item.className = 'company-item' + (AppState.selectedCompany === c.code ? ' selected' : '');
+      item.onclick = () => {
+        AppState.selectedCompany = c.code;
+        renderCompanyList();
+        updateModalCount();
+      };
+      item.innerHTML = `
+        <div class="check">✓</div>
+        <div class="company-item-info">
+          <div class="company-item-name">${c.name}</div>
+          <div class="company-item-code">${c.code} · ${c.factors || 0} 项因子</div>
+        </div>
+        <div class="company-item-risk">
+          <div class="risk-pct" style="color:${getRiskColor(c.level)}">${c.risk !== undefined ? c.risk.toFixed(1) : '—'}%</div>
+          <div class="risk-level" style="background:${getRiskFillColor(c.level)};color:${getRiskTextColor(c.level)}">${c.levelText || '—'}</div>
+        </div>
+      `;
+      list.appendChild(item);
+    });
+  }
+
+  function renderSearchDropdown() {
+    const input = document.getElementById('companySearch');
+    const dd = document.getElementById('searchDropdown');
+    const q = input.value.trim().toLowerCase();
+    if (!q) { dd.classList.remove('open'); return; }
+
+    const matches = allCompanies.filter(c =>
+      c.code.toLowerCase().includes(q) || c.name.toLowerCase().includes(q)
+    ).slice(0, 8);
+
+    if (!matches.length) { dd.innerHTML = '<div class="search-dropdown-item"><span class="dd-name">无匹配公司</span></div>'; dd.classList.add('open'); return; }
+
+    dd.innerHTML = matches.map((c, i) => `
+      <div class="search-dropdown-item ${i === 0 ? 'active' : ''}" data-index="${i}" data-code="${c.code}" onclick="selectSearchItem('${c.code}')">
+        <span class="dd-code">${c.code}</span>
+        <span class="dd-name">${c.name}</span>
+        <span class="dd-tag">演示公司</span>
+      </div>
+    `).join('');
+    dd.classList.add('open');
+  }
+
+  function selectSearchItem(code) {
+    document.getElementById('companySearch').value = code;
+    document.getElementById('searchDropdown').classList.remove('open');
+    AppState.selectedCompany = code;
+    renderCompanyList();
+    updateModalCount();
+  }
+
+  function handleSearchKey(e) {
+    const dd = document.getElementById('searchDropdown');
+    if (!dd.classList.contains('open')) return;
+    const items = dd.querySelectorAll('.search-dropdown-item');
+    let activeIdx = Array.from(items).findIndex(it => it.classList.contains('active'));
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      items.forEach(it => it.classList.remove('active'));
+      activeIdx = Math.min(activeIdx + 1, items.length - 1);
+      if (activeIdx < 0) activeIdx = 0;
+      items[activeIdx].classList.add('active');
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      items.forEach(it => it.classList.remove('active'));
+      activeIdx = Math.max(activeIdx - 1, 0);
+      items[activeIdx].classList.add('active');
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const active = items[activeIdx];
+      if (active && active.dataset.code) selectSearchItem(active.dataset.code);
+    } else if (e.key === 'Escape') {
+      dd.classList.remove('open');
+    }
+  }
+
+  function updateModalCount() {
+    const code = AppState.selectedCompany;
+    const c = code ? AppState.resultCache.get(code) : null;
+    document.getElementById('modalSelectedCount').textContent =
+      c ? `已选 1 家公司 · ${c.name}（${c.code}）` : '已选 0 家公司';
+  }
+
+  async function confirmCompanySelection() {
+    const code = document.getElementById('paramCode').value.trim() || AppState.selectedCompany;
+    if (!code) { alert('请输入公司代码'); return; }
+    closeCompanyModal();
+    await loadCompanyData(code, AppState.realtimeMode);
+  }
+
+  async function runBatchDemo() {
+    const raw = document.getElementById('batchCompanies').value || document.getElementById('paramBatch').value;
+    if (!raw.trim()) { alert('请先输入公司代码'); return; }
+    const codes = raw.split(/[\s,，;；\n]+/).filter(Boolean);
+    closeCompanyModal();
+    for (const code of codes) {
+      await loadCompanyData(code, AppState.realtimeMode);
+      if (codes.length > 1) await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+
+  // ==================== 实时扫雷开关 ====================
+  function toggleRealtimeMode() {
+    AppState.realtimeMode = !AppState.realtimeMode;
+    const btn = document.getElementById('realtimeBtn');
+    const txt = document.getElementById('realtimeBtnText');
+    const hint = document.getElementById('realtimeHint');
+    if (AppState.realtimeMode) {
+      btn.classList.add('on');
+      txt.textContent = '实时扫雷：开';
+      hint.style.display = 'block';
+    } else {
+      btn.classList.remove('on');
+      txt.textContent = '实时扫雷：关';
+      hint.style.display = 'none';
+    }
+  }
+
+  // ==================== 兜底提示条 ====================
+  function showFallback(text) {
+    const banner = document.getElementById('fallbackBanner');
+    document.getElementById('fallbackText').textContent = text;
+    banner.classList.add('show');
+    setTimeout(() => { banner.classList.remove('show'); }, 5000);
+  }
+
+  function hideFallbackBanner() {
+    document.getElementById('fallbackBanner').classList.remove('show');
+  }
+
+  // ==================== 参数抽屉 ====================
+  function toggleParams() {
+    document.getElementById('paramsPanel').classList.toggle('open');
+    document.getElementById('paramsTrigger').classList.toggle('open');
+  }
+
+  // ==================== 时钟 ====================
+  function updateClock() {
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    document.getElementById('clock').textContent =
+      `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  }
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  // 监听主控公司切换：若当前处于某个 Agent 详情页，自动用新公司重新渲染
+  AppState.subscribe('currentCompany', () => {
+    if (AppState.currentDetailAgent && document.getElementById('detailView').classList.contains('active')) {
+      showAgentDetail(AppState.currentDetailAgent);
+    }
+  });
+
+  // ==================== 初始化 ====================
+  function renderWelcomeChips() {
+    const chips = document.getElementById('welcomeChips');
+    if (!chips) return;
+    const icons = ['🏦', '📡', '🍶', '🏭', '💊', '⚙️'];
+    chips.innerHTML = allCompanies.slice(0, 6).map((c, i) =>
+      `<button class="welcome-chip" onclick="switchToDemoCompany('${c.code}')">${icons[i % icons.length]} ${c.code} ${escapeHtml(c.name)}</button>`
+    ).join('');
+  }
+
+  window.addEventListener('load', async () => {
+    // 拉取全部可用离线公司清单，再预加载前 3 家到 resultCache
+    await fetchCompanies();
+    renderWelcomeChips();
+    const codes = allCompanies.slice(0, 3).map(c => c.code);
+    const results = await fetchAnalysis(codes);
+    if (results && results.length > 0) {
+      results.forEach(r => AppState.resultCache.set(r.code, r));
+    }
+    // 首页保持干净，不自动渲染任何公司
+  });
+
+  // 点击页面其他地方关闭搜索下拉
+  document.addEventListener('click', (e) => {
+    const search = document.getElementById('companySearch');
+    const dd = document.getElementById('searchDropdown');
+    if (!search || !dd) return;
+    if (!search.contains(e.target) && !dd.contains(e.target)) dd.classList.remove('open');
+  });
+</script>
+
+</body>
+</html>

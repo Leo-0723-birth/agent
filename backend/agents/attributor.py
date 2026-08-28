@@ -47,15 +47,15 @@ if _taxo_path.exists():
         for _row in csv.DictReader(_f):
             _TAXO_MAP[_row["feature"]] = _row
 
-# 标签 → 关键词：官方标签体系（任务1交付包）；缺失时退回 case_retriever 内置版
+# 标签 → 关键词：官方标签体系（任务1交付包）；缺失时退回 label_keywords_v2 内置版
 try:
     from ..skills.risk_labels import expand_label_keywords
 except Exception:  # pragma: no cover - 仅当 risk_labels 不可用时兜底
-    from .case_retriever import label_keywords as _fallback_label_keywords
+    from .label_keywords_v2 import LABEL_KEYWORDS as _fallback_label_keywords
 
     def expand_label_keywords(labels):
         kws = set()
-        lk = _fallback_label_keywords()
+        lk = _fallback_label_keywords
         for lab in labels or []:
             if not lab:
                 continue
@@ -400,7 +400,7 @@ class AttributorAgent(AgentBase):
         )
         try:
             return chat("你是资深投研/合规专家，生成可复核的归因解释。",
-                        prompt, temperature=0.1, json_mode=False)
+                        prompt, temperature=0.1, json_mode=False, max_tokens=4000)
         except Exception as e:
             return f"[归因叙事生成失败] {e}"
 

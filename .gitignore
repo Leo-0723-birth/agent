@@ -27,3 +27,6 @@ agent_v1.0_backup.py
 
 # Superpowers brainstorming visual companion（仅本地设计讨论，不入库）
 .superpowers/
+
+# WorkBuddy 本地会话/工具数据（不入库）
+.workbuddy/

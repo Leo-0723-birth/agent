@@ -61,6 +61,13 @@ class Context:
     as_of: str = ""                  # 预测时点 T（Y-m-d，特征锚定时刻）
     use_llm_summary: bool = False    # 报告执行摘要是否用 LLM（deepseek-v4-flash）生成
 
+    # 运行期参数（由编排器在 run 时写入，声明为字段以提供类型安全）
+    use_llm: bool = False            # 公告研读/归因是否启用 LLM
+    use_bge: bool = True             # 是否启用 BGE 语义检索
+    max_documents: int | None = None  # 公告研读最大文档数
+    meta: dict = field(default_factory=dict)                # 运行期元信息（total_elapsed_ms 等）
+    # 注：cancel_event 为运行期控制信号（threading.Event，非序列化），仍动态挂载不入字段。
+
     semantic: Semantic = field(default_factory=Semantic)    # 公告研读
     financial: Financial = field(default_factory=Financial)  # 财务检测
     features: dict = field(default_factory=dict)            # 特征组装后（F1-F6 拼接）

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 from collections import Counter
@@ -30,6 +31,8 @@ from ..skills.announcement_context_filter import (
 )
 from ..skills.rule_risk_extract import RuleRiskExtractor
 from .base import AgentBase
+
+_logger = logging.getLogger(__name__)
 
 
 SEVERITY_NUMBER = {"critical": 5, "high": 5, "medium": 3, "low": 2}
@@ -81,6 +84,7 @@ class AnnouncementReaderAgent(AgentBase):
         max_text_chars=MAX_TEXT_CHARS,
         gate_threshold=FINBERT_GATE,
         source=None,
+        max_documents=ANNOUNCE_MAX_DOCUMENTS,
         rule_extractor=None,
         llm_callable=None,
         progress_callback=None,
@@ -94,6 +98,7 @@ class AnnouncementReaderAgent(AgentBase):
         self.gate_threshold = float(gate_threshold)
         self.rule_extractor = rule_extractor or RuleRiskExtractor()
         self.progress_callback = progress_callback   # 需在 _default_source() 之前赋值
+        self.max_documents = None if max_documents is None else int(max_documents)
         self.source = source or self._default_source()
         self.llm_callable = llm_callable or chat_json
         self.llm_configured = bool(llm_callable is not None or os.getenv("DEEPSEEK_API_KEY"))
@@ -140,6 +145,8 @@ class AnnouncementReaderAgent(AgentBase):
         cache = Path(INDEX_DIR) / f"{secucode.replace('.', '_')}_index.json"
         store = AnnouncementStore(Path(self.data_root or DATA_RAW) / secucode, str(cache))
         announcements = store.search(days=ANNOUNCE_WINDOW_DAYS, as_of=as_of)
+        if self.max_documents is not None:
+            announcements = announcements[:self.max_documents]
         identity = {
             "code": code.group(0),
             "secucode": secucode,
@@ -272,7 +279,8 @@ class AnnouncementReaderAgent(AgentBase):
 4. “如发生、若发生、存在下列情形之一、不得、应当、有权”等假设或规范描述不是已发生事实。
 5. 描述其他公司、行业或历史案例时不得归因于本公司；无法区分时不输出。"""
             try:
-                result = self.llm_callable("", prompt, max_tokens=2000)
+                # max_tokens 需容纳 thinking(reasoning) + 答案：v4-flash 推理会占用约 2000 token
+                result = self.llm_callable("", prompt, max_tokens=6000)
             except Exception as exc:
                 failed += 1
                 per_announcement[item["id"]] = {
@@ -598,7 +606,7 @@ class AnnouncementReaderAgent(AgentBase):
                 else {}
             )
         except Exception as e:
-            print(f"  [F6 问询特征计算失败] {e}")
+            _logger.warning("[F6 问询特征计算失败] %s", e)
             ctx.semantic.f6_features = {}
         ctx.semantic.channel_summary = {
             "rule": {
