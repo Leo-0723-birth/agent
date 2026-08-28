@@ -85,6 +85,14 @@ class SweepingOrchestrator(AgentBase):
             self.progress_callback({"agent_key": agent_key, **(payload or {})})
         return callback
 
+    def _agent_callback(self, agent_key):
+        if self.progress_callback is None:
+            return None
+
+        def callback(payload):
+            self.progress_callback({"agent_key": agent_key, **(payload or {})})
+        return callback
+
     # ============ Plan：固定流水线（确定性 ReAct） ============
     def execute(self, company, ctx):
         """统一入口：对单家公司执行完整流水线（写回同一个 ctx）。"""
