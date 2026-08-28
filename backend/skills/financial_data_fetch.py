@@ -24,6 +24,8 @@ import time
 import requests
 import pandas as pd
 
+from .stock_code import normalize_stock_code
+
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -56,22 +58,12 @@ FIELD_MAP = {
 
 def _to_6digit(company_code):
     """'000004.SZ' / 'SZ000004' / '000004' -> '000004'"""
-    code = str(company_code).strip().upper()
-    if "." in code:
-        return code.split(".")[0]
-    if code[:2] in ("SZ", "SH", "BJ"):
-        return code[2:]
-    return code
+    return normalize_stock_code(company_code).split(".", 1)[0]
 
 
 def _market_of(company_code):
     """判断市场: '000004.SZ' -> 'SZ'"""
-    code = str(company_code).strip().upper()
-    if "." in code:
-        return code.split(".")[-1]
-    if code[:2] in ("SZ", "SH", "BJ"):
-        return code[:2]
-    return "SH" if code[0] in ("6", "9") else "SZ"
+    return normalize_stock_code(company_code).split(".", 1)[1]
 
 
 def _get_quote_snapshot(company_code):
@@ -103,15 +95,7 @@ class DataFetcher:
 
     def _secucode(self, stock_code):
         """把 000004 / 000004.SZ 补全成东方财富要求的 SECUCODE 格式。"""
-        code = stock_code.strip().upper()
-        if "." not in code:
-            if code.startswith(("6", "9")):
-                code += ".SH"
-            elif code.startswith(("0", "3")):
-                code += ".SZ"
-            elif code.startswith(("4", "8")):
-                code += ".BJ"
-        return code
+        return normalize_stock_code(stock_code)
 
     def fetch_financials(self, stock_code, page_size=20):
         """爬取单家公司财务指标（默认最近20期），返回标准化 DataFrame。"""

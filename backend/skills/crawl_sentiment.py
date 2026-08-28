@@ -75,10 +75,9 @@ F4_FEATURE_ORDER = [
 
 def _extract_code(company_code: str) -> str:
     """'000004.SZ' / 'SZ000004' / '000004' -> '000004'"""
-    s = str(company_code).strip().upper()
-    if "." in s:
-        return s.split(".")[0]
-    return "".join(ch for ch in s if ch.isdigit()).zfill(6)
+    from .stock_code import normalize_stock_code
+
+    return normalize_stock_code(company_code).split(".", 1)[0]
 
 
 # ============================================================

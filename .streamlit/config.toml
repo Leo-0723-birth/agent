@@ -1,9 +1,0 @@
-# Streamlit 项目级配置
-# 关闭使用统计与首次运行"邮箱引导"（否则非 headless 启动会卡在 Email: 输入）
-
-[browser]
-gatherUsageStats = false
-
-[server]
-# 如需启动时自动打开浏览器，将 headless 改为 false（不会再有邮箱引导）
-headless = true

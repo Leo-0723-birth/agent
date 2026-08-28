@@ -47,16 +47,18 @@ CNINFO_HOME = "https://www.cninfo.com.cn"
 CNINFO_STATIC = "https://static.cninfo.com.cn/"
 CNINFO_COMPANY_QUERY = f"{CNINFO_HOME}/new/information/topSearch/query"
 CNINFO_ANNOUNCEMENT_QUERY = f"{CNINFO_HOME}/new/hisAnnouncement/query"
+CNINFO_CONNECT_TIMEOUT = float(os.getenv("CNINFO_CONNECT_TIMEOUT", "5"))
+CNINFO_READ_TIMEOUT = float(os.getenv("CNINFO_READ_TIMEOUT", "20"))
 
 
 def _build_http_session():
     session = requests.Session()
     retry = Retry(
-        total=3,
-        connect=3,
-        read=3,
-        status=3,
-        backoff_factor=0.8,
+        total=1,
+        connect=1,
+        read=1,
+        status=1,
+        backoff_factor=0.4,
         status_forcelist=(429, 500, 502, 503, 504),
         allowed_methods=frozenset({"GET", "POST"}),
         respect_retry_after_header=True,
@@ -78,7 +80,12 @@ def _build_http_session():
 
 
 def _request_json(session, method, url, **kwargs):
-    response = session.request(method, url, timeout=30, **kwargs)
+    response = session.request(
+        method,
+        url,
+        timeout=(CNINFO_CONNECT_TIMEOUT, CNINFO_READ_TIMEOUT),
+        **kwargs,
+    )
     response.raise_for_status()
     if not response.encoding or response.encoding.lower() in {"iso-8859-1", "latin-1"}:
         response.encoding = "utf-8"
@@ -93,7 +100,7 @@ def _six_digit_code(value):
 def _market(code):
     if code.startswith(("6", "9")) and not code.startswith("92"):
         return "SSE", "SH", "sse", "sh"
-    if code.startswith(("0", "3")):
+    if code.startswith(("0", "2", "3")):
         return "SZSE", "SZ", "szse", "sz"
     if code.startswith(("4", "8", "92")):
         return "BSE", "BJ", "bj", "bj"
@@ -387,7 +394,7 @@ class CninfoAnnouncementSource:
     def search(self, user_input, days=365, as_of=None, pdf_budget_seconds=180):
         cutoff = str(as_of or date.today().isoformat())[:10]
         offline_store = getattr(self, "offline_store", None)
-        if offline_store is not None and bool(getattr(self, "ocr_enabled", True)):
+        if offline_store is not None:
             self._emit_progress("offline_snapshot_started", query=str(user_input), as_of=cutoff)
             cached = offline_store.lookup(user_input, days=days, as_of=cutoff)
             self.last_snapshot_info = cached

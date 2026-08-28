@@ -22,7 +22,7 @@ from ..config import BASE_DIR
 
 LABELS_DIR = Path(BASE_DIR) / "backend" / "data" / "labels"
 TAXONOMY_PATH = LABELS_DIR / "risk_taxonomy.yaml"
-DICT_PATH = LABELS_DIR / "risk_dictionary.yaml"
+DICT_PATH = Path(__import__("backend.config", fromlist=["RISK_DICTIONARY"]).RISK_DICTIONARY)
 CLASSIFIED_PATH = LABELS_DIR / "classified_focus_points_10481.jsonl"
 
 _TAXONOMY = None
