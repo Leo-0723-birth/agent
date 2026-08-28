@@ -1281,7 +1281,7 @@
     await loadCompanyData(code, AppState.realtimeMode);
   }
 
-  async function loadCompanyData(code, realtime = false) {
+  async function loadCompanyData(code, realtime = false, silentOnMissing = false) {
     const meta = allCompanies.find(c => c.code === code);
     AppState.set('currentCompany', { code, name: meta && meta.name });
     AppState.set('scanStatus', realtime ? 'pending' : 'idle');
@@ -1306,7 +1306,7 @@
       markAllAgentsDone();
       showDashboard();
       renderDashboard(data);
-    } else {
+    } else if (!silentOnMissing) {
       alert(`未找到 ${code} 的离线快照。当前可用公司：${allCompanies.map(c => c.name).join('、')}`);
     }
   }
@@ -1426,13 +1426,15 @@
         }
         setTimeout(() => { try { ws.close(); } catch (e) {} }, 500);
       } else if (data.type === 'error') {
-        // fatal=true 表示无离线兜底，需降级；非 fatal 等待后端随后推送的 fallback 消息
+        // fatal=true 表示无离线兜底，无法继续；非 fatal 等待后端随后推送的 fallback 消息
         if (data.fatal) {
           showLoading(false);
           AppState.set('scanStatus', 'failed');
           AppState.set('currentTaskId', null);
-          showFallback('实时扫雷失败，已自动切换离线快照');
-          fallbackToOffline(code);
+          const errMsg = data.message || data.error || '实时扫雷失败';
+          showFallback(errMsg);
+          // 后端已确认无离线快照，不再 fallback 到离线查询，避免弹窗误导
+          alert(`实时扫雷失败：${errMsg}\n\n该公司可能不在建模数据集内，或实时数据未达发布条件。`);
           setTimeout(() => { try { ws.close(); } catch (e) {} }, 500);
         }
       } else if (data.type === 'fallback') {
@@ -1474,6 +1476,7 @@
         } else {
           showLoading(false);
           showFallback('WebSocket 连接断开，已自动切换离线快照');
+          // 重连失败再 fallback，fallback 内部若仍无离线快照会给出具体提示
           fallbackToOffline(code);
         }
       }
@@ -1481,7 +1484,7 @@
   }
 
   async function fallbackToOffline(code) {
-    await loadCompanyData(code, false);
+    await loadCompanyData(code, false, true);
   }
 
   function mapStepToTopPipeline(step) {
