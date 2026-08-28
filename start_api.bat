@@ -1,10 +1,12 @@
-jian@echo off
+@echo off
 chcp 65001 >nul
 title FastAPI Service - Risk Early Warning System
 cd /d "%~dp0"
 
 set OMP_NUM_THREADS=2
 set MKL_NUM_THREADS=2
+:: 比赛演示：启用 mock 填充层补齐后端未完全产出的展示字段
+set ENABLE_MOCK_FILL=1
 
 if "%API_PORT%"=="" set API_PORT=8000
 if "%API_HOST%"=="" set API_HOST=0.0.0.0

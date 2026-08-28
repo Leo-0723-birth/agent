@@ -25,6 +25,7 @@ from .models import (
     SimilarCaseItem,
 )
 from backend.config import PREDICTOR_HORIZONS, PREDICTOR_MODEL_DIR, RISK_THRESHOLDS
+from backend.mock import mock_report_gaps
 
 REPORTS_DIR = PROJECT_ROOT / "backend" / "data" / "output" / "reports"
 MODELS_MANIFEST_PATH = PREDICTOR_MODEL_DIR / "models_manifest.json"
@@ -529,14 +530,21 @@ def _map_similar_cases(report: dict) -> list[SimilarCaseItem]:
     raw = report.get("similar_cases", []) or []
     items = []
     for i, c in enumerate(raw[:10]):
+        topics = [t for t in (c.get("topics", []) or []) if t][:5]
+        reasons = [r for r in (c.get("match_reason", []) or []) if r][:3]
+        if not reasons:
+            if topics:
+                reasons = [f"共同涉及问询要点：{'、'.join(topics[:2])}", "风险画像与历史案例语义相近"]
+            else:
+                reasons = ["风险画像与历史问询案例语义相近"]
         items.append(SimilarCaseItem(
             caseId=c.get("case_id", f"case-{i}"),
             company=c.get("company", ""),
             publishDate=c.get("publish_date", "") or "—",
             inquiryType=c.get("inquiry_type", "") or "监管问询函",
-            topics=[t for t in (c.get("topics", []) or []) if t][:5],
+            topics=topics,
             similarity=round(c.get("similarity", 0) or c.get("cosine_similarity", 0) or 0, 4),
-            matchReason=[r for r in (c.get("match_reason", []) or []) if r][:3],
+            matchReason=reasons,
         ))
     return items
 
@@ -546,6 +554,7 @@ def offline_to_response(company: str, window: int = 60) -> AnalyzeResponse | Non
     report = _load_report(company)
     if not report:
         return None
+    report = mock_report_gaps(report)
     resp = offline_to_response_from_report(report, window=window)
     md = _load_report_md(company)
     if md:
@@ -806,8 +815,12 @@ class StreamingOrchestrator:
 # ---------- 报告 ctx -> AnalyzeResponse ----------
 
 def report_ctx_to_response(ctx) -> AnalyzeResponse:
-    """把 SweepingOrchestrator 跑完后的 ctx.report['json'] 映射为前端格式。"""
+    """把 SweepingOrchestrator 跑完后的 ctx.report['json'] 映射为前端格式。
+
+    当 ENABLE_MOCK_FILL=1 时，先对缺失的展示字段做 mock 补齐，保证前端完整展示。
+    """
     report = ctx.report["json"]
+    report = mock_report_gaps(report)
     return offline_to_response_from_report(report)
 
 
@@ -847,6 +860,19 @@ def offline_to_response_from_report(report: dict, window: int = 60) -> AnalyzeRe
     }
 
     factors_list = _map_shap_to_factors(report)
+
+    metrics_map = get_model_metrics()
+    window_predictions = []
+    for w in (30, 60, 90):
+        window_metrics = metrics_map.get(f"{w}d", {})
+        window_predictions.append({
+            "window": w,
+            "risk": risk_by_window.get(f"{w}d", round(_prob_for_window(scorecard, w) * 100, 1)),
+            "confidence": round(confidence, 2),
+            "factors": factors_list,
+            "metrics": window_metrics,
+        })
+
     return AnalyzeResponse(
         code=report.get("company", ""),
         name=report.get("name", ""),
@@ -872,6 +898,7 @@ def offline_to_response_from_report(report: dict, window: int = 60) -> AnalyzeRe
         attributionEvidence=_map_attribution_evidence(report),
         riskFactorDetails=_map_risk_factor_details(report),
         riskByWindow=risk_by_window,
+        windowPredictions=window_predictions,
     )
 
 

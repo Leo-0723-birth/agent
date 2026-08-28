@@ -56,6 +56,14 @@ class SimilarCaseItem(BaseModel):
     matchReason: List[str]
 
 
+class WindowPrediction(BaseModel):
+    window: int
+    risk: float
+    confidence: float
+    factors: List[FactorItem] = []
+    metrics: dict = {}
+
+
 class AnalyzeResponse(BaseModel):
     code: str
     name: str
@@ -64,6 +72,7 @@ class AnalyzeResponse(BaseModel):
     levelText: str                      # 低风险 / 中风险 / 高风险
     confidence: float                   # 0~1
     riskByWindow: Optional[dict] = {}   # {"30d": x, "60d": y, "90d": z}（单位 %，前端切换窗口用）
+    windowPredictions: Optional[List[WindowPrediction]] = []  # 各窗口概率 / 指标 / SHAP（预测建模详情用）
     factors: int                        # 风险因子总数
     summary: str                        # HTML 摘要
     factorsList: List[FactorItem]
