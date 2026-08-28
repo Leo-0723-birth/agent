@@ -5,8 +5,6 @@ cd /d "%~dp0"
 
 set OMP_NUM_THREADS=2
 set MKL_NUM_THREADS=2
-:: 比赛演示：启用 mock 填充层补齐后端未完全产出的展示字段
-set ENABLE_MOCK_FILL=1
 
 if "%API_PORT%"=="" set API_PORT=8000
 if "%API_HOST%"=="" set API_HOST=0.0.0.0
@@ -20,7 +18,18 @@ echo   Close this window to stop the service.
 echo ============================================================
 echo.
 
-".venv\Scripts\python.exe" -m uvicorn api.main:app --host %API_HOST% --port %API_PORT%
+set "PYTHON_EXE=.venv\Scripts\python.exe"
+if not exist "%PYTHON_EXE%" set "PYTHON_EXE=python"
+
+%PYTHON_EXE% -c "import uvicorn" >nul 2>nul
+if errorlevel 1 (
+  echo ERROR: Python or uvicorn is unavailable.
+  echo Run: python -m pip install -r requirements.txt
+  pause
+  exit /b 1
+)
+
+%PYTHON_EXE% -m uvicorn api.main:app --host %API_HOST% --port %API_PORT%
 
 echo.
 echo Service stopped. Press any key to close.

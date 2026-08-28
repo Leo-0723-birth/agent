@@ -1,0 +1,96 @@
+{
+  "schema_version": "f1-full-run-import-v1",
+  "created_at_utc": "2026-08-28T04:11:22.393504+00:00",
+  "source_run_directory": "D:\\BaiduNetdiskDownload\\run_20260826_001320_full",
+  "source_file": "company_quarter_pca50.parquet",
+  "source_sha256": "8c04d1d5d1eb4220290878097cdfe39ecf82a8388a1b67c8fcd455f5c76a570f",
+  "output_file": "backend\\data\\modeling\\raw\\F1_announcement_semantic_features.parquet",
+  "output_sha256": "195a11c5f8a4c685ffa75ca27ef9a9686b5e2cc5aae0c73daf59915d2ac50812",
+  "feature_mapping": {
+    "PC01": "announcement_semantic_000",
+    "PC02": "announcement_semantic_001",
+    "PC03": "announcement_semantic_002",
+    "PC04": "announcement_semantic_003",
+    "PC05": "announcement_semantic_004",
+    "PC06": "announcement_semantic_005",
+    "PC07": "announcement_semantic_006",
+    "PC08": "announcement_semantic_007",
+    "PC09": "announcement_semantic_008",
+    "PC10": "announcement_semantic_009",
+    "PC11": "announcement_semantic_010",
+    "PC12": "announcement_semantic_011",
+    "PC13": "announcement_semantic_012",
+    "PC14": "announcement_semantic_013",
+    "PC15": "announcement_semantic_014",
+    "PC16": "announcement_semantic_015",
+    "PC17": "announcement_semantic_016",
+    "PC18": "announcement_semantic_017",
+    "PC19": "announcement_semantic_018",
+    "PC20": "announcement_semantic_019",
+    "PC21": "announcement_semantic_020",
+    "PC22": "announcement_semantic_021",
+    "PC23": "announcement_semantic_022",
+    "PC24": "announcement_semantic_023",
+    "PC25": "announcement_semantic_024",
+    "PC26": "announcement_semantic_025",
+    "PC27": "announcement_semantic_026",
+    "PC28": "announcement_semantic_027",
+    "PC29": "announcement_semantic_028",
+    "PC30": "announcement_semantic_029",
+    "PC31": "announcement_semantic_030",
+    "PC32": "announcement_semantic_031",
+    "PC33": "announcement_semantic_032",
+    "PC34": "announcement_semantic_033",
+    "PC35": "announcement_semantic_034",
+    "PC36": "announcement_semantic_035",
+    "PC37": "announcement_semantic_036",
+    "PC38": "announcement_semantic_037",
+    "PC39": "announcement_semantic_038",
+    "PC40": "announcement_semantic_039",
+    "PC41": "announcement_semantic_040",
+    "PC42": "announcement_semantic_041",
+    "PC43": "announcement_semantic_042",
+    "PC44": "announcement_semantic_043",
+    "PC45": "announcement_semantic_044",
+    "PC46": "announcement_semantic_045",
+    "PC47": "announcement_semantic_046",
+    "PC48": "announcement_semantic_047",
+    "PC49": "announcement_semantic_048",
+    "PC50": "announcement_semantic_049"
+  },
+  "quality": {
+    "source_rows": 39140,
+    "f2_skeleton_rows": 37222,
+    "f2_rows_covered": 37222,
+    "missing_from_source": 0,
+    "source_rows_not_in_f2_skeleton": 1918,
+    "split_mismatch": 0,
+    "duplicate_keys": 0,
+    "non_finite_feature_cells": 0,
+    "f2_rows_with_announcement": 28777,
+    "f2_announcement_coverage_rate": 0.773118048465961
+  },
+  "pca": {
+    "components": 50,
+    "cumulative_explained_variance": 0.847781915886545
+  },
+  "models": {
+    "bge-large-zh-v1.5": {
+      "repo_id": "BAAI/bge-large-zh-v1.5",
+      "revision": "79e7739b6ab944e86d6171e44d24c997fc1e0116"
+    },
+    "bge-reranker-v2-m3": {
+      "repo_id": "BAAI/bge-reranker-v2-m3",
+      "revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
+    },
+    "FinBERT2-base": {
+      "repo_id": "valuesimplex-ai-lab/FinBERT2-base",
+      "revision": "804a488abcece861e9241d55e9d6fd1f867ebee1"
+    },
+    "finbert-tone-chinese": {
+      "repo_id": "yiyanghkust/finbert-tone-chinese",
+      "revision": "e91b1a3af10e1e8c9c03429d3cd7d5e9a1c8000d"
+    }
+  },
+  "leakage_guard": "未导入 source split、y_inquiry_next、industry 等字段；标签由本仓库 inquiry_events.csv 重建。"
+}

@@ -15,6 +15,7 @@
 依赖：backend/scripts/train_models.py 先训练产出 models/predictor/（9 模型 + manifest）。
 """
 import json
+import hashlib
 import sys
 import threading
 from pathlib import Path
@@ -29,18 +30,12 @@ from ..skills.stock_code import normalize_stock_code
 from .base import AgentBase
 
 
-class ManifestMismatchError(RuntimeError):
-    """模型清单与训练数据/填充表不一致。"""
-    pass
-
-
 # 进程级单例缓存：多个 PredictorAgent 实例共享已加载的模型/数据集/清单，
 # 避免 orchestrator pool 中每个实例重复读取全量 CSV 与 9 个模型（内存成倍）。
 # 实时任务由 _scan_lock 串行，离线路径不实例化 Predictor，故无需额外加锁。
 _shared_df = None
 _shared_manifest = None
-_shared_models: dict = {}       # horizon -> {"rf", "lgb", "xgb"}
-_shared_calibrators: dict = {}  # horizon -> IsotonicRegression 校准器（或 None）
+_shared_models: dict = {}   # horizon -> {"rf", "lgb", "xgb"}
 
 
 class PredictorAgent(AgentBase):
@@ -79,75 +74,18 @@ class PredictorAgent(AgentBase):
         return _shared_df
 
     def _validate_manifest(self, manifest):
-        """校验 manifest 与建模数据集、fill 表的一致性。
-
-        返回 (ok, messages)。当缺失列过多时通过 logging 警告，但不阻断推理
-        （避免旧模型在新数据上完全不可用）；若 manifest 完全无法解析则返回 False。
-        """
-        import logging
-        logger = logging.getLogger(__name__)
+        """在推理前检查模型清单的基础结构，损坏时只降级而不终止流水线。"""
+        if not isinstance(manifest, dict):
+            return False, ["manifest 不是对象"]
+        windows = manifest.get("windows")
+        if not isinstance(windows, dict):
+            return False, ["manifest 缺少 windows"]
         messages = []
-
-        windows = manifest.get("windows", {})
-        if not windows:
-            messages.append("manifest 中无 windows 配置")
-            return False, messages
-
-        df = self._load_df()
-        if df.empty:
-            messages.append(f"建模数据集不存在或为空：{MODELING_DATASET}")
-            return False, messages
-
-        dataset_cols = set(df.columns)
-        all_ok = True
-        for h in self.horizons:
-            w = h.replace("d", "")
-            cfg = windows.get(w)
-            if not cfg or "features" not in cfg:
-                messages.append(f"窗口 {h} 缺少 features 配置")
-                all_ok = False
-                continue
-            feats = cfg["features"]
-            missing_in_dataset = [f for f in feats if f not in dataset_cols]
-            if missing_in_dataset:
-                messages.append(
-                    f"窗口 {h}: manifest 中有 {len(missing_in_dataset)} 列不在建模数据集中 "
-                    f"（示例：{missing_in_dataset[:5]}）"
-                )
-                all_ok = False
-
-            # fill 表校验
-            fill_path = self.model_dir.parent.parent / "data" / "modeling" / "fill" / f"fill_median_{w}d.csv"
-            if fill_path.exists():
-                try:
-                    fill = pd.read_csv(fill_path, encoding="utf-8-sig", index_col=0)
-                    fill_cols = set(fill.index.astype(str))
-                    missing_in_fill = [f for f in feats if f not in fill_cols]
-                    if missing_in_fill:
-                        messages.append(
-                            f"窗口 {h}: manifest 中有 {len(missing_in_fill)} 列不在 fill_median_{w}d 中 "
-                            f"（示例：{missing_in_fill[:5]}）"
-                        )
-                        all_ok = False
-                except Exception as e:
-                    messages.append(f"窗口 {h}: 读取 fill_median_{w}d 失败：{e}")
-                    all_ok = False
-            else:
-                messages.append(f"窗口 {h}: 未找到 fill_median_{w}d.csv")
-                all_ok = False
-
-        # 元信息校验（只警告，不阻断）
-        meta = manifest.get("metadata", {})
-        if not meta:
-            messages.append("manifest 缺少 metadata（建议重新训练生成版本信息）")
-        elif meta.get("data_hash") is None:
-            messages.append("manifest metadata 缺少 data_hash")
-
-        if messages:
-            level = "error" if not all_ok else "warning"
-            for m in messages:
-                getattr(logger, level)("[manifest 校验] %s", m)
-        return all_ok, messages
+        for horizon in self.horizons:
+            cfg = windows.get(horizon.replace("d", ""))
+            if not isinstance(cfg, dict) or not isinstance(cfg.get("features"), list):
+                messages.append(f"{horizon} 缺少特征清单")
+        return not messages, messages
 
     # ================= XGBoost-Cox 生存模型接口（可选，预留） =================
     def _load_survival(self):
@@ -416,11 +354,21 @@ class PredictorAgent(AgentBase):
         # 可选：XGBoost-Cox 生存模型已部署 → 单模型产出 30/60/90d（输出契约不变）
         if self._load_survival():
             return self._execute_survival(ctx, code, as_of)
-        # 有财务异常实时特征 → 走实时推理（F1 标量 + F2-F6 实时值，缺失列用训练集中位数兜底）；
-        # 否则 → 兜底查表（离线建模数据集）
-        realtime_ok = bool(getattr(getattr(ctx, "financial", None), "features", None))
+        from ..skills.feature_composer import realtime_f1_compatibility
+        f1_ok, f1_audit = realtime_f1_compatibility(ctx, manifest)
+        # 只有财务特征存在且训练所需 F1 已按完全相同口径生成，才允许标记实时推理。
+        realtime_ok = bool(getattr(getattr(ctx, "financial", None), "features", None)) and f1_ok
         if realtime_ok:
             return self._execute_realtime(ctx, manifest)
+        reasons = []
+        if not f1_ok:
+            reasons.append(
+                f"实时F1与训练特征口径不一致（缺少 {f1_audit['missing']}/{f1_audit['required']} 个语义特征），已回退历史查表"
+            )
+        if not getattr(getattr(ctx, "financial", None), "features", None):
+            reasons.append("实时财务特征不可用，已回退历史查表")
+        ctx.meta["prediction_degraded_reasons"] = reasons
+        ctx.meta["f1_compatibility"] = f1_audit
         return self._execute_lookup(ctx, manifest, code, as_of)
 
     def _execute_survival(self, ctx, code, as_of):
@@ -433,7 +381,11 @@ class PredictorAgent(AgentBase):
         surv = self._load_survival()
         feats = list(surv["features"])
         fill = load_fill_dict("60", expected_features=feats)
-        realtime_ok = bool(getattr(getattr(ctx, "financial", None), "features", None))
+        from ..skills.feature_composer import realtime_f1_compatibility
+        f1_ok, f1_audit = realtime_f1_compatibility(
+            ctx, {"windows": {"survival": {"features": feats}}}
+        )
+        realtime_ok = bool(getattr(getattr(ctx, "financial", None), "features", None)) and f1_ok
         if realtime_ok:
             vec = compose_realtime_features(ctx, feats, fill)
             missing = [f for f in feats if vec.get(f) is None]
@@ -451,7 +403,12 @@ class PredictorAgent(AgentBase):
             vec[f] = fill.get(f, 0.0)
         X = np.asarray([vec[f] for f in feats], dtype=np.float32).reshape(1, -1)
 
-        pred = {"data_source": "survival_cox"}
+        pred = {"data_source": "realtime" if realtime_ok else "offline_lookup",
+                "model_version": self._model_version(),
+                "confidence_meaning": "predicted_class_score"}
+        if not realtime_ok:
+            pred["degraded_reasons"] = ["生存模型实时特征口径不完整，已使用历史特征查表"]
+            pred["f1_compatibility"] = f1_audit
         p60, conf, shap = None, None, []
         for h in self.horizons:
             p, c, s = self._infer_survival(X, feats, h)
@@ -474,7 +431,8 @@ class PredictorAgent(AgentBase):
     def _execute_realtime(self, ctx, manifest):
         """实时推理主逻辑：以公告研读 F1 + 财务异常 F2-F6 为数据源，概率由实时数据驱动。"""
         from ..skills.feature_composer import coverage_stats
-        pred = {"data_source": "realtime"}
+        pred = {"data_source": "realtime", "model_version": self._model_version(),
+                "confidence_meaning": "predicted_class_score"}
         p60, conf, shap = None, None, []
         for h in self.horizons:
             p, c, s = self._predict_realtime(h, ctx, manifest)
@@ -502,16 +460,24 @@ class PredictorAgent(AgentBase):
 
     def _execute_lookup(self, ctx, manifest, code, as_of):
         """兜底：离线建模数据查表推理（公司无实时财务数据时）。"""
+        degraded_reasons = (getattr(ctx, "meta", {}) or {}).get("prediction_degraded_reasons", [])
+        f1_audit = (getattr(ctx, "meta", {}) or {}).get("f1_compatibility", {})
         row = self._lookup(code, as_of)
         if row is None:
             ctx.prediction = {"probability_30d": None, "probability_60d": None,
                               "probability_90d": None, "risk_level": "未预测",
                               "confidence": None, "shap_features": [],
-                              "reason": "未找到该股票特征（不在建模数据集内）"}
+                              "reason": "未找到该股票特征（不在建模数据集内）",
+                              "data_source": "unavailable",
+                              "degraded_reasons": list(degraded_reasons or [])}
             return ctx
 
         anchor = str(row["report_period"])
-        pred = {"feature_anchor": anchor, "data_source": "offline_lookup"}
+        pred = {"feature_anchor": anchor, "data_source": "offline_lookup",
+                "model_version": self._model_version(),
+                "confidence_meaning": "predicted_class_score",
+                "degraded_reasons": list(degraded_reasons or []),
+                "f1_compatibility": f1_audit or {}}
         p60, conf, shap = None, None, []
         for h in self.horizons:
             p, c, s = self._predict_one(h, row, manifest)

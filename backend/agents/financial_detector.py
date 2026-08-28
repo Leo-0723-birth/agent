@@ -369,7 +369,6 @@ class FinancialDetectorAgent(AgentBase):
     # ================= 主入口（统一签名） =================
     def execute(self, company, ctx):
         """统一签名：读 ctx（company/name/window），写回 ctx.financial。"""
-        self._check_cancel(ctx, "财务异常检测任务已取消")
         raw_company = str(company or "").strip()
         # 1. 输入解析：股票代码统一规范；纯名称仅在启用 LLM 时解析。
         try:

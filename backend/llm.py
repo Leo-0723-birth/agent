@@ -22,25 +22,18 @@
 """
 import json
 import logging
+import os
+from pathlib import Path
 
 import requests
 
-from backend.config import (
-    LLM_API_KEY,
-    LLM_BASE_URL,
-    LLM_MAX_TOKENS,
-    LLM_MODEL,
-    LLM_TEMPERATURE,
-    LLM_THINKING,
-)
-
 _logger = logging.getLogger(__name__)
 
-# 默认值（会被 backend.config 中的环境变量读取覆盖）
-DEFAULT_MODEL = LLM_MODEL
-DEFAULT_BASE_URL = LLM_BASE_URL
-DEFAULT_TEMPERATURE = LLM_TEMPERATURE
-DEFAULT_MAX_TOKENS = LLM_MAX_TOKENS
+# 默认值（会被 .env / 环境变量覆盖）
+DEFAULT_MODEL = "deepseek-v4-flash"
+DEFAULT_BASE_URL = "https://api.deepseek.com"
+DEFAULT_TEMPERATURE = 0.1
+DEFAULT_MAX_TOKENS = 2000
 
 _client = None  # 单例（requests 兜底通道）
 _lc_base = None  # 单例（LangChain 基础模型）
@@ -205,7 +198,7 @@ class _DeepSeekClient:
             payload["response_format"] = {"type": "json_object"}
         # 禁用 thinking：v4-flash 推理会耗尽 max_tokens 且 JSON 结构不稳；
         # 抽取/结构化任务走确定性输出（可用环境变量 DEEPSEEK_THINKING=1 重新开启）
-        if not LLM_THINKING:
+        if os.getenv("DEEPSEEK_THINKING", "0") != "1":
             payload["thinking"] = {"type": "disabled"}
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         resp = requests.post(url, json=payload, headers=headers, timeout=120)

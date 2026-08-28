@@ -89,7 +89,13 @@ def compose_realtime_features(ctx, manifest_features, fill_dict=None) -> dict:
     # ① 财务异常实时特征（F2/F3/F4/F5，列名已与训练表对齐；F6 由公告研读提供，见 ③）
     if getattr(ctx, "financial", None) and getattr(ctx.financial, "features", None):
         real.update(ctx.financial.features)
-    # ② 公告研读实时 F1 标量（仅当 manifest 恰好用到时生效）
+    # ② 与训练 manifest 精确同口径的 F1 特征。普通 scalar_features 不是
+    # announcement_semantic_* 的等价替代，不能用补零/中位数伪装为实时值。
+    if getattr(ctx, "semantic", None) and getattr(ctx.semantic, "f1_model_features", None):
+        for k, v in ctx.semantic.f1_model_features.items():
+            if k in manifest_features:
+                real[k] = v
+    # 兼容模型中确实直接使用公告标量的情况。
     if getattr(ctx, "semantic", None) and getattr(ctx.semantic, "f1_features", None):
         scalars = ctx.semantic.f1_features.get("scalar_features", {}) or {}
         for k, v in scalars.items():
@@ -130,3 +136,23 @@ def coverage_stats(origin: dict) -> dict:
         "total": total,
         "ratio": round(n_real / total, 4) if total else 0.0,
     }
+
+
+def realtime_f1_compatibility(ctx, manifest: dict) -> tuple[bool, dict]:
+    """检查训练模型需要的语义 F1 是否由实时流水线按同口径完整生成。"""
+    required = set()
+    for cfg in (manifest.get("windows", {}) or {}).values():
+        for feature in cfg.get("features", []) or []:
+            if str(feature).startswith("announcement_semantic_"):
+                required.add(str(feature))
+    provided_map = getattr(getattr(ctx, "semantic", None), "f1_model_features", {}) or {}
+    provided = set(provided_map)
+    missing = sorted(required - provided)
+    audit = {
+        "required": len(required),
+        "provided": len(required & provided),
+        "missing": len(missing),
+        "missing_examples": missing[:10],
+        "compatible": not missing,
+    }
+    return not missing, audit

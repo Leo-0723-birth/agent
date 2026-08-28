@@ -20,7 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -45,14 +45,6 @@ from .pipeline import (
     run_scan_task,
     subscribe_task,
     unsubscribe_task,
-)
-from backend.skills.evaluator import (
-    get_alerts,
-    get_confusion_matrix,
-    get_dashboard_metrics,
-    get_review_queue,
-    get_trend,
-    submit_feedback,
 )
 from backend.skills.stock_code import StockCodeError, normalize_stock_code
 
@@ -134,12 +126,23 @@ def agents():
 
 @app.get("/api/health")
 async def health():
+    realtime_verified = os.getenv("REALTIME_READY", "").strip().lower() in {"1", "true", "yes"}
+    model_manifest = PROJECT_ROOT / "backend" / "models" / "predictor" / "models_manifest.json"
+    reports_manifest = PROJECT_ROOT / "backend" / "data" / "output" / "reports" / "manifest.json"
     return {
         "status": "ok",
+        "liveness": "ok",
         "agents": AGENT_TOTAL,
         "online": True,
         "mode": "hybrid",           # 支持离线 + 实时
-        "realtime_ready": True,
+        "realtime_ready": realtime_verified,
+        "realtime_status": "verified" if realtime_verified else "unverified",
+        "checks": {
+            "model_manifest": model_manifest.is_file(),
+            "offline_reports": reports_manifest.is_file(),
+            "external_sources": "not_probed",
+            "f1_same_pipeline": "required",
+        },
     }
 
 
@@ -231,11 +234,8 @@ async def mock_company(code: str):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     result = get_offline_result(normalized, 60)
     if result is None:
-        companies = list_available_companies()
-        result = get_offline_result(companies[0]["code"], 60) if companies else None
-    if result is None:
-        raise HTTPException(status_code=404, detail="仓库中没有可用的 mock/离线报告")
-    return result.model_copy(update={"code": normalized})
+        raise HTTPException(status_code=404, detail=f"未找到 {normalized} 的 mock/离线报告")
+    return result
 
 
 @app.websocket("/ws/pipeline/{task_id}")
@@ -281,44 +281,6 @@ async def pipeline_websocket(websocket: WebSocket, task_id: str):
             await websocket.close(code=1000)
         except Exception:
             pass
-
-
-# ==================== 评价中心接口 ====================
-
-@app.get("/api/metrics/dashboard")
-def metrics_dashboard(range: str = "7"):
-    """三项核心指标当前值：准确率 / 证据召回率 / Top-5 命中率。"""
-    return get_dashboard_metrics(range)
-
-
-@app.get("/api/metrics/trend")
-def metrics_trend(range: str = "7"):
-    """三项指标随时间变化趋势（按 publish_date 聚合）。"""
-    return get_trend(range)
-
-
-@app.get("/api/metrics/confusion-matrix")
-def metrics_confusion_matrix(range: str = "7"):
-    """45 类二级主题的 TP/FP/FN 混淆矩阵统计。"""
-    return get_confusion_matrix(range)
-
-
-@app.get("/api/metrics/alerts")
-def metrics_alerts(range: str = "7"):
-    """指标未达标与主题召回异常告警。"""
-    return get_alerts(range)
-
-
-@app.get("/api/evaluate/review-queue")
-def evaluate_review_queue(limit: int = 20):
-    """待复核样本：任一指标未达标或案例未命中。"""
-    return get_review_queue(limit)
-
-
-@app.post("/api/evaluate/feedback")
-def evaluate_feedback(payload: dict = Body(...)):
-    """人工标注回流入口。"""
-    return submit_feedback(payload)
 
 
 # 挂载静态文件（放在最后，避免覆盖 API 路由）

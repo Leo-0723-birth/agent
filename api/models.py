@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class FactorItem(BaseModel):
@@ -56,14 +56,6 @@ class SimilarCaseItem(BaseModel):
     matchReason: List[str]
 
 
-class WindowPrediction(BaseModel):
-    window: int
-    risk: float
-    confidence: float
-    factors: List[FactorItem] = []
-    metrics: dict = {}
-
-
 class AnalyzeResponse(BaseModel):
     code: str
     name: str
@@ -71,8 +63,13 @@ class AnalyzeResponse(BaseModel):
     level: str                          # low / mid / high
     levelText: str                      # 低风险 / 中风险 / 高风险
     confidence: float                   # 0~1
-    riskByWindow: Optional[dict] = {}   # {"30d": x, "60d": y, "90d": z}（单位 %，前端切换窗口用）
-    windowPredictions: Optional[List[WindowPrediction]] = []  # 各窗口概率 / 指标 / SHAP（预测建模详情用）
+    confidenceMeaning: str = "predicted_class_score"  # 非统计置信区间
+    dataSource: str = "unknown"         # realtime / offline_lookup / offline_snapshot
+    dataCoverage: dict = Field(default_factory=dict)
+    degradedReasons: List[str] = Field(default_factory=list)
+    featureAnchor: str = ""
+    modelVersion: str = ""
+    riskByWindow: Optional[dict] = Field(default_factory=dict)
     factors: int                        # 风险因子总数
     summary: str                        # HTML 摘要
     factorsList: List[FactorItem]
@@ -84,14 +81,14 @@ class AnalyzeResponse(BaseModel):
     advice: str
     # 扩展字段（真实数据补充）
     reportMarkdown: Optional[str] = ""
-    traceLog: Optional[list] = []
-    similarCases: Optional[List[SimilarCaseItem]] = []
+    traceLog: Optional[list] = Field(default_factory=list)
+    similarCases: Optional[List[SimilarCaseItem]] = Field(default_factory=list)
     generatedAt: Optional[str] = ""
     # 新增：融合 Streamlit 细节
-    announcementRisks: Optional[List[AnnouncementRiskItem]] = []    # 公告研读风险证据表
-    attributionEvidence: Optional[List[AttributionEvidenceItem]] = []  # 风险归因原文
-    riskFactorDetails: Optional[List[FactorItem]] = []              # 全部风险因子（查看全部用）
-    financialAnomalies: Optional[List[FinancialAnomalyItem]] = []   # 财务异常信号清单
+    announcementRisks: Optional[List[AnnouncementRiskItem]] = Field(default_factory=list)
+    attributionEvidence: Optional[List[AttributionEvidenceItem]] = Field(default_factory=list)
+    riskFactorDetails: Optional[List[FactorItem]] = Field(default_factory=list)
+    financialAnomalies: Optional[List[FinancialAnomalyItem]] = Field(default_factory=list)
 
 
 class AnalyzeRequest(BaseModel):
@@ -112,6 +109,19 @@ class ScanRequest(BaseModel):
     max_documents: Optional[int] = Field(5, ge=1, le=100, description="公告研读最大文档数（越小越快）")
     realtime: bool = Field(False, description="默认返回离线快照；为 true 时执行实时 Agent 流水线")
     force: bool = Field(False, description="是否取消当前任务并切换到新公司")
+
+    @field_validator("as_of")
+    @classmethod
+    def validate_as_of(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or not str(value).strip():
+            return None
+        from datetime import date
+
+        normalized = str(value).strip()
+        try:
+            return date.fromisoformat(normalized).isoformat()
+        except ValueError as exc:
+            raise ValueError("as_of 必须是有效的 YYYY-MM-DD 日期") from exc
 
 
 class ScanResponse(BaseModel):

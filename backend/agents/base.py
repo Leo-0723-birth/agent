@@ -39,7 +39,7 @@ class AgentBase(ABC):
 
     @staticmethod
     def _check_cancel(ctx, message="任务已取消"):
-        """检查取消信号；若已设置则抛出异常，让 execute 尽快退出。"""
+        """让支持取消的 Agent 在耗时步骤之间尽快退出。"""
         cancel = getattr(ctx, "cancel_event", None)
         if cancel is not None and cancel.is_set():
             raise RuntimeError(message)

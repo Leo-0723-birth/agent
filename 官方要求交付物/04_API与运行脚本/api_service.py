@@ -15,7 +15,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.agents import SweepingOrchestrator
-from backend.config import PREDICTOR_HORIZONS
 
 DELIVERY_ROOT = Path(__file__).resolve().parents[2] / "官方要求交付物"
 TRACE_DIR = DELIVERY_ROOT / "02_Agent推理日志"
@@ -69,9 +68,8 @@ class Handler(BaseHTTPRequestHandler):
             if not companies:
                 raise ValueError("company 或 companies 不能为空")
             window = int(payload.get("window", 60))
-            valid_windows = tuple(int(h.replace("d", "")) for h in PREDICTOR_HORIZONS)
-            if window not in valid_windows:
-                raise ValueError(f"window 只能是 {valid_windows}")
+            if window not in (30, 60, 90):
+                raise ValueError("window 只能是 30、60 或 90")
             results = []
             for company in companies:
                 ctx = run_one(company, window, payload.get("as_of"), bool(payload.get("use_llm", False)))

@@ -20,6 +20,8 @@ Skill: risk_report_render —— 生成可解释预警报告（Markdown / JSON�
 """
 from datetime import datetime
 
+from .evidence_policy import publishable_evidence
+
 
 # ================= 报告编号 =================
 def report_id(ctx, generated_at=None) -> str:
@@ -57,7 +59,7 @@ def rules_summary(ctx) -> str:
         parts.append(f"财务异常信号 {len(fin.anomaly_list)} 条（如 {anomalies[0].get('type')}）")
 
     # 公告风险
-    rf = ctx.semantic.risk_factors[:2]
+    rf = publishable_evidence(ctx.semantic.risk_factors)[:2]
     if rf:
         cats = [str(r.get("category")) for r in rf if r.get("category")]
         if cats:
@@ -69,7 +71,7 @@ def rules_summary(ctx) -> str:
         parts.append(f"相似历史案例 Top1：{c0.get('company')}（{c0.get('inquiry_type')}）")
 
     # 数据源
-    ds = pred.get("data_source", "realtime")
+    ds = pred.get("data_source", "unknown")
     cov = (pred.get("coverage") or {}).get("ratio")
     parts.append(f"数据来源：{'实时特征' if ds == 'realtime' else '离线查表'}"
                  f"{'，实时覆盖率 ' + format(cov, '.0%') if cov else ''}")
@@ -101,13 +103,14 @@ def build_summary_facts(ctx) -> str:
     if fin.anomaly_list:
         lines.append("财务异常：" + "；".join(
             f"{a.get('type')}({a.get('severity')}级)" for a in fin.anomaly_list[:5]))
-    if ctx.semantic.risk_factors:
+    verified_risks = publishable_evidence(ctx.semantic.risk_factors)
+    if verified_risks:
         lines.append("公告风险主题：" + "、".join(
-            str(r.get("category")) for r in ctx.semantic.risk_factors[:5] if r.get("category")))
+            str(r.get("category")) for r in verified_risks[:5] if r.get("category")))
     if ctx.cases:
         lines.append("相似案例：" + "；".join(
             f"{c.get('company')}({c.get('inquiry_type')},{c.get('publish_date')})" for c in ctx.cases[:3]))
-    ds = pred.get("data_source", "realtime")
+    ds = pred.get("data_source", "unknown")
     lines.append(f"数据来源={ds}；实时覆盖率={((pred.get('coverage') or {}).get('ratio'))}")
     return "\n".join(lines)
 
@@ -127,6 +130,8 @@ def render_json(ctx, executive_summary=""):
     fin = ctx.financial
     att = ctx.attribution or {}
     generated_at = datetime.now().isoformat(timespec="seconds")
+    quality = (getattr(ctx, "meta", {}) or {}).get("runtime_quality", {}) or {}
+    verified_risks = publishable_evidence(ctx.semantic.risk_factors)
     return {
         "report_id": report_id(ctx),
         "company": ctx.company,
@@ -134,7 +139,9 @@ def render_json(ctx, executive_summary=""):
         "window": ctx.window,
         "as_of": ctx.as_of,
         "generated_at": generated_at,
-        "data_source": pred.get("data_source", "realtime"),
+        "data_source": pred.get("data_source", "unknown"),
+        "quality": quality,
+        "model_version": pred.get("model_version", ""),
         "executive_summary": executive_summary or rules_summary(ctx),
         "profile": {
             "industry": fin.industry,
@@ -148,7 +155,12 @@ def render_json(ctx, executive_summary=""):
             "probability_90d": pred.get("probability_90d"),
             "risk_level": pred.get("risk_level"),
             "confidence": pred.get("confidence"),
+            "confidence_meaning": pred.get("confidence_meaning", "predicted_class_score"),
             "feature_anchor": pred.get("feature_anchor"),
+            "model_version": pred.get("model_version", ""),
+            "data_source": pred.get("data_source", "unknown"),
+            "coverage": pred.get("coverage") or {},
+            "degraded_reasons": pred.get("degraded_reasons") or quality.get("degraded_reasons", []),
             "shap_features": pred.get("shap_features", []),
         },
         "financial": {
@@ -161,9 +173,13 @@ def render_json(ctx, executive_summary=""):
         },
         "semantic": {
             "announcement_count": ctx.semantic.stats.get("announcement_count", 0),
-            "risk_factor_count": len(ctx.semantic.risk_factors),
-            "risk_factors": ctx.semantic.risk_factors,
+            "risk_factor_count": len(verified_risks),
+            "risk_factors": verified_risks,
+            "candidate_count": len(ctx.semantic.risk_factors),
+            "risk_factor_candidates": ctx.semantic.risk_factors,
             "f1_features": ctx.semantic.f1_features,
+            "channel_summary": ctx.semantic.channel_summary,
+            "data_quality": ctx.semantic.data_quality,
         },
         "similar_cases": ctx.cases,
         "attribution": {
@@ -184,6 +200,7 @@ def render_markdown(ctx, executive_summary=""):
     fin = ctx.financial
     att = ctx.attribution or {}
     generated_at = datetime.now()
+    verified_risks = publishable_evidence(ctx.semantic.risk_factors)
 
     L = []
     add = L.append
@@ -194,9 +211,13 @@ def render_markdown(ctx, executive_summary=""):
     add(f"**报告编号**：{report_id(ctx, generated_at)}")
     add(f"**致**：{ctx.company} {ctx.name or ''}（监管风险扫描）")
     add(f"**预测时点**：{ctx.as_of} ｜ **预测窗口**：{ctx.window} 天 ｜ **生成时间**：{generated_at.isoformat(timespec='seconds')}")
-    ds = pred.get("data_source", "realtime")
-    add(f"**数据源**：{'实时特征（公告研读 + 财务/行情/舆情实时爬取）' if ds == 'realtime' else '离线建模数据查表'}"
+    ds = pred.get("data_source", "unknown")
+    source_text = "实时同口径特征" if ds == "realtime" else ("历史建模数据查表（非实时概率）" if ds == "offline_lookup" else "数据不可用")
+    add(f"**数据源**：{source_text}"
         f"（实时覆盖率 {((pred.get('coverage') or {}).get('ratio', 0)):.0%}）")
+    add(f"**模型版本**：{pred.get('model_version') or '—'} ｜ **特征锚点**：{pred.get('feature_anchor') or '—'}")
+    if pred.get("degraded_reasons"):
+        add("**降级原因**：" + "；".join(pred.get("degraded_reasons") or []))
     add("")
     add("---")
     add("")
@@ -215,7 +236,7 @@ def render_markdown(ctx, executive_summary=""):
     add(f"- 行业：**{fin.industry or '—'}**")
     add(f"- 最新报告期：{((fin.indicators or {}).get('report_period')) or '—'}")
     add(f"- 近一年公告：{ctx.semantic.stats.get('announcement_count', 0)} 份 ｜ "
-        f"识别风险要素：{len(ctx.semantic.risk_factors)} 条")
+        f"已核验风险证据：{len(verified_risks)} 条")
     add(f"- 财务异常信号：{len(fin.anomaly_list)} 条 ｜ 相似案例命中：{len(ctx.cases)} 条")
     if fin.skip:
         add(f"- ⚠️ 财务分析跳过：{fin.skip_reason}")
@@ -226,7 +247,7 @@ def render_markdown(ctx, executive_summary=""):
     # ---------- ④ 风险评分卡 ----------
     add("## 三、风险评分卡（问询概率）")
     add("")
-    add("| 窗口 | 概率 | 等级 | 置信度 |")
+    add("| 窗口 | 概率 | 等级 | 预测类别得分 |")
     add("|------|------|------|--------|")
     for w, key in (("30 天", "probability_30d"), ("60 天", "probability_60d"), ("90 天", "probability_90d")):
         p = pred.get(key)
@@ -263,14 +284,14 @@ def render_markdown(ctx, executive_summary=""):
     add("")
 
     # ---------- ⑥ 公告风险要素 ----------
-    add(f"## 五、公告风险要素（{len(ctx.semantic.risk_factors)} 条）")
+    add(f"## 五、公告已核验风险证据（{len(verified_risks)} 条）")
     add("")
-    for r in ctx.semantic.risk_factors[:12]:
+    for r in verified_risks[:12]:
         add(f"- [{r.get('severity')}] **{r.get('category')}**：{r.get('description')}")
         if r.get("evidence"):
             add(f"  > 原文：{str(r.get('evidence', ''))[:120]}")
-    if not ctx.semantic.risk_factors:
-        add("- （无风险要素）")
+    if not verified_risks:
+        add("- （无通过事实校验的风险证据；规则候选不作为事实展示）")
     add("")
     add("---")
     add("")
