@@ -24,3 +24,10 @@ agent_v1.0_backup.py
 # 临时/历史遗留
 无关文件夹/
 *.log
+
+# ===== F1 公告语义特征替换（新增）=====
+# 本地备份，不入库；如需回滚从 _backup_f1/ 取
+backend/data/modeling/raw/_backup_f1/
+*.py.bak
+# dry-run 临时产物
+backend/data/modeling/raw/*_NEW.parquet
