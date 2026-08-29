@@ -809,7 +809,10 @@ class StreamingOrchestrator:
     ]
 
     _AGENT_TIMEOUTS = {
-        "AnnouncementReader": 420,   # 公告研读最长（含 PDF/OCR/LLM）
+        # 公告研读最长（PDF/OCR/LLM + F1 训练同口径实时上游）；
+        # 满配 CPU 推理时 fullrun 上游单步可达数分钟，与 graph.py 的
+        # 自适应上限（420+300+600）对齐取 1200s。
+        "AnnouncementReader": 1200,
         "FinancialDetector": 240,
         "Predictor": 120,
         "CaseRetriever": 180,

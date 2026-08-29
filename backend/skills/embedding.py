@@ -49,11 +49,14 @@ def _bge_local_snapshot_dir():
     return None
 
 
-def _bge_load():
+def _bge_load(prefer_dir=None):
     if _BGE["model"] is None:
         import torch
         from transformers import AutoModel, AutoTokenizer
-        local_dir = _bge_local_snapshot_dir()
+        # prefer_dir：训练锁定的 revision snapshot（如 F1_BGE_MODEL_PATH）。
+        # 本地可能有同一模型多个 revision 快照，共享实例必须优先加载
+        # 训练同款，否则 F1 实时特征的口径保证被破坏。
+        local_dir = prefer_dir if (prefer_dir and Path(prefer_dir).exists())             else _bge_local_snapshot_dir()
         if local_dir:
             print(f"[embedding] 加载 BGE 模型（本地快照: {Path(local_dir).parent.name}）")
             _BGE["tokenizer"] = AutoTokenizer.from_pretrained(local_dir, local_files_only=True)
@@ -91,6 +94,32 @@ def _bge_embed(texts):
     emb = torch.nn.functional.normalize(emb, p=2, dim=1)
     return emb.cpu().numpy()
 
+
+def embed_cls_shared(texts, max_length=512):
+    """BGE CLS 池化向量（F1 训练同口径），复用进程级共享实例。
+
+    fullrun 上游的口径是 CLS 池化 + L2 归一化（query 走 max_length=128，
+    正文块 512），与案例检索的 mean pooling 不同，不能混用。
+    """
+    import torch
+    tok, model = _bge_load()
+    device = _BGE.get("device", "cpu")
+    output = []
+    batch_size = 32
+    for start in range(0, len(texts), batch_size):
+        batch = texts[start:start + batch_size]
+        enc = tok(batch, padding=True, truncation=True, max_length=max_length,
+                  return_tensors="pt")
+        enc = {k: v.to(device) for k, v in enc.items()}
+        with torch.no_grad():
+            vectors = model(**enc).last_hidden_state[:, 0]
+            vectors = torch.nn.functional.normalize(vectors, p=2, dim=1)
+        output.append(vectors.float().cpu().numpy())
+    if not output:
+        import numpy as np
+        return np.empty((0, 1024), dtype=np.float32)
+    import numpy as np
+    return np.concatenate(output)
 
 # ================= fallback 后端（字符 bigram 哈希 TF） =================
 def _char_bigrams(text):
@@ -137,12 +166,13 @@ def embed_one(text):
     return embed([text])[0]
 
 
-def get_shared_bge():
+def get_shared_bge(prefer_dir=None):
     """返回进程级共享的 (tokenizer, model, device)。
 
-    同一份 BGE 权重约 1.3GB；案例检索等其他模块必须复用此实例，
-    避免 FinBERT + BGE×2 三套 torch 模型同进程重复加载（Windows 上
-    会触发原生层崩溃，且内存翻倍）。
+    同一份 BGE 权重约 1.3GB；案例检索、F1 实时上游等其他模块必须
+    复用此实例，避免多套 torch 模型同进程重复加载（Windows 上会触发
+    原生层崩溃，且内存翻倍）。prefer_dir 用于优先加载训练锁定的
+    revision snapshot。
     """
-    tokenizer, model = _bge_load()
+    tokenizer, model = _bge_load(prefer_dir=prefer_dir)
     return tokenizer, model, _BGE.get("device", "cpu")

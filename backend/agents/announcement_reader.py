@@ -10,6 +10,7 @@ import re
 import time
 from collections import Counter
 from datetime import date
+from pathlib import Path
 
 from ..config import (
     ANNOUNCE_MAX_DOCUMENTS,
@@ -461,6 +462,61 @@ class AnnouncementReaderAgent(AgentBase):
         }
 
     @staticmethod
+    def _run_fullrun_subprocess(documents, company_code, timeout_seconds=900):
+        """在独立进程中执行 F1 训练同口径语义上游（低内存协议）。
+
+        8GB 机器的内存约束：服务端已驻留 FinBERT2+BGE，worker 若再加载
+        BGE+reranker+finbert-tone 必然超限触发原生段错误（0xC0000005）。
+        因此 BGE 向量（主题查询 + 每文档切块，CLS 池化与训练同口径）在
+        本进程用共享实例预计算，子进程只加载 reranker+finbert-tone。
+        worker 崩溃只损失本次语义特征（回退填 0），主服务不受影响。
+        """
+        import json as _json
+        import subprocess
+        import sys as _sys
+
+        from ..skills import fullrun_online_semantics as _f1mod
+        from ..skills.embedding import embed_cls_shared
+
+        pipeline = _f1mod.FullRunOnlineSemanticPipeline()
+        query_texts = [item["query_for_embedding"] for item in pipeline.themes]
+        query_vectors = embed_cls_shared(query_texts, max_length=128)
+        docs = []
+        for item in documents:
+            text = str(item.get("text") or "")
+            pieces = _f1mod.split_into_chunks(text)
+            if not pieces:
+                continue
+            chunk_texts = [piece[1] for piece in pieces]
+            vectors = embed_cls_shared(chunk_texts, max_length=512)
+            docs.append({
+                "announcement": item,
+                "chunk_texts": chunk_texts,
+                "chunk_vectors": vectors.tolist(),
+            })
+        if not docs:
+            return [], {"status": "skipped", "reason": "no_chunkable_documents"}
+
+        worker = Path(__file__).resolve().parents[1] / "scripts" / "f1_online_worker.py"
+        payload = _json.dumps(
+            {"docs": docs, "query_vectors": query_vectors.tolist(),
+             "company_code": company_code},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        proc = subprocess.run(
+            [_sys.executable, str(worker)],
+            input=payload,
+            capture_output=True,
+            timeout=timeout_seconds,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"F1 上游子进程退出码 {proc.returncode}：{proc.stderr[-300:].decode('utf-8', 'replace')}"
+            )
+        result = _json.loads(proc.stdout.decode("utf-8"))
+        return result.get("rows", []), result.get("audit", {"status": "unknown"})
+
+    @staticmethod
     def _check_cancel(ctx):
         """取消信号检查：任务被取消时抛异常，让 execute 尽快中断（最终由调度层标记 cancelled）。"""
         cancel = getattr(ctx, "cancel_event", None)
@@ -668,9 +724,7 @@ class AnnouncementReaderAgent(AgentBase):
                 self._emit_progress(
                     "fullrun_f1_started", document_count=len(fullrun_documents)
                 )
-                from ..skills.fullrun_online_semantics import FullRunOnlineSemanticPipeline
-
-                rows, fullrun_upstream_audit = FullRunOnlineSemanticPipeline().analyze(
+                rows, fullrun_upstream_audit = self._run_fullrun_subprocess(
                     fullrun_documents, identity.get("secucode") or ctx.company
                 )
                 ctx.semantic.f1_announcement_risk_rows = rows
