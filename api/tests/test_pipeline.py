@@ -30,7 +30,7 @@ def clean_runtime_state():
     pipeline._manifest_cache_mtime = None
 
 
-def _make_terminal_task(code="000001.SZ", finished_offset=0.0):
+def _make_terminal_task(code="300577.SZ", finished_offset=0.0):
     state = pipeline.create_task(code)
     state.status = "completed"
     state.finished_at = time.time() + finished_offset
@@ -39,7 +39,7 @@ def _make_terminal_task(code="000001.SZ", finished_offset=0.0):
 
 def test_prune_removes_expired_terminal_tasks():
     # 过期任务（finished_at 距今很久）应被清理
-    expired = _make_terminal_task("000001.SZ", finished_offset=-10000)
+    expired = _make_terminal_task("300577.SZ", finished_offset=-10000)
     active = pipeline.create_task("000063.SZ")
     active.status = "running"
 
@@ -61,7 +61,7 @@ def test_prune_keeps_recent_terminal_tasks_up_to_limit():
 
 
 def test_prune_ignores_running_and_pending():
-    running = pipeline.create_task("000001.SZ")
+    running = pipeline.create_task("300577.SZ")
     running.status = "running"
     pending = pipeline.create_task("000063.SZ")
     pending.status = "pending"
@@ -73,7 +73,7 @@ def test_prune_ignores_running_and_pending():
 
 
 def test_cancel_terminal_task_is_noop():
-    state = _make_terminal_task("000001.SZ")
+    state = _make_terminal_task("300577.SZ")
     result = asyncio.run(pipeline.cancel_task(state.task_id))
 
     assert result is state
@@ -82,9 +82,9 @@ def test_cancel_terminal_task_is_noop():
 
 def test_run_pipeline_is_sync_function():
     assert not inspect.iscoroutinefunction(pipeline.run_pipeline)
-    result = pipeline.run_pipeline(["000001.SZ"], 60, False, True)
+    result = pipeline.run_pipeline(["300577.SZ"], 60, False, True)
     assert isinstance(result, list)
-    assert result and result[0].code == "000001.SZ"
+    assert result and result[0].code == "300577.SZ"
 
 
 def test_manifest_cache_reuses_loaded_payload():
@@ -95,9 +95,9 @@ def test_manifest_cache_reuses_loaded_payload():
 
 
 def test_get_offline_result_populates_lru_cache():
-    result = pipeline.get_offline_result("000001.SZ", 60)
+    result = pipeline.get_offline_result("300577.SZ", 60)
     assert result is not None
-    assert pipeline.get_cached_result("000001.SZ", 60) is not None
+    assert pipeline.get_cached_result("300577.SZ", 60) is not None
 
 
 def test_get_offline_result_unknown_code_returns_none():
@@ -106,7 +106,7 @@ def test_get_offline_result_unknown_code_returns_none():
 
 def test_run_agent_ok():
     streamer = pipeline.StreamingOrchestrator(callback=lambda m: None)
-    outcome, error = streamer._run_agent(lambda c, x: None, "000001.SZ", None, 5)
+    outcome, error = streamer._run_agent(lambda c, x: None, "300577.SZ", None, 5)
     assert outcome == "ok"
     assert error is None
 
@@ -116,7 +116,7 @@ def test_run_agent_error_propagates():
         raise ValueError("boom")
 
     streamer = pipeline.StreamingOrchestrator(callback=lambda m: None)
-    outcome, error = streamer._run_agent(boom, "000001.SZ", None, 5)
+    outcome, error = streamer._run_agent(boom, "300577.SZ", None, 5)
     assert outcome == "error"
     assert isinstance(error, ValueError)
 
@@ -126,6 +126,6 @@ def test_run_agent_timeout_returns_timeout():
         time.sleep(1.0)
 
     streamer = pipeline.StreamingOrchestrator(callback=lambda m: None)
-    outcome, error = streamer._run_agent(slow, "000001.SZ", None, 0.05)
+    outcome, error = streamer._run_agent(slow, "300577.SZ", None, 0.05)
     assert outcome == "timeout"
     assert error is None

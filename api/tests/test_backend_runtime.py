@@ -22,14 +22,14 @@ def clean_runtime_state():
 
 def test_offline_scan_returns_snapshot_without_task():
     with TestClient(main.app) as client:
-        response = client.post("/api/scan", json={"code": "000001"})
+        response = client.post("/api/scan", json={"code": "300577"})
 
     assert response.status_code == 200
     body = response.json()
     assert body["task_id"] == "cached"
     assert body["cached"] is True
     assert body["status"] == "completed"
-    assert body["result"]["code"] == "000001.SZ"
+    assert body["result"]["code"] == "300577.SZ"
     assert pipeline.active_tasks() == []
 
 
@@ -47,7 +47,7 @@ def test_realtime_conflict_and_cancel(monkeypatch):
 
     monkeypatch.setattr(main, "run_scan_task", fake_run)
     with TestClient(main.app) as client:
-        first = client.post("/api/scan", json={"code": "000001.SZ", "realtime": True})
+        first = client.post("/api/scan", json={"code": "300577.SZ", "realtime": True})
         assert first.status_code == 200
         task_id = first.json()["task_id"]
 
@@ -79,7 +79,7 @@ def test_websocket_replays_producer_history(monkeypatch):
 
     monkeypatch.setattr(main, "run_scan_task", fake_run)
     with TestClient(main.app) as client:
-        created = client.post("/api/scan", json={"code": "000001.SZ", "realtime": True})
+        created = client.post("/api/scan", json={"code": "300577.SZ", "realtime": True})
         task_id = created.json()["task_id"]
         with client.websocket_connect(f"/ws/pipeline/{task_id}") as websocket:
             first = websocket.receive_json()
@@ -88,7 +88,7 @@ def test_websocket_replays_producer_history(monkeypatch):
     assert first["type"] == "progress"
     assert first["agent_key"] == "announcement"
     assert second["type"] == "complete"
-    assert second["result"]["code"] == "000001.SZ"
+    assert second["result"]["code"] == "300577.SZ"
 
 
 def test_failure_emits_error_then_offline_fallback(monkeypatch):
@@ -96,8 +96,8 @@ def test_failure_emits_error_then_offline_fallback(monkeypatch):
         raise OSError("WinError 10060")
 
     monkeypatch.setattr(pipeline.StreamingOrchestrator, "run", fail_run)
-    state = pipeline.create_task("000001.SZ")
-    request = ScanRequest(code="000001.SZ", realtime=True)
+    state = pipeline.create_task("300577.SZ")
+    request = ScanRequest(code="300577.SZ", realtime=True)
 
     asyncio.run(pipeline.run_scan_task(state, request))
 
@@ -113,7 +113,7 @@ def test_failure_emits_error_then_offline_fallback(monkeypatch):
 
 
 def test_result_cache_is_lru_bounded_to_twenty():
-    template = pipeline.offline_to_response("000001.SZ")
+    template = pipeline.offline_to_response("300577.SZ")
     assert template is not None
     for index in range(21):
         code = f"{index:06d}.SZ"
@@ -125,7 +125,7 @@ def test_result_cache_is_lru_bounded_to_twenty():
 
 
 def test_progress_messages_have_stable_frontend_fields_and_history():
-    state = pipeline.create_task("000001.SZ")
+    state = pipeline.create_task("300577.SZ")
     message = ProgressMessage(
         agent="AnnouncementReader",
         agent_key="announcement",

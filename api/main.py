@@ -299,16 +299,6 @@ async def scan_status(task_id: str):
     }
 
 
-@app.get("/api/mock/{code}", response_model=AnalyzeResponse)
-async def mock_company(code: str):
-    """前端联调用固定结构数据；有离线快照时优先返回真实快照。
-
-    code 支持股票代码或公司简称/全名。
-    """
-    normalized = _resolve_company_code(code)
-    result = get_offline_result(normalized, 60)
-    if result is None:
-        raise HTTPException(status_code=404, detail=f"未找到 {normalized} 的 mock/离线报告")
     return result
 
 

@@ -16,8 +16,6 @@ from ..config import (
     ANNOUNCE_MAX_DOCUMENTS,
     ANNOUNCE_SOURCE,
     ANNOUNCE_WINDOW_DAYS,
-    EMBEDDING_BACKEND,
-    EMBEDDING_MODEL,
     F1_DECAY_HALF_LIFE_DAYS,
     FINBERT_GATE,
     FINBERT_ENABLED,
@@ -671,21 +669,6 @@ class AnnouncementReaderAgent(AgentBase):
 
         f1 = self._build_f1(announcements, factors, as_of)
         self._emit_progress("finalizing", risk_factor_count=len(factors))
-        f1_vector = None
-        f1_vector_backend = "not_generated: EMBEDDING_BACKEND is not bge"
-        if EMBEDDING_BACKEND == "bge" and factors:
-            texts = [
-                f"{item['taxonomy_l2']}:{item['description']}:{item['evidence']}"
-                for item in factors
-            ]
-            try:
-                from ..skills.embedding import embed
-
-                vectors = embed(texts, allow_fallback=False)
-                f1_vector = vectors.mean(axis=0).tolist()
-                f1_vector_backend = f"bge:{EMBEDDING_MODEL}:risk_factor_mean"
-            except Exception as exc:
-                f1_vector_backend = f"not_generated:{type(exc).__name__}:{str(exc)[:120]}"
         parsed = [
             item for item in analyzed_announcements
             if "_parsed" in item.get("text_status", "")
@@ -804,8 +787,6 @@ class AnnouncementReaderAgent(AgentBase):
             ),
             "upstream": fullrun_upstream_audit,
         }
-        ctx.semantic.f1_vector = f1_vector
-        ctx.semantic.f1_vector_backend = f1_vector_backend
         # F6 监管问询函特征：由本 Agent 的公告列表（巨潮官方源）计算，
         # 供预测建模使用（口径与离线 F6 表一致；窗口内无问询公告 → 全 0）
         try:
@@ -940,7 +921,6 @@ class AnnouncementReaderAgent(AgentBase):
             "ocr_succeeded_pages": ocr_succeeded_pages,
             "ocr_failed_pages": ocr_failed_pages,
             "ocr_skipped_pages": ocr_skipped_pages,
-            "f1_vector_backend": f1_vector_backend,
             "f1_model_feature_status": ctx.semantic.f1_model_audit,
             "competition_history_available": historical_context.get("available", False),
             "competition_history_match_status": historical_context.get("match_status", "not_configured"),

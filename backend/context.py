@@ -30,8 +30,6 @@ class Semantic:
     f1_model_audit: dict = field(default_factory=dict)      # F1 模型输入口径/覆盖率审计；不得用历史 PCA 静态值伪造实时特征
     f1_announcement_risk_rows: list = field(default_factory=list)  # 完整上游语义链路的公告×主题行；普通规则候选不得写入
     f6_features: dict = field(default_factory=dict)         # F6 监管问询函特征（公告研读计算，12 维 f6_*）
-    f1_vector: list | None = None                           # 可选 BGE 语义向量
-    f1_vector_backend: str = "not_generated"               # bge / not_generated
     channel_summary: dict = field(default_factory=dict)     # 规则/FinBERT/LLM 状态
     data_quality: dict = field(default_factory=dict)        # 来源、覆盖率、缺失和限制
     historical_context: dict = field(default_factory=dict)  # 比赛历史库命中与历史候选证据
@@ -76,7 +74,6 @@ class Context:
     features: dict = field(default_factory=dict)            # 特征组装后（F1-F6 拼接）
     prediction: dict = field(default_factory=dict)          # 预测：概率/等级/置信度
     cases: list = field(default_factory=list)               # 案例检索：相似案例 Top-5
-    chunks: list = field(default_factory=list)              # chunk 级检索：相似问询段落（证据定位）
     attribution: dict = field(default_factory=dict)         # 归因：诱因/证据/案例对照
     report: dict = field(default_factory=dict)              # 报告
     trace_log: list = field(default_factory=list)           # 全链路追踪
