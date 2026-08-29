@@ -135,3 +135,14 @@ def embed(texts, allow_fallback=True):
 def embed_one(text):
     """单条文本编码。"""
     return embed([text])[0]
+
+
+def get_shared_bge():
+    """返回进程级共享的 (tokenizer, model, device)。
+
+    同一份 BGE 权重约 1.3GB；案例检索等其他模块必须复用此实例，
+    避免 FinBERT + BGE×2 三套 torch 模型同进程重复加载（Windows 上
+    会触发原生层崩溃，且内存翻倍）。
+    """
+    tokenizer, model = _bge_load()
+    return tokenizer, model, _BGE.get("device", "cpu")

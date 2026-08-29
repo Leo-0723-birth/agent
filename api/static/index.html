@@ -812,14 +812,14 @@
         <div class="param-row">
           <label>公告研读上限</label>
           <select class="param-select" id="paramMaxDocs">
-            <option value="3" selected>3 份（极速）</option>
-            <option value="5">5 份（标准）</option>
+            <option value="3">3 份（极速）</option>
+            <option value="5" selected>5 份（标准）</option>
             <option value="10">10 份（完整）</option>
           </select>
         </div>
         <div class="param-toggle">
           <span style="font-size: 13px; color: var(--text-primary);">LLM 精细抽取</span>
-          <div class="switch" id="switchLLM" onclick="this.classList.toggle('on')"></div>
+          <div class="switch on" id="switchLLM" onclick="this.classList.toggle('on')"></div>
         </div>
         <div class="param-toggle">
           <span style="font-size: 13px; color: var(--text-primary);">BGE 语义检索</span>
@@ -1335,7 +1335,7 @@
     if (wsConnection) { try { wsConnection.close(); } catch (e) {} wsConnection = null; }
 
     const windowVal = parseWindow();
-    const maxDocs = parseInt(document.getElementById('paramMaxDocs').value) || 3;
+    const maxDocs = parseInt(document.getElementById('paramMaxDocs').value) || 5;
     const useLLM = getParamSwitch('switchLLM');
     const useBGE = getParamSwitch('switchBGE');
 

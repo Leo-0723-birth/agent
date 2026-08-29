@@ -97,3 +97,14 @@ class FinBERTClient:
             "top_category": categories[0]["category"] if categories else None,
             "max_score": categories[0]["score"] if categories else 0.0,
         }
+
+
+_SHARED_CLIENT: "FinBERTClient | None" = None
+
+
+def get_finbert_client() -> "FinBERTClient":
+    """进程级共享客户端：模型约 400MB，多 Agent 实例间必须复用一次加载。"""
+    global _SHARED_CLIENT
+    if _SHARED_CLIENT is None:
+        _SHARED_CLIENT = FinBERTClient()
+    return _SHARED_CLIENT

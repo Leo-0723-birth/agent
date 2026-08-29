@@ -112,9 +112,9 @@ class AnnouncementReaderAgent(AgentBase):
         self.finbert_error = ""
         if self.use_finbert and FINBERT_ENABLED:
             try:
-                from ..skills.finbert_classify import FinBERTClient
+                from ..skills.finbert_classify import get_finbert_client
 
-                self.finbert = FinBERTClient()
+                self.finbert = get_finbert_client()
             except Exception as exc:
                 self.finbert_error = f"{type(exc).__name__}: {exc}"
 

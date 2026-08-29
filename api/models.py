@@ -108,7 +108,7 @@ class AnalyzeResponse(BaseModel):
 class AnalyzeRequest(BaseModel):
     codes: List[str] = Field(..., description="公司代码列表，如 ['000063.SZ']")
     window: int = Field(60, description="预测窗口天数（非 30/60/90 时吸附到最近窗口）")
-    use_llm: bool = Field(False, description="是否启用LLM精细抽取")
+    use_llm: bool = Field(True, description="是否启用LLM精细抽取（默认开启，逐份深度抽取更全面）")
     use_bge: bool = Field(True, description="是否启用BGE语义检索")
 
     @field_validator("window")
@@ -123,7 +123,7 @@ class ScanRequest(BaseModel):
     code: str = Field(..., description="公司代码，如 000001.SZ")
     window: int = Field(60, ge=1, le=365, description="预测窗口天数（非 30/60/90 时吸附到最近窗口）")
     as_of: Optional[str] = Field(None, description="分析截止日期（YYYY-MM-DD），空则默认今天")
-    use_llm: bool = Field(False, description="是否启用LLM精细抽取（演示建议关闭，可大幅提速）")
+    use_llm: bool = Field(True, description="是否启用LLM精细抽取（默认开启，与FinBERT门控配合聚焦候选）")
     use_bge: bool = Field(True, description="是否启用BGE语义检索")
     max_documents: Optional[int] = Field(
         SCAN_MAX_DOCUMENTS, ge=1, le=100,

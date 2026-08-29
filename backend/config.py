@@ -90,6 +90,10 @@ ANNOUNCE_MAX_DOCUMENTS = int(os.getenv("ANNOUNCE_MAX_DOCUMENTS", "120"))
 # 避免各层默认值不一致导致"请求 5 份实际深读 N 份"的参数漂移。
 # 批量/全量处理仍用 ANNOUNCE_MAX_DOCUMENTS。
 SCAN_MAX_DOCUMENTS = int(os.getenv("SCAN_MAX_DOCUMENTS", "5"))
+# 实时扫雷是否启用 FinBERT 通道（前端未暴露该开关，由后端配置统一控制）。
+SCAN_USE_FINBERT = os.getenv("SCAN_USE_FINBERT", "true").lower() in {
+    "1", "true", "yes", "on"
+}
 ANNOUNCE_PDF_CACHE = Path(
     os.getenv("ANNOUNCE_PDF_CACHE", str(DATA_DIR / "cache" / "pdfs"))
 )
@@ -111,12 +115,14 @@ OCR_MIN_PAGE_CHARS = int(os.getenv("OCR_MIN_PAGE_CHARS", "40"))
 OCR_MIN_CONFIDENCE = float(os.getenv("OCR_MIN_CONFIDENCE", "0.50"))
 OCR_MAX_PAGES_PER_DOCUMENT = int(os.getenv("OCR_MAX_PAGES_PER_DOCUMENT", "80"))
 FINBERT_GATE = float(os.getenv("FINBERT_GATE", "0.5"))
-FINBERT_ENABLED = os.getenv("FINBERT_ENABLED", "false").lower() in {
+# 三通道全开为默认（权重已随项目缓存，进程级单例只加载一次）；
+# 显式设 FINBERT_ENABLED=0/false 可关闭。
+FINBERT_ENABLED = os.getenv("FINBERT_ENABLED", "true").lower() in {
     "1", "true", "yes", "on"
 }
-FINBERT_GATE_ENABLED = os.getenv("FINBERT_GATE_ENABLED", "false").lower() in {
+FINBERT_GATE_ENABLED = os.getenv("FINBERT_GATE_ENABLED", "true").lower() in {
     "1", "true", "yes", "on"
-}  # 未经公告标注集校准前默认不启用门控
+}  # FinBERT 门控：仅规则命中或 FinBERT 高分公告进入 LLM 精细抽取
 MAX_TEXT_CHARS = 8000         # 送 LLM 的公告正文截断长度
 
 # ---------- 财务异常检测（backend/agents/financial_detector.py 使用） ----------

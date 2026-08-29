@@ -28,7 +28,7 @@ from .models import (
     FinancialAnomalyItem,
     SimilarCaseItem,
 )
-from backend.config import PREDICTOR_HORIZONS, PREDICTOR_MODEL_DIR, RISK_THRESHOLDS, SCAN_MAX_DOCUMENTS
+from backend.config import PREDICTOR_HORIZONS, PREDICTOR_MODEL_DIR, RISK_THRESHOLDS, SCAN_MAX_DOCUMENTS, SCAN_USE_FINBERT
 from backend.skills.evidence_policy import publishable_evidence
 
 REPORTS_DIR = PROJECT_ROOT / "backend" / "data" / "output" / "reports"
@@ -889,13 +889,15 @@ class StreamingOrchestrator:
         return "ok", None
 
     def run(self, company: str, window: int = 60, as_of: str | None = None,
-            use_llm: bool = False, use_bge: bool = True, max_documents: int | None = SCAN_MAX_DOCUMENTS,
+            use_llm: bool = True, use_bge: bool = True,
+            max_documents: int | None = SCAN_MAX_DOCUMENTS,
             cancel_event: threading.Event | None = None):
         from backend.context import Context
 
         orch = get_orchestrator(
             use_llm=use_llm,
-            use_finbert=False,           # 前端未暴露 FinBERT 开关，固定关闭以提速
+            # FinBERT 通道由后端配置统一控制（权重本地已缓存，进程级单例加载一次）
+            use_finbert=SCAN_USE_FINBERT,
             use_semantic_cases=use_bge,
             max_documents=max_documents,
         )
