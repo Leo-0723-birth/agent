@@ -124,6 +124,8 @@ competition_agent/
 | `EMBEDDING_BACKEND` | 向量后端：bge(需权重,与案例库兼容) / fallback(零依赖) | fallback |
 | `EMBEDDING_ALLOW_DOWNLOAD` | 是否允许下载大模型 | false |
 | `FINBERT_ENABLED` / `FINBERT_GATE_ENABLED` | FinBERT 门控（未校准前关闭） | false |
+| `F1_ONLINE_SEMANTICS_ENABLED` | 训练同口径实时 F1；auto=本地三模型齐全才启用，true=允许首次下载 | auto |
+| `F1_BGE_MODEL_PATH` / `F1_RERANK_MODEL_PATH` / `F1_FINBERT_MODEL_PATH` | 可选的三套固定 revision 本地模型目录 | — |
 | `API_KEY` | 可选 API 鉴权密钥；设置后 `/api/*` 需带 `X-API-Key` 头、WS 握手需带 `?token=` | 空（不启用） |
 
 > 数据路径默认读仓库内「公告解析」可移植数据包；本机持有完整外部数据集时可设 `COMPETITION_DATA_ROOT` 覆盖。
@@ -212,7 +214,7 @@ python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
     - 依赖锁定（requirements.txt）：`langchain-core==1.5.3` / `langchain-deepseek==1.1.0` / `langgraph==1.2.10` / `langgraph-checkpoint==4.2.0`。
     - 验证：全流程 7 节点 done（预测 0.3822）、6 页面 AppTest 通过、pytest 5 passed、单 Agent 独立可用。
 11. **预测建模实时化（查表 → 实时推理）**：
-    - `PredictorAgent` 主路径改为**实时特征推理**：以公告研读 F1 标量 + 财务异常 F2-F6 实时值为数据源，按 `models_manifest.json` 特征清单组装向量，缺失列（如 F1 语义 50 维、governance_year）用训练集中位数兜底（新增 `backend/data/modeling/fill_median_{30,60,90}d.csv`）；
+    - `PredictorAgent` 主路径支持**实时特征推理**：公告 F1 必须由同口径流水线完整生成固定 PCA50，缺失任何 F1 语义列即安全回退历史查表；F2-F6 一般缺失值才允许使用训练集冻结中位数（`backend/data/modeling/fill/fill_median_{30,60,90}d.csv`）；
     - 新增 `backend/skills/feature_composer.py`（实时特征组装器），预测结果带审计字段 `data_source=realtime/offline_lookup` 与 `coverage`（实时覆盖率）；无实时财务数据时自动回落查表路径。
 12. **F2 特征列与训练表对齐**：`f2_calc.py` 删除恒 NaN 占位列（f2_gross_margin/f2_current_ratio/f2_interest_coverage），新增 `f2_neg_pe_flag/f2_neg_pb_flag/f2_market_cap_quintile`（负 PE/PB 标志 + 市值五分位），与建模数据集/模型 manifest 完全一致。
 13. **F4/F5/F6 实时化分工**：F4 股吧舆情 / F5 股东治理在线爬取优先（每族 30s 超时，失败回退离线表）；**F6 监管问询函特征改由公告研读 Agent 提供**（新增 `backend/skills/inquiry_features.py`：从巨潮公告列表识别问询函/关注函，口径与离线 F6 表一致），财务侧不再输出 F6。

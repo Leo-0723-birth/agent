@@ -147,7 +147,8 @@ def import_full_f1(source_dir: Path, raw_dir: Path = DEFAULT_RAW_DIR) -> dict:
     manifest = {
         "schema_version": "f1-full-run-import-v1",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
-        "source_run_directory": str(source_dir),
+        # 仅记录可移植的运行批次名；个人电脑绝对路径不能进入团队产物。
+        "source_run_id": source_dir.name,
         "source_file": SOURCE_FILENAME,
         "source_sha256": _sha256(source_path),
         "output_file": manifest_output_file,

@@ -1,7 +1,7 @@
 {
   "schema_version": "f1-full-run-import-v1",
   "created_at_utc": "2026-08-28T04:11:22.393504+00:00",
-  "source_run_directory": "D:\\BaiduNetdiskDownload\\run_20260826_001320_full",
+  "source_run_id": "run_20260826_001320_full",
   "source_file": "company_quarter_pca50.parquet",
   "source_sha256": "8c04d1d5d1eb4220290878097cdfe39ecf82a8388a1b67c8fcd455f5c76a570f",
   "output_file": "backend\\data\\modeling\\raw\\F1_announcement_semantic_features.parquet",

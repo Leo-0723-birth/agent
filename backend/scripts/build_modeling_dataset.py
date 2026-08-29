@@ -40,7 +40,7 @@ PROC.mkdir(parents=True, exist_ok=True)
 SEL.mkdir(parents=True, exist_ok=True)
 
 WINDOWS = [30, 60, 90]
-N_KEEP = 100
+N_KEEP = 50
 
 # ============================================================
 # 年份口径：剔除 2020，序列自 2021Q1 起

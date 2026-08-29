@@ -1,0 +1,19 @@
+{
+  "schema_version": "fullrun-f1-transform-v1",
+  "pipeline_version": "run_20260826_001320_full/build_quarter_features-v1",
+  "artifact": "pca_model.pkl",
+  "artifact_sha256": "90593deace840759729ceec8e247669afc4184d9320f657ead6b8348b3a4dbce",
+  "raw_feature_dim": 208,
+  "pca_components": 50,
+  "fit_split": "Train",
+  "score_column": "risk_strength_v2_top3",
+  "high_risk_threshold": 0.3766673505306244,
+  "windows_days": [30, 60, 90, 180],
+  "cumulative_explained_variance": 0.8477819158865453,
+  "required_upstream": "BGE-large-zh-v1.5 CLS + theme recall + bge-reranker-v2-m3 + finbert-tone-chinese + rule dictionary v2.1",
+  "source_model_revisions": {
+    "BAAI/bge-large-zh-v1.5": "79e7739b6ab944e86d6171e44d24c997fc1e0116",
+    "BAAI/bge-reranker-v2-m3": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+    "yiyanghkust/finbert-tone-chinese": "e91b1a3af10e1e8c9c03429d3cd7d5e9a1c8000d"
+  }
+}

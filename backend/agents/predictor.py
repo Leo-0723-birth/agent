@@ -379,6 +379,46 @@ class PredictorAgent(AgentBase):
         X = np.asarray([vec[f] for f in feats], dtype=np.float32).reshape(1, -1)
         return self._infer(X, feats, horizon)
 
+    def _prepare_realtime_f1(self, ctx):
+        """用全量流水线的冻结预处理器生成实时 PCA50。
+
+        只有完整 BGE→召回→精排→FinBERT→规则链路产生的公告×主题行才会
+        写入 ``f1_announcement_risk_rows``。普通规则候选不在这里强行转成 50
+        维，避免“维度看似正确、口径实际错误”的静默污染。
+        """
+        rows = getattr(getattr(ctx, "semantic", None), "f1_announcement_risk_rows", None)
+        if not rows:
+            return
+        try:
+            from datetime import date
+            from ..skills.fullrun_f1_transform import FullRunF1Transformer
+
+            indicators = dict(getattr(getattr(ctx, "financial", None), "indicators", {}) or {})
+            financial_features = dict(
+                getattr(getattr(ctx, "financial", None), "features", {}) or {}
+            )
+            # 三个行情估值字段若财务 Agent 尚未提供则保留缺失值，由训练期冻结的
+            # SimpleImputer 处理；绝不在实时侧另行拟合或猜测填充值。
+            financial_values = {**financial_features, **indicators}
+            anchor = getattr(ctx, "as_of", None) or date.today().isoformat()
+            features, audit = FullRunF1Transformer().transform(
+                rows, anchor, financial_values
+            )
+            ctx.semantic.f1_model_features = features
+            ctx.semantic.f1_model_audit = audit
+            ctx.meta["f1_realtime_transform"] = audit
+        except Exception as exc:
+            # 转换失败时清空，后续兼容性闸门会安全回退历史查表。
+            ctx.semantic.f1_model_features = {}
+            audit = {
+                "compatible": False,
+                "source": "online_fullrun_announcement_risk_rows",
+                "reason": f"冻结 PCA50 转换失败: {type(exc).__name__}: {exc}",
+                "input_rows": len(rows),
+            }
+            ctx.semantic.f1_model_audit = audit
+            ctx.meta["f1_realtime_transform"] = audit
+
     # ================= 主入口 =================
     def execute(self, company, ctx):
         code = normalize_stock_code(company)
@@ -392,6 +432,7 @@ class PredictorAgent(AgentBase):
             logging.getLogger(__name__).warning(
                 "PredictorAgent manifest 校验未通过，仍尝试推理；问题：%s", "; ".join(messages)
             )
+        self._prepare_realtime_f1(ctx)
         # 可选：XGBoost-Cox 生存模型已部署 → 单模型产出 30/60/90d（输出契约不变）
         if self._load_survival():
             return self._execute_survival(ctx, code, as_of)
