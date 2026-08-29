@@ -11,9 +11,20 @@
     backend/data/output/reports/{报告编号}.md / .json + manifest.json 索引
 
 执行摘要：
-    - ctx.use_llm_summary=True 时用 DeepSeek（deepseek-v4-flash，backend.llm.chat）生成叙事，
-      失败自动回退规则拼装（skills/risk_report_render.rules_summary），不阻断流水线；
+    - ctx.use_llm_summary=True 时用 DeepSeek（deepseek-v4-flash，backend.llm.chat）生成
+      「有原文引用的分段解读」：输入为 build_rich_report_input(ctx)（含已核验证据原文、
+      公告摘录、规则候选与抑制原因），prompt 见 SEGMENTED_SUMMARY_SYSTEM；
+    - 失败自动回退规则拼装（skills/risk_report_render.rules_summary），不阻断流水线；
     - 默认 False（演示时勾选）。
+
+数据接口（报告生成需要上游提供，缺失时逐段降级）：
+    ctx.prediction           预测概率/等级/置信度/SHAP
+    ctx.financial.anomaly_list  财务异常（evidence 原文）
+    ctx.semantic.risk_factors   已核验风险要素（evidence_valid=True）
+    ctx.semantic.evidence_snippets  原文证据片段
+    ctx.semantic.per_announcement[*].suppressed_rule_hits  规则抑制明细
+    ctx.semantic.channel_summary   三通道统计
+    ctx.cases               相似案例
 
 依赖：skills/risk_report_render.py。
 """
@@ -43,19 +54,23 @@ class ReporterAgent(AgentBase):
 
     # ================= 执行摘要 =================
     def _executive_summary(self, ctx) -> str:
-        """执行摘要：LLM 叙事（deepseek-v4-flash）优先，失败/关闭回退规则拼装。"""
+        """执行摘要：LLM 叙事（deepseek-v4-flash）优先，失败/关闭回退规则拼装。
+
+        优先用增强版事实（build_rich_report_input，含已核验证据原文 + 公告摘录 +
+        规则抑制原因）生成「有原文引用的分段解读」；无 LLM 时回退规则拼装。
+        """
         if getattr(ctx, "use_llm_summary", False):
             try:
-                facts = risk_report_render.build_summary_facts(ctx)
+                facts = risk_report_render.build_rich_report_input(ctx)
                 summary = chat(
-                    system=risk_report_render.SUMMARY_SYSTEM,
+                    system=risk_report_render.SEGMENTED_SUMMARY_SYSTEM,
                     prompt=f"请基于以下事实生成执行摘要：\n{facts}",
                     temperature=0.3,
-                    max_tokens=400,
+                    max_tokens=500,
                 )
-                summary = (summary or "").strip().replace("\n", " ")
+                summary = (summary or "").strip()
                 if summary:
-                    return summary[:300]
+                    return summary[:500]
                 print("[reporter] 摘要为空，回退规则拼装")
             except Exception as e:
                 print(f"[reporter] LLM 摘要失败，回退规则拼装: {type(e).__name__}: {e}")
