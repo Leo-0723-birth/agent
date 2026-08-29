@@ -153,8 +153,6 @@ class AnnouncementReaderAgent(AgentBase):
         cache = Path(INDEX_DIR) / f"{secucode.replace('.', '_')}_index.json"
         store = AnnouncementStore(Path(self.data_root or DATA_RAW) / secucode, str(cache))
         announcements = store.search(days=ANNOUNCE_WINDOW_DAYS, as_of=as_of)
-        if self.max_documents is not None:
-            announcements = announcements[:self.max_documents]
         identity = {
             "code": code.group(0),
             "secucode": secucode,
@@ -500,7 +498,9 @@ class AnnouncementReaderAgent(AgentBase):
         return [cls._f1_vec_cache[key] for key in keys]
 
     @classmethod
-    def _run_fullrun_subprocess(cls, documents, company_code, timeout_seconds=900):
+    def _run_fullrun_subprocess(
+        cls, documents, company_code, timeout_seconds=900, progress_callback=None
+    ):
         """在独立进程中执行 F1 训练同口径语义上游（低内存协议）。
 
         8GB 机器的内存约束：服务端已驻留 FinBERT2+BGE，worker 若再加载
@@ -514,15 +514,38 @@ class AnnouncementReaderAgent(AgentBase):
         import sys as _sys
 
         from ..skills import fullrun_online_semantics as _f1mod
+        from ..config import DATA_DIR
         from ..skills.embedding import embed_cls_shared
 
+        result_signature = ["f1-staged-v1", str(company_code)] + [
+            f"{item.get('id')}:{item.get('content_sha256') or hashlib.sha256(str(item.get('text') or '').encode('utf-8')).hexdigest()}"
+            for item in documents
+        ]
+        result_key = hashlib.sha256(
+            "|".join(result_signature).encode("utf-8")
+        ).hexdigest()[:24]
+        result_cache = Path(DATA_DIR) / "cache" / f"f1_candidate_result_{result_key}.json"
+        try:
+            cached_result = _json.loads(result_cache.read_text(encoding="utf-8"))
+            if isinstance(cached_result.get("rows"), list):
+                if progress_callback:
+                    for event in ("fullrun_bge_cached", "fullrun_rerank_cached", "fullrun_finbert_cached"):
+                        progress_callback(event, cache_hit=True)
+                audit = cached_result.get("audit") or {}
+                audit["candidate_cache_hit"] = True
+                return cached_result["rows"], audit
+        except Exception:
+            pass
+
         pipeline = _f1mod.FullRunOnlineSemanticPipeline()
+        if progress_callback:
+            progress_callback("fullrun_bge_started", document_count=len(documents))
         query_texts = [item["query_for_embedding"] for item in pipeline.themes]
         query_vectors = cls._cached_cls_vectors(query_texts, 128)
         if hasattr(query_vectors, "tolist"):
             query_vectors = query_vectors.tolist()
         docs = []
-        for item in documents:
+        for position, item in enumerate(documents, 1):
             text = str(item.get("text") or "")
             pieces = _f1mod.split_into_chunks(text)
             if not pieces:
@@ -536,8 +559,16 @@ class AnnouncementReaderAgent(AgentBase):
                 "chunk_texts": chunk_texts,
                 "chunk_vectors": vectors,
             })
+            if progress_callback:
+                progress_callback(
+                    "fullrun_bge_progress", current=position, total=len(documents)
+                )
         if not docs:
             return [], {"status": "skipped", "reason": "no_chunkable_documents"}
+        from ..skills.embedding import release_shared_bge
+        release_shared_bge()
+        if progress_callback:
+            progress_callback("fullrun_bge_completed", document_count=len(docs))
 
         worker = Path(__file__).resolve().parents[1] / "scripts" / "f1_online_worker.py"
         payload = _json.dumps(
@@ -545,17 +576,49 @@ class AnnouncementReaderAgent(AgentBase):
              "company_code": company_code},
             ensure_ascii=False,
         ).encode("utf-8")
-        proc = subprocess.run(
-            [_sys.executable, str(worker)],
-            input=payload,
-            capture_output=True,
-            timeout=timeout_seconds,
+        import threading
+
+        proc = subprocess.Popen(
+            [_sys.executable, str(worker)], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
+        stderr_lines = []
+
+        def drain_stderr():
+            for raw in iter(proc.stderr.readline, b""):
+                line = raw.decode("utf-8", "replace").rstrip()
+                stderr_lines.append(line)
+                if line.startswith("@@F1_PROGRESS@@") and progress_callback:
+                    try:
+                        event_payload = _json.loads(line[len("@@F1_PROGRESS@@"):])
+                        progress_callback(
+                            event_payload.pop("event", "fullrun_progress"), **event_payload
+                        )
+                    except Exception:
+                        pass
+
+        stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
+        stderr_thread.start()
+        proc.stdin.write(payload)
+        proc.stdin.close()
+        try:
+            proc.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            raise
+        stdout_data = proc.stdout.read()
+        stderr_thread.join(timeout=5)
         if proc.returncode != 0:
             raise RuntimeError(
-                f"F1 上游子进程退出码 {proc.returncode}：{proc.stderr[-300:].decode('utf-8', 'replace')}"
+                f"F1 上游子进程退出码 {proc.returncode}：{' | '.join(stderr_lines[-5:])[-300:]}"
             )
-        result = _json.loads(proc.stdout.decode("utf-8"))
+        result = _json.loads(stdout_data.decode("utf-8"))
+        try:
+            result_cache.parent.mkdir(parents=True, exist_ok=True)
+            result_cache.write_text(_json.dumps(result, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
         return result.get("rows", []), result.get("audit", {"status": "unknown"})
 
     @staticmethod
@@ -581,12 +644,17 @@ class AnnouncementReaderAgent(AgentBase):
             item for item in announcements if is_analysis_eligible(item)
         ]
 
-        # 深读集合：PDF 下载/规则/FinBERT/LLM/全量F1上游只处理前 max_documents 份
-        # （与下载源的选择顺序一致）；announcement_count_*d 等计数特征与 F6 问询
+        # 深读集合：全量元数据先做标题风险相关度预筛，再对 Top-N 做 PDF/模型深读；
+        # announcement_count_*d 等计数特征与 F6 问询
         # 特征仍用全量元数据列表，保持与离线训练口径一致。
-        analyzed_announcements = eligible_announcements
-        if self.max_documents is not None and len(eligible_announcements) > self.max_documents:
-            analyzed_announcements = eligible_announcements[: self.max_documents]
+        marked = [item for item in eligible_announcements if item.get("deep_read_selected")]
+        if marked:
+            analyzed_announcements = marked
+        else:
+            from ..skills.announcement_search import CninfoAnnouncementSource
+            analyzed_announcements = CninfoAnnouncementSource.select_for_deep_read(
+                eligible_announcements, self.max_documents
+            )
 
         self._emit_progress("rule_analysis_started", document_count=len(analyzed_announcements))
         _t_rule = time.perf_counter()
@@ -752,7 +820,8 @@ class AnnouncementReaderAgent(AgentBase):
                     "fullrun_f1_started", document_count=len(fullrun_documents)
                 )
                 rows, fullrun_upstream_audit = self._run_fullrun_subprocess(
-                    fullrun_documents, identity.get("secucode") or ctx.company
+                    fullrun_documents, identity.get("secucode") or ctx.company,
+                    progress_callback=self._emit_progress,
                 )
                 ctx.semantic.f1_announcement_risk_rows = rows
             except Exception as exc:

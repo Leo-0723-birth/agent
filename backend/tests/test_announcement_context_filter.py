@@ -76,6 +76,21 @@ def test_unlimited_pdf_mode_processes_all_eligible_announcements():
     assert processed == ["risk-1", "risk-2"]
 
 
+def test_deep_read_prefers_risk_relevance_over_recency():
+    announcements = [
+        {"id": "new-policy", "title": "信息披露管理制度", "date": "2026-08-29"},
+        {"id": "new-normal", "title": "关于召开股东大会的通知", "date": "2026-08-28"},
+        {"id": "older-risk", "title": "关于收到立案告知书的公告", "date": "2026-08-01"},
+        {"id": "older-loss", "title": "年度业绩预告：预计亏损", "date": "2026-07-20"},
+    ]
+    for item in announcements:
+        item.setdefault("analysis_status", "eligible")
+
+    selected = CninfoAnnouncementSource.select_for_deep_read(announcements, 2)
+
+    assert [item["id"] for item in selected] == ["older-risk", "older-loss"]
+
+
 def test_governance_eligibility_clause_does_not_become_investigation_risk():
     text = (
         "独立董事候选人不得存在下列情形：（二）因涉嫌证券期货违法犯罪，"

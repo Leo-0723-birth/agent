@@ -119,8 +119,17 @@ def main() -> int:
 
             pipeline._sentiment = cached_sentiment
 
-            rows, audit = pipeline.analyze_precomputed(
-                documents, company_code, query_vectors
+            def emit_progress(event, **payload):
+                sys.stderr.write(
+                    "@@F1_PROGRESS@@" + json.dumps(
+                        {"event": event, **payload}, ensure_ascii=False
+                    ) + "\n"
+                )
+                sys.stderr.flush()
+
+            rows, audit = pipeline.analyze_precomputed_staged(
+                documents, company_code, query_vectors,
+                progress_callback=emit_progress,
             )
     except Exception as exc:  # 崩溃/异常都要让调用方拿到结构化失败
         import traceback

@@ -253,7 +253,7 @@ class FullRunOnlineSemanticPipeline:
             active = active[np.argsort(maxima[active])[-8:]]
         candidates = []
         for theme_index in active:
-            top = np.argsort(similarities[theme_index])[-min(50, len(pieces)):][::-1]
+            top = np.argsort(similarities[theme_index])[-min(50, len(chunk_texts)):][::-1]
             for rank, chunk_index in enumerate(top, 1):
                 candidates.append({
                     "theme_index": int(theme_index), "chunk_index": int(chunk_index),
@@ -369,6 +369,145 @@ class FullRunOnlineSemanticPipeline:
             if not chunk_texts:
                 continue
             self._rows_for_doc(announcement, text, chunk_texts, chunk_vectors, company_code, output)
+        return output, self._audit(len(documents), output)
+
+    def _release_models(self):
+        """释放当前阶段模型，避免普通电脑同时驻留 reranker 与 FinBERT。"""
+        import gc
+
+        self._models = None
+        gc.collect()
+        if self.device.startswith("cuda"):
+            self.torch.cuda.empty_cache()
+
+    def analyze_precomputed_staged(
+        self, documents, company_code, query_vectors, progress_callback=None
+    ):
+        """严格分阶段：候选召回 → reranker → 释放 → FinBERT → 释放。"""
+        from transformers import AutoModelForSequenceClassification
+
+        self._query_vectors = np.asarray(query_vectors, dtype=np.float32)
+        prepared = []
+        for document in documents:
+            announcement = document["announcement"]
+            chunk_texts = list(document["chunk_texts"])
+            chunk_vectors = np.asarray(document["chunk_vectors"], dtype=np.float32)
+            if not chunk_texts:
+                continue
+            similarities = self._query_vectors @ chunk_vectors.T
+            maxima = similarities.max(axis=1)
+            active = np.flatnonzero(maxima >= 0.42)
+            if len(active) > 8:
+                active = active[np.argsort(maxima[active])[-8:]]
+            candidates = []
+            for theme_index in active:
+                top = np.argsort(similarities[theme_index])[-min(50, len(chunk_texts)):][::-1]
+                for rank, chunk_index in enumerate(top, 1):
+                    candidates.append({
+                        "theme_index": int(theme_index),
+                        "chunk_index": int(chunk_index),
+                        "bge_score": float(similarities[theme_index, chunk_index]),
+                        "bge_rank": rank,
+                    })
+            prepared.append({
+                "announcement": announcement,
+                "text": str(announcement.get("text") or ""),
+                "chunk_texts": chunk_texts,
+                "candidates": candidates,
+            })
+
+        if progress_callback:
+            progress_callback("fullrun_rerank_started", document_count=len(prepared))
+        rr_tok, reranker, _, _ = self._load_hf(
+            "rerank", AutoModelForSequenceClassification,
+            extra={"torch_dtype": self.torch.bfloat16}
+            if os.getenv("F1_RERANK_DTYPE", "bf16").lower() == "bf16" else None,
+        )
+        self._models = (None, None, rr_tok, reranker.to(self.device).eval(), None, None)
+        for doc in prepared:
+            candidates = doc["candidates"]
+            if not candidates:
+                doc["selected"] = []
+                continue
+            queries = [self.themes[row["theme_index"]]["query_text"] for row in candidates]
+            evidence = [doc["chunk_texts"][row["chunk_index"]] for row in candidates]
+            scores = self._rerank(queries, evidence)
+            for row, score in zip(candidates, scores):
+                row["rerank_score"] = float(score)
+            by_theme = defaultdict(list)
+            for row in candidates:
+                by_theme[row["theme_index"]].append(row)
+            selected = []
+            for rows in by_theme.values():
+                selected.extend(sorted(rows, key=lambda value: -value["rerank_score"])[:20])
+            doc["selected"] = sorted(selected, key=lambda value: -value["rerank_score"])[:100]
+        self._release_models()
+        if progress_callback:
+            progress_callback("fullrun_rerank_completed", document_count=len(prepared))
+            progress_callback("fullrun_finbert_started", document_count=len(prepared))
+
+        fin_tok, finbert, _, _ = self._load_hf("finbert", AutoModelForSequenceClassification)
+        self._models = (None, None, None, None, fin_tok, finbert.to(self.device).eval())
+        output = []
+        for doc in prepared:
+            selected = doc.get("selected") or []
+            if not selected:
+                continue
+            selected_text = [doc["chunk_texts"][row["chunk_index"]] for row in selected]
+            sentiment = self._sentiment(selected_text)
+            by_theme = defaultdict(list)
+            for row, probs, evidence_text in zip(selected, sentiment, selected_text):
+                row.update({
+                    "sent_neg": float(probs[0]), "sent_neu": float(probs[1]),
+                    "sent_pos": float(probs[2]), "evidence_text": evidence_text,
+                    "negation_flag": bool(RE_NEGATION.search(evidence_text)),
+                    "hedge_flag": bool(RE_HEDGE.search(evidence_text)),
+                    "strong_flag": bool(RE_STRONG.search(evidence_text)),
+                })
+                sigmoid = 1.0 / (1.0 + np.exp(-row["rerank_score"]))
+                context_weight = ((0.25 if row["negation_flag"] else 1.0)
+                                  * (0.40 if row["hedge_flag"] else 1.0)
+                                  * (1.30 if row["strong_flag"] else 1.0))
+                row["risk_strength"] = float(
+                    sigmoid * (0.5 + 0.5 * (row["sent_neg"] - row["sent_pos"]))
+                    * context_weight
+                )
+                neg_ratio = row["sent_neg"] / (row["sent_neg"] + row["sent_pos"] + 1e-6)
+                row["risk_strength_v2"] = float(
+                    sigmoid * (0.30 + 0.70 * neg_ratio) * context_weight
+                )
+                by_theme[row["theme_index"]].append(row)
+            rules = self._rule_counts(doc["text"])
+            announcement = doc["announcement"]
+            for theme_index, rows in by_theme.items():
+                theme = self.themes[theme_index]
+                strengths = sorted((row["risk_strength_v2"] for row in rows), reverse=True)
+                rule = rules.get(theme["risk_theme"], {})
+                top = sorted(rows, key=lambda value: -value["risk_strength"])[:3]
+                output.append({
+                    "announcement_id": announcement.get("announcement_id") or announcement.get("id"),
+                    "company_code": company_code,
+                    "publish_date": announcement.get("published_at") or announcement.get("date"),
+                    "doc_type": announcement.get("category") or announcement.get("type") or "",
+                    "risk_theme": theme["risk_theme"], "l1_code": theme["l1_code"],
+                    "evidence_count": len(rows),
+                    "rerank_score_max": max(row["rerank_score"] for row in rows),
+                    "sent_neg_max": max(row["sent_neg"] for row in rows),
+                    "strong_count": sum(row["strong_flag"] for row in rows),
+                    "risk_strength_v2_top3": float(np.mean(strengths[:3])),
+                    "rule_effective_hits": int(rule.get("effective", 0)),
+                    "rule_negated_hits": int(rule.get("negated", 0)),
+                    "rule_excluded_hits": int(rule.get("excluded", 0)),
+                    "top_evidence": json.dumps([
+                        {"chunk_index": row["chunk_index"], "bge_rank": row["bge_rank"],
+                         "rerank_score": round(row["rerank_score"], 4),
+                         "risk_strength": round(row["risk_strength"], 4),
+                         "text": row["evidence_text"][:250]} for row in top
+                    ], ensure_ascii=False),
+                })
+        self._release_models()
+        if progress_callback:
+            progress_callback("fullrun_finbert_completed", document_count=len(prepared))
         return output, self._audit(len(documents), output)
 
     def _audit(self, announcement_count, output):

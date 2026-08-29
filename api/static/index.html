@@ -803,11 +803,10 @@
           </select>
         </div>
         <div class="param-row">
-          <label>公告研读上限</label>
+          <label>高相关公告深读数</label>
           <select class="param-select" id="paramMaxDocs">
-            <option value="50" selected>50 份（标准）</option>
-            <option value="100">100 份（完整）</option>
-            <option value="150">150 份（全部）</option>
+            <option value="10">10 份（快速）</option>
+            <option value="15" selected>15 份（推荐）</option>
           </select>
         </div>
         <div class="param-toggle">
@@ -1327,7 +1326,7 @@
     if (wsConnection) { try { wsConnection.close(); } catch (e) {} wsConnection = null; }
 
     const windowVal = parseWindow();
-    const maxDocs = parseInt(document.getElementById('paramMaxDocs').value) || 50;
+    const maxDocs = parseInt(document.getElementById('paramMaxDocs').value) || 15;
     const useLLM = getParamSwitch('switchLLM');
     const useBGE = getParamSwitch('switchBGE');
 
@@ -1711,7 +1710,7 @@
         <div class="tech-metric-card">
           <div class="metric-label">获取公告 PDF</div>
           <div class="metric-value">${pdfInfo.fetched ?? '—'}</div>
-          <div class="metric-sub">深读 ${pdfInfo.analyzed ?? '—'} 份 · 近一年 ${pdfInfo.metadata_total ?? '—'} 份中按时间最近选取</div>
+          <div class="metric-sub">深读 ${pdfInfo.analyzed ?? '—'} 份 · 近一年 ${pdfInfo.metadata_total ?? '—'} 份中按风险相关度选取</div>
         </div>
       </div>
 

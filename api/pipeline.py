@@ -1192,6 +1192,11 @@ class StreamingOrchestrator:
             count = max(1, int(payload.get("total", 1) or 1))
             percent = 84 + int(8 * current / count)
             message = f"LLM 精细抽取第 {current}/{count} 份公告"
+        elif event == "fullrun_bge_progress":
+            current = int(payload.get("current", 0) or 0)
+            count = max(1, int(payload.get("total", 1) or 1))
+            percent = 93 + int(2 * current / count)
+            message = f"BGE 召回：正在向量化第 {current}/{count} 份高相关公告"
         event_map = {
             "offline_snapshot_started": (8, "正在检查官方公告离线快照"),
             "offline_snapshot_completed": (35, "已加载官方公告离线快照"),
@@ -1210,6 +1215,17 @@ class StreamingOrchestrator:
             "finbert_completed": (82, "FinBERT 语义筛查完成"),
             "llm_started": (84, "正在执行 LLM 精细抽取"),
             "llm_completed": (92, "LLM 精细抽取完成"),
+            "fullrun_bge_started": (93, "BGE 召回：生成并检索公告向量"),
+            "fullrun_bge_progress": (percent, message),
+            "fullrun_bge_completed": (95, "BGE 召回完成，候选已缓存"),
+            "fullrun_bge_cached": (95, "BGE 召回命中缓存"),
+            "fullrun_rerank_started": (96, "reranker 精排：核验候选证据相关度"),
+            "fullrun_rerank_completed": (97, "reranker 精排完成，结果已缓存"),
+            "fullrun_rerank_cached": (97, "reranker 精排命中缓存"),
+            "fullrun_finbert_started": (97, "FinBERT 门控：识别负面语义与确定性"),
+            "fullrun_finbert_completed": (98, "FinBERT 门控完成，结果已缓存"),
+            "fullrun_finbert_cached": (98, "FinBERT 门控命中缓存"),
+            "fullrun_f1_completed": (99, "208维聚合完成，等待固定 PCA50"),
             "finalizing": (96, "正在汇总公告风险证据"),
             "analysis_completed": (100, "公告研读完成"),
             "agent_progress": (percent, message),

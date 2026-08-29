@@ -176,3 +176,23 @@ def get_shared_bge(prefer_dir=None):
     """
     tokenizer, model = _bge_load(prefer_dir=prefer_dir)
     return tokenizer, model, _BGE.get("device", "cpu")
+
+
+def release_shared_bge():
+    """显式释放共享 BGE；后续 Agent 如需使用会按相同配置重新加载。"""
+    import gc
+
+    model = _BGE.get("model")
+    if model is not None:
+        try:
+            model.to("cpu")
+        except Exception:
+            pass
+    _BGE.update({"tokenizer": None, "model": None, "device": "cpu"})
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass

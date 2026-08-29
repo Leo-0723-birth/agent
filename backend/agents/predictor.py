@@ -397,6 +397,7 @@ class PredictorAgent(AgentBase):
         if not rows:
             return
         try:
+            self._report_progress(20, "PCA50：正在将公告主题行聚合为固定208维")
             from datetime import date
             from ..skills.fullrun_f1_transform import FullRunF1Transformer
 
@@ -411,9 +412,11 @@ class PredictorAgent(AgentBase):
             features, audit = FullRunF1Transformer().transform(
                 rows, anchor, financial_values
             )
+            self._report_progress(45, "PCA50：固定变换完成，正在校验50维模型输入")
             ctx.semantic.f1_model_features = features
             ctx.semantic.f1_model_audit = audit
             ctx.meta["f1_realtime_transform"] = audit
+            self._report_progress(55, "PCA50：50维实时F1特征校验完成")
         except Exception as exc:
             # 转换失败时清空，后续兼容性闸门会安全回退历史查表。
             ctx.semantic.f1_model_features = {}

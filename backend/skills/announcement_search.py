@@ -393,6 +393,34 @@ class CninfoAnnouncementSource:
             item["text_status"] = f"failed:{type(exc).__name__}:{str(exc)[:160]}"
         return item
 
+    @staticmethod
+    def _deep_read_rank(item):
+        """仅用公告元数据做确定性预筛，不把标题命中直接认定为风险事实。"""
+        title = str(item.get("title") or "")
+        weights = (
+            ("立案", 12), ("处罚", 12), ("退市", 12), ("重大缺陷", 11),
+            ("问询", 10), ("关注函", 10), ("监管", 9), ("违规", 9),
+            ("诉讼", 8), ("仲裁", 8), ("冻结", 8), ("占用", 8),
+            ("减值", 7), ("亏损", 7), ("下修", 7), ("违约", 9),
+            ("担保", 6), ("质押", 6), ("终止", 5), ("异常", 6),
+        )
+        score = sum(weight for keyword, weight in weights if keyword in title)
+        # 定期报告保留一定优先级；章程、制度、职责等模板性公告降权。
+        if any(keyword in title for keyword in ("年度报告", "半年度报告", "季度报告")):
+            score += 4
+        if any(keyword in title for keyword in (
+            "公司章程", "工作制度", "管理制度", "议事规则", "实施细则",
+            "董事职责", "监事职责", "独立董事制度", "募集说明书",
+        )):
+            score -= 20
+        return score, str(item.get("date") or item.get("published_at") or "")
+
+    @classmethod
+    def select_for_deep_read(cls, announcements, limit):
+        eligible = [item for item in announcements if is_analysis_eligible(item)]
+        ranked = sorted(eligible, key=cls._deep_read_rank, reverse=True)
+        return ranked if limit is None else ranked[: int(limit)]
+
     def search(self, user_input, days=365, as_of=None, pdf_budget_seconds=None):
         cutoff = str(as_of or date.today().isoformat())[:10]
         offline_store = getattr(self, "offline_store", None)
@@ -426,13 +454,16 @@ class CninfoAnnouncementSource:
         for item in announcements:
             apply_title_policy(item, mark_unfetched=True)
         eligible = [item for item in announcements if is_analysis_eligible(item)]
-        selected = eligible if self.max_documents is None else eligible[: self.max_documents]
+        selected = self.select_for_deep_read(announcements, self.max_documents)
+        selected_ids = {item.get("id") for item in selected}
+        for item in announcements:
+            item["deep_read_selected"] = item.get("id") in selected_ids
         metadata_ms = int((time.perf_counter() - _t_meta) * 1000)
         self._emit_progress(
             "online_metadata_completed",
             announcement_count=len(announcements),
             eligible_count=len(eligible),
-            pdf_count=len(selected),
+            pdf_count=len(selected), selection_strategy="metadata_risk_relevance",
             elapsed_ms=metadata_ms,
         )
         # PDF 下载/解析总预算：超过预算的公告标记为未获取并继续（不阻塞流水线；

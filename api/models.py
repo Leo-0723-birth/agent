@@ -129,7 +129,7 @@ class ScanRequest(BaseModel):
     use_bge: bool = Field(True, description="是否启用BGE语义检索")
     max_documents: Optional[int] = Field(
         SCAN_MAX_DOCUMENTS, ge=1, le=150,
-        description="公告研读深读文档数：从近一年公告中按时间最近取前 N 份 PDF（50/100/150）",
+        description="公告研读深读文档数：近一年元数据全量检索后，按风险相关度取 Top-N（建议10-15）",
     )
     realtime: bool = Field(False, description="默认返回离线快照；为 true 时执行实时 Agent 流水线")
     force: bool = Field(False, description="是否取消当前任务并切换到新公司")
