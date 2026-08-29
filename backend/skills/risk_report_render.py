@@ -123,6 +123,120 @@ SUMMARY_SYSTEM = (
 )
 
 
+# ================= 增强版：有原文引用的分段解读输入 =================
+def build_rich_report_input(ctx, max_announcements=5, announce_chars=220, max_evidence=8) -> str:
+    """[增强版] 把 ctx 全量事实（含已核验证据原文、公告摘录、规则候选与抑制原因）
+    分段拼成报告 LLM 输入，支持生成『有原文引用的分段解读』。
+
+    数据接口（与上游 Agent 的约定，任何一项缺失均优雅降级）：
+      - ctx.prediction           概率/等级/置信度/shap_features
+      - ctx.financial.anomaly_list  财务异常（evidence 为原文片段）
+      - ctx.semantic.risk_factors   公告风险要素（evidence_valid=True 才视为已核验）
+      - ctx.semantic.evidence_snippets  原文证据片段（公告研读产出）
+      - ctx.semantic.per_announcement[*].suppressed_rule_hits  规则候选及抑制原因
+      - ctx.semantic.channel_summary   三通道统计
+      - ctx.cases               相似案例
+    """
+    pred = ctx.prediction or {}
+    fin = ctx.financial
+    att = ctx.attribution or {}
+    sem = ctx.semantic
+
+    secs = []
+
+    # ① 预测结论
+    lines = [f"【① 预测结论】公司 {ctx.company} {ctx.name or ''}；预测时点 {ctx.as_of}；窗口 {ctx.window} 天"]
+    lines.append(
+        f"概率 30d/60d/90d = {pred.get('probability_30d')}/{pred.get('probability_60d')}/{pred.get('probability_90d')}"
+        f"；风险等级 {pred.get('risk_level')}；置信度 {pred.get('confidence')}")
+    secs.append("\n".join(lines))
+
+    # ② Top 风险诱因（SHAP）
+    top = att.get("top_risk_factors", [])[:5]
+    if top:
+        secs.append("【② Top 风险诱因】" + "；".join(
+            f"{t.get('desc') or t.get('feature')}"
+            + (f"(SHAP {t.get('shap'):+.3f})" if t.get("shap") is not None else "")
+            for t in top))
+
+    # ③ 财务异常（原文）
+    if fin.anomaly_list:
+        secs.append("【③ 财务异常】" + "；".join(
+            f"{a.get('type')}({a.get('severity')}级)：{str(a.get('evidence', ''))[:60]}"
+            for a in fin.anomaly_list[:5]))
+
+    # ④ 证据：先列已核验证据（可引用原文），无核验时列出规则候选（明确标注未核验）
+    verified = publishable_evidence(sem.risk_factors)[:max_evidence]
+    if verified:
+        ev_lines = []
+        for r in verified:
+            ev_lines.append(
+                f"- [{r.get('category')}/{r.get('taxonomy_l2', '')}] "
+                f"{str(r.get('description', ''))[:50]}｜原文：{str(r.get('evidence', ''))[:announce_chars]}")
+        secs.append("【④ 已核验证据（可引用原文）】\n" + "\n".join(ev_lines))
+    else:
+        candidates = [
+            r for r in (sem.risk_factors or [])
+            if r.get("evidence_valid") and not (
+                r.get("suppression_reason") or r.get("contextual_suppression_reason"))
+        ][:max_evidence]
+        if candidates:
+            cand_lines = []
+            for r in candidates:
+                cand_lines.append(
+                    f"- [候选/未核验] [{r.get('category')}/{r.get('taxonomy_l2', '')}] "
+                    f"{str(r.get('description', ''))[:50]}｜原文：{str(r.get('evidence', ''))[:announce_chars]}")
+            secs.append("【④ 规则候选信号（未核验，仅供核查线索，需人工复核）】\n" + "\n".join(cand_lines))
+        else:
+            secs.append("【④ 证据】无（公告研读未提供证据或 LLM 通道关闭）")
+
+    # ⑤ 公告原文摘录（Top N 公告，每份截断；按证据片段分组作为原文代表）
+    anns = sem.announcements[:max_announcements]
+    if anns:
+        ann_lines = []
+        for a in anns:
+            aid = a.get("id") or a.get("announcement_id")
+            snippets = [s.get("text", "") for s in sem.evidence_snippets
+                        if s.get("announcement_id") in (aid, a.get("id")) and s.get("text")]
+            excerpt = "；".join(snippets)[:announce_chars]
+            ann_lines.append(
+                f"- [{a.get('date')}] {str(a.get('title', ''))[:40]}：{excerpt or '（该公告无原文摘录，可调 get_text 加载全文）'}")
+        secs.append("【⑤ 公告原文摘录】\n" + "\n".join(ann_lines))
+
+    # ⑥ 规则候选与抑制原因
+    sup_lines = []
+    per = getattr(sem, "per_announcement", {}) or {}
+    for ann_id, info in list(per.items())[:5]:
+        hits = info.get("suppressed_rule_hits", []) if isinstance(info, dict) else []
+        for h in hits[:3]:
+            reason = h.get("suppression_reason") or h.get("matched_key") or ""
+            sup_lines.append(f"- 公告{ann_id} 规则命中被抑制：{reason}")
+    cs = sem.channel_summary or {}
+    rule_stat = cs.get("rule") or {}
+    if rule_stat:
+        sup_lines.append(
+            f"- 规则通道：{rule_stat.get('factor_count')} 条候选，抑制 {rule_stat.get('suppressed_count')} 条"
+            f"（词典 {rule_stat.get('dictionary_version')}）")
+    if sup_lines:
+        secs.append("【⑥ 规则候选与抑制原因】\n" + "\n".join(sup_lines))
+
+    # ⑦ 相似案例
+    if ctx.cases:
+        secs.append("【⑦ 相似案例】" + "；".join(
+            f"{c.get('company')}({c.get('inquiry_type')},{c.get('publish_date')})" for c in ctx.cases[:3]))
+
+    return "\n\n".join(secs)
+
+
+SEGMENTED_SUMMARY_SYSTEM = (
+    "你是证券监管风控分析师。请根据【仅提供的事实】撰写《执行摘要》，分两段：\n"
+    "第一段「结论」：给概率与风险等级，列出主要风险诱因；\n"
+    "第二段「证据与核查」：引用【④ 已核验证据】或【⑤ 公告原文摘录】中的原文片段（用引号标注），"
+    "说明最需要核查的事项，并结合【⑥ 规则候选与抑制】提示被抑制的候选信号。\n"
+    "硬性要求：只使用提供的事实，禁止编造数字、事件或原文；不使用 markdown 符号；总长不超过 300 字。"
+)
+
+
 # ================= JSON 报告 =================
 def render_json(ctx, executive_summary=""):
     """把 ctx 全量转成结构化报告 dict（八章）。"""
