@@ -160,5 +160,13 @@ def realtime_f1_compatibility(ctx, manifest: dict) -> tuple[bool, dict]:
         "missing": len(missing),
         "missing_examples": missing[:10],
         "compatible": not missing,
+        "source": (getattr(getattr(ctx, "semantic", None), "f1_model_audit", {}) or {}).get(
+            "source", "not_generated"
+        ),
     }
+    if missing:
+        audit["reason"] = (
+            "当前公告研读只产出规则/LLM标量，尚未执行与训练一致的 "
+            "BGE-CLS→主题召回→reranker→FinBERT联合打分→208维聚合→冻结PCA50 流程"
+        )
     return not missing, audit
