@@ -59,6 +59,21 @@ def _resolve_device() -> str:
 
 def _bge_load():
     if _BGE["model"] is None:
+        # 优先复用 backend.skills.embedding 已加载的同一 BGE 实例：
+        # 同权重重复加载会让进程内出现 FinBERT+BGE×2 三套 torch 模型，
+        # Windows 上触发原生层崩溃且多占 1.3GB 内存。
+        try:
+            from .embedding import get_shared_bge
+
+            tokenizer, model, device = get_shared_bge()
+            _BGE["tokenizer"] = tokenizer
+            _BGE["model"] = model
+            _BGE["device"] = str(device)
+            print(f"[embedding] 复用共享 BGE 实例 (device={device})")
+            return _BGE["tokenizer"], _BGE["model"], _BGE["device"]
+        except Exception as exc:
+            print(f"[embedding] 共享 BGE 实例不可用，独立加载: {exc}")
+
         import torch
         from transformers import AutoModel, AutoTokenizer
 

@@ -28,7 +28,7 @@ from .models import (
     FinancialAnomalyItem,
     SimilarCaseItem,
 )
-from backend.config import PREDICTOR_HORIZONS, PREDICTOR_MODEL_DIR, RISK_THRESHOLDS
+from backend.config import PREDICTOR_HORIZONS, PREDICTOR_MODEL_DIR, RISK_THRESHOLDS, SCAN_MAX_DOCUMENTS, SCAN_USE_FINBERT
 from backend.skills.evidence_policy import publishable_evidence
 
 REPORTS_DIR = PROJECT_ROOT / "backend" / "data" / "output" / "reports"
@@ -489,6 +489,20 @@ def _build_text_summary(report: dict) -> str:
 _LEVEL_FROM_SEVERITY = {1: "低", 2: "低", 3: "中", 4: "高", 5: "高"}
 
 
+def _map_announcement_pdfs(report: dict) -> dict:
+    """公告 PDF 获取情况（近一年元数据 → 按时间最近深读前 N 份）。"""
+    dq = (report.get("semantic", {}) or {}).get("data_quality", {}) or {}
+    return {
+        "fetched": dq.get("pdf_attempted_count"),
+        "parsed": dq.get("pdf_parsed_count"),
+        "analyzed": dq.get("analyzed_document_count"),
+        "metadata_total": dq.get("announcement_count"),
+        "eligible": dq.get("analysis_eligible_count"),
+        "window_days": dq.get("lookback_days"),
+        "request_limit": dq.get("analyzed_document_count") if dq.get("document_limit_truncated") else None,
+    }
+
+
 def _map_announcement_risks(report: dict) -> list[AnnouncementRiskItem]:
     """semantic.risk_factors → 公告研读风险证据表。"""
     sem = report.get("semantic", {}) or {}
@@ -874,7 +888,7 @@ _orchestrator_pool: OrderedDict[str, "SweepingOrchestrator"] = OrderedDict()
 _orchestrator_pool_lock = threading.Lock()
 
 
-def get_orchestrator(use_llm: bool, use_finbert: bool, use_semantic_cases: bool = True, max_documents: int | None = 5):
+def get_orchestrator(use_llm: bool, use_finbert: bool, use_semantic_cases: bool = True, max_documents: int | None = SCAN_MAX_DOCUMENTS):
     """获取带 LRU 淘汰的 Orchestrator。key 按参数组合区分。
 
     限制最大缓存数量，避免参数组合过多时内存无限增长；命中时移动到队尾。
@@ -920,17 +934,18 @@ class StreamingOrchestrator:
         ("FinancialDetector", "financial", "财务异常", "检测财务指标异常与偏离度"),
         ("Predictor", "prediction", "预测建模", "XGBoost + SHAP 计算问询概率"),
         ("CaseRetriever", "case", "案例匹配", "BGE 语义检索历史问询案例"),
-        ("ChunkRetriever", "chunk", "段落召回", "chunk 级证据召回（可选）"),
         ("Attributor", "attribution", "归因分析", "聚合归因解释与风险叙事"),
         ("Reporter", "report", "报告生成", "渲染风控简报并落盘"),
     ]
 
     _AGENT_TIMEOUTS = {
-        "AnnouncementReader": 420,   # 公告研读最长（含 PDF/OCR/LLM）
+        # 公告研读最长（PDF/OCR/LLM + F1 训练同口径实时上游）；
+        # 满配 CPU 推理时 fullrun 上游单步可达数分钟，与 graph.py 的
+        # 自适应上限（420+300+600）对齐取 1200s。
+        "AnnouncementReader": 1200,
         "FinancialDetector": 240,
         "Predictor": 120,
         "CaseRetriever": 180,
-        "ChunkRetriever": 60,
         "Attributor": 60,
         "Reporter": 60,
     }
@@ -954,7 +969,6 @@ class StreamingOrchestrator:
         "FinancialDetector": "_run_financial",
         "Predictor": "_run_predict",
         "CaseRetriever": "_run_cases",
-        "ChunkRetriever": "_run_chunks",
         "Attributor": "_run_attribution",
         "Reporter": "_run_report",
     }
@@ -963,6 +977,12 @@ class StreamingOrchestrator:
         self.callback = callback
         self._active_agents: dict[str, tuple] = {}
         self._closed_agent_keys: set[str] = set()
+        self._run_start: float | None = None
+
+    def _elapsed_since_start(self) -> int:
+        if self._run_start is None:
+            return 0
+        return int((time.time() - self._run_start) * 1000)
 
     def _run_agent(self, runner, company, ctx, timeout):
         """在 daemon 线程执行单个 Agent，join(timeout) 看门狗。
@@ -1020,13 +1040,15 @@ class StreamingOrchestrator:
         return "ok", None
 
     def run(self, company: str, window: int = 60, as_of: str | None = None,
-            use_llm: bool = False, use_bge: bool = True, max_documents: int | None = 5,
+            use_llm: bool = True, use_bge: bool = True,
+            max_documents: int | None = SCAN_MAX_DOCUMENTS,
             cancel_event: threading.Event | None = None):
         from backend.context import Context
 
         orch = get_orchestrator(
             use_llm=use_llm,
-            use_finbert=False,           # 前端未暴露 FinBERT 开关，固定关闭以提速
+            # FinBERT 通道由后端配置统一控制（权重本地已缓存，进程级单例加载一次）
+            use_finbert=SCAN_USE_FINBERT,
             use_semantic_cases=use_bge,
             max_documents=max_documents,
         )
@@ -1043,6 +1065,7 @@ class StreamingOrchestrator:
 
             total = len(self._AGENT_ORDER)
             start_total = time.time()
+            self._run_start = start_total
 
             for idx, (agent_name, agent_key, display_name, desc) in enumerate(self._AGENT_ORDER, start=1):
                 if getattr(ctx, "cancel_event", None) is not None and ctx.cancel_event.is_set():
@@ -1056,8 +1079,15 @@ class StreamingOrchestrator:
                 if runner is None:
                     raise RuntimeError(f"未找到 Agent {agent_name} 的执行入口")
 
-                # 节点级看门狗：单个 Agent 挂死只跳过它，不阻塞后续环节
-                timeout = self._agent_timeout(agent_name)
+                # 节点级看门狗：单个 Agent 挂死只跳过它，不阻塞后续环节。
+                # 公告研读按深读份数扩展：F1 上游首算（rerank 交叉编码）在
+                # CPU 上约 20-40s/份为最大项，缓存后重复扫描仅剩下载/LLM。
+                timeout = self._AGENT_TIMEOUTS.get(agent_name, 120)
+                if agent_name == "AnnouncementReader":
+                    timeout = max(
+                        self._agent_timeout(agent_name),
+                        timeout + 24 * (max_documents or 0),
+                    )
                 if agent_name == "Reporter":
                     ctx.meta["runtime_quality"] = _evaluate_runtime_quality(ctx)
                 outcome, error = self._run_agent(runner, company, ctx, timeout)
@@ -1074,13 +1104,8 @@ class StreamingOrchestrator:
                     self._emit(idx, total, agent_name, agent_key, "skipped",
                                f"{display_name} Agent 超时跳过（{latency} ms）", latency, 100)
                 elif outcome == "error":
-                    # 段落召回失败可跳过，不打断流水线
-                    if agent_name == "ChunkRetriever":
-                        ctx.trace_log.append({"agent": agent_name, "status": "skipped", "reason": str(error), "trace_complete": True})
-                        self._emit(idx, total, agent_name, agent_key, "skipped", f"{display_name} Agent 跳过：{error}", latency, 100)
-                    else:
-                        self._emit(idx, total, agent_name, agent_key, "error", f"{display_name} Agent 失败：{error}", latency, 100)
-                        raise error
+                    self._emit(idx, total, agent_name, agent_key, "error", f"{display_name} Agent 失败：{error}", latency, 100)
+                    raise error
                 else:
                     self._emit(idx, total, agent_name, agent_key, "done", f"{display_name} Agent 完成（{latency} ms）", latency, 100)
 
@@ -1100,7 +1125,9 @@ class StreamingOrchestrator:
             status=status,
             progress_percent=progress_percent,
             message=message,
-            elapsed_ms=elapsed_ms,
+            # 事件级 elapsed_ms：任务启动至今的真实耗时；调用方显式传了
+            # 节点级 latency 时以调用方为准。
+            elapsed_ms=elapsed_ms or self._elapsed_since_start(),
         ))
 
     def _detail_callback(self, payload):
@@ -1121,12 +1148,27 @@ class StreamingOrchestrator:
             count = max(1, int(payload.get("total", 1) or 1))
             percent = 15 + int(25 * current / count)
             message = f"正在下载/解析第 {current}/{count} 份公告 PDF"
+        elif event == "pdf_processing_completed":
+            downloaded = payload.get("downloaded")
+            total = payload.get("total")
+            if downloaded is not None:
+                message = f"公告 PDF 下载解析完成：成功获取 {downloaded}/{total} 份"
+            percent = 42
+        elif event == "llm_processing":
+            current = int(payload.get("current", 0) or 0)
+            count = max(1, int(payload.get("total", 1) or 1))
+            percent = 84 + int(8 * current / count)
+            message = f"LLM 精细抽取第 {current}/{count} 份公告"
         event_map = {
             "offline_snapshot_started": (8, "正在检查官方公告离线快照"),
             "offline_snapshot_completed": (35, "已加载官方公告离线快照"),
             "online_company_started": (8, "正在校验公司与交易所代码"),
             "online_metadata_started": (12, "正在获取公告列表"),
-            "online_metadata_completed": (15, f"已获取公告列表，共 {payload.get('announcement_count', 0)} 份"),
+            "online_metadata_completed": (
+                15,
+                f"近一年公告共 {payload.get('announcement_count', 0)} 份，"
+                f"按时间最近选取 {payload.get('pdf_count', 0)} 份 PDF 深读",
+            ),
             "pdf_processing": (percent, message),
             "pdf_processing_completed": (42, "公告 PDF 下载与 OCR 解析完成"),
             "rule_analysis_started": (45, "正在匹配风险词典"),
@@ -1263,6 +1305,7 @@ def offline_to_response_from_report(report: dict, window: int = 60) -> AnalyzeRe
         confidenceMeaning=scorecard.get("confidence_meaning", "predicted_class_score"),
         dataSource=data_source,
         dataCoverage=(report.get("profile", {}) or {}).get("coverage") or scorecard.get("coverage") or {},
+        announcementPdfs=_map_announcement_pdfs(report),
         degradedReasons=degraded_reasons,
         featureAnchor=str(scorecard.get("feature_anchor") or ""),
         modelVersion=model_version,
@@ -1547,7 +1590,14 @@ async def run_scan_task(state: TaskState, req: ScanRequest):
                         cancel_event=state.cancel_event,
                     ),
                 ),
-                timeout=pipeline_timeout,
+                # 总超时随深读份数扩展：下载/解析/LLM/F1 切块嵌入均按份线性
+                # 增长（F1 嵌入在 OMP=2 的 CPU 上约 15-25s/份为主项），
+                # 50 份 ≈ 35 分钟，150 份 ≈ 1.5 小时。
+                timeout=max(
+                    pipeline_timeout,
+                    600,
+                    3600 + 40 * (req.max_documents or 0),
+                ),
             )
             if state.cancel_event.is_set():
                 raise PipelineCancelled("任务已取消")
@@ -1591,11 +1641,18 @@ async def run_scan_task(state: TaskState, req: ScanRequest):
         fullrun_enabled = os.getenv(
             "F1_ONLINE_SEMANTICS_ENABLED", "auto"
         ).lower() in {"1", "true", "yes", "on"}
-        timeout = os.getenv(
+        configured_timeout = int(os.getenv(
             "REALTIME_PIPELINE_TIMEOUT_SECONDS", "3900" if fullrun_enabled else "600"
+        ))
+        effective_timeout = max(
+            configured_timeout,
+            600,
+            3600 + 40 * (req.max_documents or 0),
         )
         await _fallback_after_error(
-            state, req, f"实时扫雷超过 {timeout} 秒运行上限。"
+            state, req,
+            f"实时扫雷总超时（{effective_timeout}s，"
+            f"深读 {req.max_documents or 0} 份）。可在参数区减少公告份数后重试。"
         )
     except Exception as exc:
         if state.cancel_event.is_set():

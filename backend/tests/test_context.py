@@ -14,7 +14,6 @@ def test_context_defaults():
     assert ctx.semantic.risk_factors == []
     assert ctx.trace_log == []
     assert ctx.semantic.f1_features == {}
-    assert ctx.semantic.f1_vector is None
 
 
 def test_context_write_and_to_dict():

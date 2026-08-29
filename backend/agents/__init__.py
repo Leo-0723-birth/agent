@@ -3,14 +3,13 @@
 from .base import AgentBase, TraceLogger
 
 __all__ = ["AgentBase", "TraceLogger", "AnnouncementReaderAgent",
-           "FinancialDetectorAgent", "CaseRetrieverAgent", "ChunkRetrieverAgent",
+           "FinancialDetectorAgent", "CaseRetrieverAgent",
            "AttributorAgent", "ReporterAgent", "SweepingOrchestrator"]
 
 _LAZY_EXPORTS = {
     "AnnouncementReaderAgent": (".announcement_reader", "AnnouncementReaderAgent"),
     "FinancialDetectorAgent": (".financial_detector", "FinancialDetectorAgent"),
     "CaseRetrieverAgent": (".case_retriever", "CaseRetrieverAgent"),
-    "ChunkRetrieverAgent": (".chunk_retriever", "ChunkRetrieverAgent"),
     "AttributorAgent": (".attributor", "AttributorAgent"),
     "ReporterAgent": (".reporter", "ReporterAgent"),
     "SweepingOrchestrator": (".orchestrator", "SweepingOrchestrator"),

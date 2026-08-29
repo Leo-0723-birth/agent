@@ -13,7 +13,6 @@ Top-50 召回（阈值 0.42、最多 8 主题）→ bge-reranker-v2-m3 精排
 from __future__ import annotations
 
 import json
-import gc
 import os
 import re
 from collections import defaultdict
@@ -95,61 +94,84 @@ class FullRunOnlineSemanticPipeline:
         self.batch_size = int(batch_size or os.getenv("F1_ONLINE_BATCH_SIZE", "32"))
         query_bundle = json.loads(QUERY_PATH.read_text(encoding="utf-8"))
         self.themes = [query_bundle["themes"][key] for key in sorted(query_bundle["themes"])]
-        self._active_kind = None
-        self._tokenizer = None
-        self._model = None
+        self._models = None
         self._query_vectors = None
         self._rule_extractor = None
-        self._cancel_event = None
-
-    def _check_cancel(self):
-        if self._cancel_event is not None and self._cancel_event.is_set():
-            raise RuntimeError("实时公告语义处理已取消")
 
     @staticmethod
-    def _load_hf(kind, model_class):
+    def _load_hf(kind, model_class, extra=None):
         from transformers import AutoTokenizer
 
         repo, revision = MODEL_SPECS[kind]
         path = os.getenv(f"F1_{kind.upper()}_MODEL_PATH") or repo
         kwargs = {} if Path(path).exists() else {"revision": revision}
         tokenizer = AutoTokenizer.from_pretrained(path, **kwargs)
-        model = model_class.from_pretrained(path, **kwargs)
+        model = model_class.from_pretrained(path, **(kwargs | (extra or {})))
         return tokenizer, model, path, revision
 
-    def _load_stage(self, kind):
-        """只让一个大模型驻留内存，避免三模型并存造成 OOM。"""
-        if self._active_kind == kind and self._model is not None:
+    def _load_models(self, load_bge=True):
+        if self._models is not None:
             return
-        self._release_stage()
         from transformers import AutoModel, AutoModelForSequenceClassification
 
-        model_class = AutoModel if kind == "bge" else AutoModelForSequenceClassification
-        tokenizer, model, _, _ = self._load_hf(kind, model_class)
-        if self.device.startswith("cuda"):
-            model = model.half()
-        self._active_kind = kind
-        self._tokenizer = tokenizer
-        self._model = model.to(self.device).eval()
+        # load_bge=False（低内存子进程模式）：BGE 向量由调用方预计算传入，
+        # 本进程只加载 reranker+finbert，峰值内存从 ~4.6GB 降到 ~3.3GB，
+        # 避免与服务端模型叠加后在 8GB 机器上触发内存耗尽段错误。
+        if load_bge:
+            # BGE 复用 backend.skills.embedding 的进程级共享实例：同一份 1.3GB 权重
+            # 若再独立加载，进程内会同时存在多套 torch 模型，Windows 上稳定触发
+            # 原生段错误（exit 139）。
+            f1_bge_path = os.getenv("F1_BGE_MODEL_PATH")
+            try:
+                from .embedding import get_shared_bge
 
-    def _release_stage(self):
-        """释放当前阶段权重，并归还 CPU/GPU 缓存。"""
-        self._model = None
-        self._tokenizer = None
-        self._active_kind = None
-        gc.collect()
-        if self.device.startswith("cuda") and self.torch.cuda.is_available():
-            self.torch.cuda.empty_cache()
+                bge_tok, bge, device = get_shared_bge(
+                    prefer_dir=f1_bge_path if f1_bge_path and Path(f1_bge_path).exists() else None
+                )
+                if device != self.device:
+                    bge = bge.to(self.device).eval()
+            except Exception:
+                bge_tok, bge, _, _ = self._load_hf("bge", AutoModel)
+            rr_tok, rerank, _, _ = self._load_hf("rerank", AutoModelForSequenceClassification)
+            fin_tok, finbert, _, _ = self._load_hf("finbert", AutoModelForSequenceClassification)
+            dtype_half = self.device.startswith("cuda")
+            if dtype_half:
+                rerank, finbert = rerank.half(), finbert.half()
+            self._models = (
+                bge_tok, bge.to(self.device).eval(),
+                rr_tok, rerank.to(self.device).eval(),
+                fin_tok, finbert.to(self.device).eval(),
+            )
+            query_texts = [item["query_for_embedding"] for item in self.themes]
+            self._query_vectors = self._embed(query_texts, query=True)
+        else:
+            # F1_RERANK_DTYPE=bf16：权重以 bf16 驻留（提交内存 2.2G→1.1G）。
+            # 分数与 fp32 训练口径有第三位小数级漂移，远优于内存不足时整链路失败。
+            dtype_env = os.getenv("F1_RERANK_DTYPE", "fp32").strip().lower()
+            extra = {}
+            if dtype_env == "bf16":
+                import torch
+
+                extra["torch_dtype"] = torch.bfloat16
+            rr_tok, rerank, _, _ = self._load_hf(
+                "rerank", AutoModelForSequenceClassification, extra=extra
+            )
+            fin_tok, finbert, _, _ = self._load_hf("finbert", AutoModelForSequenceClassification)
+            dtype_half = self.device.startswith("cuda")
+            if dtype_half:
+                rerank, finbert = rerank.half(), finbert.half()
+            self._models = (
+                None, None,
+                rr_tok, rerank.to(self.device).eval(),
+                fin_tok, finbert.to(self.device).eval(),
+            )
 
     def _batches(self, values):
         for start in range(0, len(values), self.batch_size):
-            self._check_cancel()
             yield start, values[start:start + self.batch_size]
 
     def _embed(self, texts, query=False):
-        if self._active_kind != "bge":
-            raise RuntimeError("BGE 阶段尚未加载")
-        bge_tok, bge = self._tokenizer, self._model
+        bge_tok, bge = self._models[0], self._models[1]
         output = []
         for _, batch in self._batches(texts):
             encoded = bge_tok(
@@ -163,9 +185,7 @@ class FullRunOnlineSemanticPipeline:
         return np.concatenate(output) if output else np.empty((0, 1024), dtype=np.float32)
 
     def _rerank(self, queries, texts):
-        if self._active_kind != "rerank":
-            raise RuntimeError("reranker 阶段尚未加载")
-        tok, model = self._tokenizer, self._model
+        tok, model = self._models[2], self._models[3]
         output = np.empty(len(texts), dtype=np.float32)
         for start, indices in self._batches(list(range(len(texts)))):
             encoded = tok(
@@ -179,9 +199,7 @@ class FullRunOnlineSemanticPipeline:
         return output
 
     def _sentiment(self, texts):
-        if self._active_kind != "finbert":
-            raise RuntimeError("FinBERT 阶段尚未加载")
-        tok, model = self._tokenizer, self._model
+        tok, model = self._models[4], self._models[5]
         id2label = getattr(model.config, "id2label", {}) or {}
         label_indices = {}
         for index, label in id2label.items():
@@ -226,139 +244,143 @@ class FullRunOnlineSemanticPipeline:
                 counts[theme]["effective"] += 1
         return counts
 
-    def analyze(self, announcements, company_code="", cancel_event=None):
-        self._cancel_event = cancel_event
-        work = []
+    def _rows_for_doc(self, announcement, text, chunk_texts, chunk_vectors, company_code, output):
+        """单文档：召回→精排→情绪→主题行（标准入口与预计算入口共用）。"""
+        similarities = self._query_vectors @ chunk_vectors.T
+        maxima = similarities.max(axis=1)
+        active = np.flatnonzero(maxima >= 0.42)
+        if len(active) > 8:
+            active = active[np.argsort(maxima[active])[-8:]]
+        candidates = []
+        for theme_index in active:
+            top = np.argsort(similarities[theme_index])[-min(50, len(pieces)):][::-1]
+            for rank, chunk_index in enumerate(top, 1):
+                candidates.append({
+                    "theme_index": int(theme_index), "chunk_index": int(chunk_index),
+                    "bge_score": float(similarities[theme_index, chunk_index]),
+                    "bge_rank": rank,
+                })
+        if not candidates:
+            return
+        queries = [self.themes[row["theme_index"]]["query_text"] for row in candidates]
+        evidence = [chunk_texts[row["chunk_index"]] for row in candidates]
+        rerank_scores = self._rerank(queries, evidence)
+        for row, score in zip(candidates, rerank_scores):
+            row["rerank_score"] = float(score)
+        selected = []
+        by_theme = defaultdict(list)
+        for row in candidates:
+            by_theme[row["theme_index"]].append(row)
+        for rows in by_theme.values():
+            selected.extend(sorted(rows, key=lambda value: -value["rerank_score"])[:20])
+        selected = sorted(selected, key=lambda value: -value["rerank_score"])[:100]
+        selected_text = [chunk_texts[row["chunk_index"]] for row in selected]
+        sentiment = self._sentiment(selected_text)
+        for row, probs, evidence_text in zip(selected, sentiment, selected_text):
+            row.update({
+                "sent_neg": float(probs[0]), "sent_neu": float(probs[1]),
+                "sent_pos": float(probs[2]), "evidence_text": evidence_text,
+                "negation_flag": bool(RE_NEGATION.search(evidence_text)),
+                "hedge_flag": bool(RE_HEDGE.search(evidence_text)),
+                "strong_flag": bool(RE_STRONG.search(evidence_text)),
+            })
+            sigmoid = 1.0 / (1.0 + np.exp(-row["rerank_score"]))
+            context_weight = (
+                (0.25 if row["negation_flag"] else 1.0)
+                * (0.40 if row["hedge_flag"] else 1.0)
+                * (1.30 if row["strong_flag"] else 1.0)
+            )
+            row["risk_strength"] = float(
+                sigmoid * (0.5 + 0.5 * (row["sent_neg"] - row["sent_pos"]))
+                * context_weight
+            )
+            neg_ratio = row["sent_neg"] / (row["sent_neg"] + row["sent_pos"] + 1e-6)
+            row["risk_strength_v2"] = float(
+                sigmoid * (0.30 + 0.70 * neg_ratio) * context_weight
+            )
+        rules = self._rule_counts(text)
+        for theme_index, rows in by_theme.items():
+            rows = [row for row in selected if row["theme_index"] == theme_index]
+            if not rows:
+                continue
+            theme = self.themes[theme_index]
+            strengths = sorted((row["risk_strength_v2"] for row in rows), reverse=True)
+            rule = rules.get(theme["risk_theme"], {})
+            top = sorted(rows, key=lambda value: -value["risk_strength"])[:3]
+            output.append({
+                "announcement_id": announcement.get("announcement_id") or announcement.get("id"),
+                "company_code": company_code,
+                "publish_date": announcement.get("published_at") or announcement.get("date"),
+                "doc_type": announcement.get("category") or announcement.get("type") or "",
+                "risk_theme": theme["risk_theme"], "l1_code": theme["l1_code"],
+                "evidence_count": len(rows),
+                "rerank_score_max": max(row["rerank_score"] for row in rows),
+                "sent_neg_max": max(row["sent_neg"] for row in rows),
+                "strong_count": sum(row["strong_flag"] for row in rows),
+                "risk_strength_v2_top3": float(np.mean(strengths[:3])),
+                "rule_effective_hits": int(rule.get("effective", 0)),
+                "rule_negated_hits": int(rule.get("negated", 0)),
+                "rule_excluded_hits": int(rule.get("excluded", 0)),
+                "top_evidence": json.dumps([
+                    {"chunk_index": row["chunk_index"], "bge_rank": row["bge_rank"],
+                     "rerank_score": round(row["rerank_score"], 4),
+                     "risk_strength": round(row["risk_strength"], 4),
+                     "text": row["evidence_text"][:250]}
+                    for row in top
+                ], ensure_ascii=False),
+            })
+
+    def analyze(self, announcements, company_code="", embed_fn=None, query_vectors=None):
+        """标准入口：进程内加载三模型并计算向量。
+
+        embed_fn/query_vectors：低内存模式下由调用方传入 BGE 向量计算函数与
+        主题查询向量（与训练同口径的 CLS 池化），此时本进程不加载 BGE。
+        """
+        self._load_models(load_bge=embed_fn is None)
+        if query_vectors is not None:
+            self._query_vectors = np.asarray(query_vectors, dtype=np.float32)
+        embed = embed_fn or self._embed
         output = []
-        try:
-            # 1) BGE：只保存轻量候选和文本，不保留 chunk embedding。
-            self._load_stage("bge")
-            query_texts = [item["query_for_embedding"] for item in self.themes]
-            self._query_vectors = self._embed(query_texts, query=True)
-            for announcement in announcements:
-                self._check_cancel()
-                text = str(announcement.get("text") or "")
-                pieces = split_into_chunks(text)
-                if not pieces:
-                    continue
-                chunk_texts = [item[1] for item in pieces]
-                chunk_vectors = self._embed(chunk_texts)
-                similarities = self._query_vectors @ chunk_vectors.T
-                maxima = similarities.max(axis=1)
-                active = np.flatnonzero(maxima >= 0.42)
-                if len(active) > 8:
-                    active = active[np.argsort(maxima[active])[-8:]]
-                candidates = []
-                for theme_index in active:
-                    top = np.argsort(similarities[theme_index])[-min(50, len(pieces)):][::-1]
-                    for rank, chunk_index in enumerate(top, 1):
-                        candidates.append({
-                            "theme_index": int(theme_index), "chunk_index": int(chunk_index),
-                            "bge_score": float(similarities[theme_index, chunk_index]),
-                            "bge_rank": rank,
-                        })
-                if candidates:
-                    work.append({"announcement": announcement, "text": text,
-                                 "chunk_texts": chunk_texts, "candidates": candidates})
-            self._query_vectors = None
-            self._release_stage()
+        for announcement in announcements:
+            text = str(announcement.get("text") or "")
+            pieces = split_into_chunks(text)
+            if not pieces:
+                continue
+            chunk_texts = [item[1] for item in pieces]
+            chunk_vectors = embed(chunk_texts)
+            self._rows_for_doc(announcement, text, chunk_texts, chunk_vectors, company_code, output)
+        return output, self._audit(len(announcements), output)
 
-            # 2) reranker：公告内每主题 Top-20，再取公告全局 Top-100。
-            self._load_stage("rerank")
-            for item in work:
-                self._check_cancel()
-                candidates, chunk_texts = item["candidates"], item["chunk_texts"]
-                queries = [self.themes[row["theme_index"]]["query_text"] for row in candidates]
-                evidence = [chunk_texts[row["chunk_index"]] for row in candidates]
-                rerank_scores = self._rerank(queries, evidence)
-                for row, score in zip(candidates, rerank_scores):
-                    row["rerank_score"] = float(score)
-                by_theme = defaultdict(list)
-                for row in candidates:
-                    by_theme[row["theme_index"]].append(row)
-                selected = []
-                for rows in by_theme.values():
-                    selected.extend(sorted(rows, key=lambda value: -value["rerank_score"])[:20])
-                item["selected"] = sorted(
-                    selected, key=lambda value: -value["rerank_score"]
-                )[:100]
-                item.pop("candidates", None)
-            self._release_stage()
+    def analyze_precomputed(self, documents, company_code, query_vectors):
+        """低内存入口：BGE 向量（主题查询 + 每文档切块）由调用方预计算。
 
-            # 3) FinBERT：只处理精排后的证据，然后生成公告×主题行。
-            self._load_stage("finbert")
-            for item in work:
-                self._check_cancel()
-                announcement, text = item["announcement"], item["text"]
-                chunk_texts, selected = item["chunk_texts"], item["selected"]
-                selected_text = [chunk_texts[row["chunk_index"]] for row in selected]
-                sentiment = self._sentiment(selected_text)
-                for row, probs, evidence_text in zip(selected, sentiment, selected_text):
-                    row.update({
-                        "sent_neg": float(probs[0]), "sent_neu": float(probs[1]),
-                        "sent_pos": float(probs[2]), "evidence_text": evidence_text,
-                        "negation_flag": bool(RE_NEGATION.search(evidence_text)),
-                        "hedge_flag": bool(RE_HEDGE.search(evidence_text)),
-                        "strong_flag": bool(RE_STRONG.search(evidence_text)),
-                    })
-                    sigmoid = 1.0 / (1.0 + np.exp(-row["rerank_score"]))
-                    context_weight = (
-                        (0.25 if row["negation_flag"] else 1.0)
-                        * (0.40 if row["hedge_flag"] else 1.0)
-                        * (1.30 if row["strong_flag"] else 1.0)
-                    )
-                    row["risk_strength"] = float(
-                        sigmoid * (0.5 + 0.5 * (row["sent_neg"] - row["sent_pos"]))
-                        * context_weight
-                    )
-                    neg_ratio = row["sent_neg"] / (
-                        row["sent_neg"] + row["sent_pos"] + 1e-6
-                    )
-                    row["risk_strength_v2"] = float(
-                        sigmoid * (0.30 + 0.70 * neg_ratio) * context_weight
-                    )
-                rules = self._rule_counts(text)
-                theme_indices = sorted({row["theme_index"] for row in selected})
-                for theme_index in theme_indices:
-                    rows = [
-                        row for row in selected if row["theme_index"] == theme_index
-                    ]
-                    if not rows:
-                        continue
-                    theme = self.themes[theme_index]
-                    strengths = sorted(
-                        (row["risk_strength_v2"] for row in rows), reverse=True
-                    )
-                    rule = rules.get(theme["risk_theme"], {})
-                    top = sorted(rows, key=lambda value: -value["risk_strength"])[:3]
-                    output.append({
-                        "announcement_id": announcement.get("announcement_id") or announcement.get("id"),
-                        "company_code": company_code,
-                        "publish_date": announcement.get("published_at") or announcement.get("date"),
-                        "doc_type": announcement.get("category") or announcement.get("type") or "",
-                        "risk_theme": theme["risk_theme"], "l1_code": theme["l1_code"],
-                        "evidence_count": len(rows),
-                        "rerank_score_max": max(row["rerank_score"] for row in rows),
-                        "sent_neg_max": max(row["sent_neg"] for row in rows),
-                        "strong_count": sum(row["strong_flag"] for row in rows),
-                        "risk_strength_v2_top3": float(np.mean(strengths[:3])),
-                        "rule_effective_hits": int(rule.get("effective", 0)),
-                        "rule_negated_hits": int(rule.get("negated", 0)),
-                        "rule_excluded_hits": int(rule.get("excluded", 0)),
-                        "top_evidence": json.dumps([
-                            {"chunk_index": row["chunk_index"], "bge_rank": row["bge_rank"],
-                             "rerank_score": round(row["rerank_score"], 4),
-                             "risk_strength": round(row["risk_strength"], 4),
-                             "text": row["evidence_text"][:250]}
-                            for row in top
-                        ], ensure_ascii=False),
-                    })
-        finally:
-            self._query_vectors = None
-            self._release_stage()
-            self._cancel_event = None
+        documents: [{"announcement": {...含 text 用于规则计数...},
+                     "chunk_texts": [...], "chunk_vectors": [[...]]}]
+        本进程只加载 reranker + finbert-tone，峰值内存约 3.3GB。
+        """
+        self._load_models(load_bge=False)
+        self._query_vectors = np.asarray(query_vectors, dtype=np.float32)
+        output = []
+        for document in documents:
+            announcement = document["announcement"]
+            text = str(announcement.get("text") or "")
+            chunk_texts = list(document["chunk_texts"])
+            chunk_vectors = np.asarray(document["chunk_vectors"], dtype=np.float32)
+            if not chunk_texts:
+                continue
+            self._rows_for_doc(announcement, text, chunk_texts, chunk_vectors, company_code, output)
+        return output, self._audit(len(documents), output)
+
+    def _audit(self, announcement_count, output):
+        return {
+            "status": "generated", "pipeline": "fullrun-online-v1",
+            "device": self.device, "announcement_count": announcement_count,
+            "announcement_theme_rows": len(output), "model_revisions": {
+                key: value[1] for key, value in MODEL_SPECS.items()
+            },
+        }
         return output, {
-            "status": "generated", "pipeline": "fullrun-online-v2-staged",
+            "status": "generated", "pipeline": "fullrun-online-v1",
             "device": self.device, "announcement_count": len(announcements),
             "announcement_theme_rows": len(output), "model_revisions": {
                 key: value[1] for key, value in MODEL_SPECS.items()

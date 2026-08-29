@@ -121,8 +121,13 @@ class ReporterAgent(AgentBase):
     # ============ 主入口 ============
     def execute(self, company, ctx):
         summary = self._executive_summary(ctx)
-        report_json = risk_report_render.render_json(ctx, executive_summary=summary)
-        markdown = risk_report_render.render_markdown(ctx, executive_summary=summary)
+        interpretation = risk_report_render.announcement_interpretation(ctx)
+        report_json = risk_report_render.render_json(
+            ctx, executive_summary=summary, announcement_interpretation=interpretation
+        )
+        markdown = risk_report_render.render_markdown(
+            ctx, executive_summary=summary, announcement_interpretation=interpretation
+        )
         ctx.report = {"json": report_json, "markdown": markdown}
         self._save_report(ctx, report_json, markdown)
         return ctx

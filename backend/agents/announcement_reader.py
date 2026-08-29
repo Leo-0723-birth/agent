@@ -7,15 +7,15 @@ import hashlib
 import logging
 import os
 import re
+import time
 from collections import Counter
 from datetime import date
+from pathlib import Path
 
 from ..config import (
     ANNOUNCE_MAX_DOCUMENTS,
     ANNOUNCE_SOURCE,
     ANNOUNCE_WINDOW_DAYS,
-    EMBEDDING_BACKEND,
-    EMBEDDING_MODEL,
     F1_DECAY_HALF_LIFE_DAYS,
     FINBERT_GATE,
     FINBERT_ENABLED,
@@ -111,9 +111,9 @@ class AnnouncementReaderAgent(AgentBase):
         self.finbert_error = ""
         if self.use_finbert and FINBERT_ENABLED:
             try:
-                from ..skills.finbert_classify import FinBERTClient
+                from ..skills.finbert_classify import get_finbert_client
 
-                self.finbert = FinBERTClient()
+                self.finbert = get_finbert_client()
             except Exception as exc:
                 self.finbert_error = f"{type(exc).__name__}: {exc}"
 
@@ -125,7 +125,10 @@ class AnnouncementReaderAgent(AgentBase):
 
         return CompetitionAwareAnnouncementSource(
             CninfoAnnouncementSource(
-                max_documents=ANNOUNCE_MAX_DOCUMENTS,
+                # 必须用 self.max_documents（含 ScanRequest.max_documents 的实际请求值），
+                # 否则源始终按 ANNOUNCE_MAX_DOCUMENTS=120 下载 PDF，请求的 5 份限制
+                # 只截断元数据列表，PDF 已全部下载完。
+                max_documents=self.max_documents,
                 progress_callback=self.progress_callback,
             ),
             progress_callback=self.progress_callback,
@@ -265,6 +268,10 @@ class AnnouncementReaderAgent(AgentBase):
 
     def _llm_extract(self, company_name, announcements, cancel_event=None):
         factors, rejected, rejected_context, failed, per_announcement = [], 0, 0, 0, {}
+        # 子进度只对有正文的公告计数：无正文的直接标记 no_full_text，
+        # 避免进度显示“第 1/147 份”而其中绝大多数实际是秒过跳过。
+        total_docs = sum(1 for item in announcements if (item.get("text") or "").strip())
+        processed = 0
         for item in announcements:
             if cancel_event is not None and cancel_event.is_set():
                 raise RuntimeError("任务已取消")
@@ -272,6 +279,13 @@ class AnnouncementReaderAgent(AgentBase):
             if not text:
                 per_announcement[item["id"]] = {"llm_factors": [], "status": "no_full_text"}
                 continue
+            processed += 1
+            self._emit_progress(
+                "llm_processing",
+                current=processed,
+                total=total_docs,
+                title=item.get("title", ""),
+            )
             prompt_text = text[: self.max_text_chars]
             prompt = f"""你是上市公司公告证据抽取器。只能依据给出的公告正文，不得补充外部事实。
 公司：{company_name}
@@ -445,6 +459,105 @@ class AnnouncementReaderAgent(AgentBase):
             "probability_status": "F1是文本特征，不是风险概率",
         }
 
+    _f1_vec_cache: dict = {}
+    _f1_vec_cache_loaded = False
+
+    @classmethod
+    def _cached_cls_vectors(cls, texts, max_length):
+        """按内容哈希缓存 CLS 向量：重复扫雷时嵌入秒出（50 份全量嵌入
+        在 OMP=2 的 CPU 上需 15-25 分钟，是实时扫雷的主要耗时项）。"""
+        import hashlib
+        import json as _json
+
+        from ..config import DATA_DIR
+        from ..skills.embedding import embed_cls_shared
+
+        cache_path = Path(DATA_DIR) / "cache" / "f1_chunk_vec_cache.json"
+        if not cls._f1_vec_cache_loaded:
+            try:
+                cls._f1_vec_cache = _json.loads(cache_path.read_text(encoding="utf-8"))
+            except Exception:
+                cls._f1_vec_cache = {}
+            cls._f1_vec_cache_loaded = True
+
+        keys = [
+            hashlib.sha256(f"{max_length}|{text}".encode("utf-8")).hexdigest()
+            for text in texts
+        ]
+        missing = [i for i, key in enumerate(keys) if key not in cls._f1_vec_cache]
+        if missing:
+            vectors = embed_cls_shared([texts[i] for i in missing], max_length=max_length)
+            for i, vec in zip(missing, vectors):
+                cls._f1_vec_cache[keys[i]] = [round(float(v), 6) for v in vec]
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                entries = list(cls._f1_vec_cache.items())[-20000:]  # 容量上限防膨胀
+                cache_path.write_text(
+                    _json.dumps(dict(entries), ensure_ascii=False), encoding="utf-8"
+                )
+            except OSError:
+                pass
+        return [cls._f1_vec_cache[key] for key in keys]
+
+    @classmethod
+    def _run_fullrun_subprocess(cls, documents, company_code, timeout_seconds=900):
+        """在独立进程中执行 F1 训练同口径语义上游（低内存协议）。
+
+        8GB 机器的内存约束：服务端已驻留 FinBERT2+BGE，worker 若再加载
+        BGE+reranker+finbert-tone 必然超限触发原生段错误（0xC0000005）。
+        因此 BGE 向量（主题查询 + 每文档切块，CLS 池化与训练同口径）在
+        本进程用共享实例预计算，子进程只加载 reranker+finbert-tone。
+        worker 崩溃只损失本次语义特征（回退填 0），主服务不受影响。
+        """
+        import json as _json
+        import subprocess
+        import sys as _sys
+
+        from ..skills import fullrun_online_semantics as _f1mod
+        from ..skills.embedding import embed_cls_shared
+
+        pipeline = _f1mod.FullRunOnlineSemanticPipeline()
+        query_texts = [item["query_for_embedding"] for item in pipeline.themes]
+        query_vectors = cls._cached_cls_vectors(query_texts, 128)
+        if hasattr(query_vectors, "tolist"):
+            query_vectors = query_vectors.tolist()
+        docs = []
+        for item in documents:
+            text = str(item.get("text") or "")
+            pieces = _f1mod.split_into_chunks(text)
+            if not pieces:
+                continue
+            chunk_texts = [piece[1] for piece in pieces]
+            vectors = cls._cached_cls_vectors(chunk_texts, 512)
+            if hasattr(vectors, "tolist"):
+                vectors = vectors.tolist()
+            docs.append({
+                "announcement": item,
+                "chunk_texts": chunk_texts,
+                "chunk_vectors": vectors,
+            })
+        if not docs:
+            return [], {"status": "skipped", "reason": "no_chunkable_documents"}
+
+        worker = Path(__file__).resolve().parents[1] / "scripts" / "f1_online_worker.py"
+        payload = _json.dumps(
+            {"docs": docs, "query_vectors": query_vectors,
+             "company_code": company_code},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        proc = subprocess.run(
+            [_sys.executable, str(worker)],
+            input=payload,
+            capture_output=True,
+            timeout=timeout_seconds,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"F1 上游子进程退出码 {proc.returncode}：{proc.stderr[-300:].decode('utf-8', 'replace')}"
+            )
+        result = _json.loads(proc.stdout.decode("utf-8"))
+        return result.get("rows", []), result.get("audit", {"status": "unknown"})
+
     @staticmethod
     def _check_cancel(ctx):
         """取消信号检查：任务被取消时抛异常，让 execute 尽快中断（最终由调度层标记 cancelled）。"""
@@ -453,8 +566,10 @@ class AnnouncementReaderAgent(AgentBase):
             raise RuntimeError("任务已取消")
 
     def execute(self, company, ctx):
+        _t_total = time.perf_counter()
         as_of = str(ctx.as_of or date.today().isoformat())[:10]
         identity, announcements = self._load_announcements(company, as_of)
+        _t_fetch = time.perf_counter()
         self._check_cancel(ctx)
         historical_context = getattr(self.source, "last_history", {}) or {}
         query_trace = getattr(self.source, "last_query_trace", []) or []
@@ -466,22 +581,32 @@ class AnnouncementReaderAgent(AgentBase):
             item for item in announcements if is_analysis_eligible(item)
         ]
 
-        self._emit_progress("rule_analysis_started", document_count=len(eligible_announcements))
+        # 深读集合：PDF 下载/规则/FinBERT/LLM/全量F1上游只处理前 max_documents 份
+        # （与下载源的选择顺序一致）；announcement_count_*d 等计数特征与 F6 问询
+        # 特征仍用全量元数据列表，保持与离线训练口径一致。
+        analyzed_announcements = eligible_announcements
+        if self.max_documents is not None and len(eligible_announcements) > self.max_documents:
+            analyzed_announcements = eligible_announcements[: self.max_documents]
+
+        self._emit_progress("rule_analysis_started", document_count=len(analyzed_announcements))
+        _t_rule = time.perf_counter()
         if self.use_rule:
             rule_factors, per_announcement, suppressed = self._rule_extract(
-                eligible_announcements,
+                analyzed_announcements,
                 cancel_event=getattr(ctx, "cancel_event", None),
             )
         else:
             rule_factors, suppressed = [], 0
             per_announcement = {
                 item["id"]: {"rule_factors": [], "suppressed_rule_hits": []}
-                for item in eligible_announcements
+                for item in analyzed_announcements
             }
+        _t_finbert = time.perf_counter()
         self._emit_progress("rule_analysis_completed", factor_count=len(rule_factors), suppressed_count=suppressed)
         self._check_cancel(ctx)
         self._emit_progress("finbert_started", enabled=bool(self.use_finbert))
-        finbert_signals, finbert_status = self._finbert_classify(eligible_announcements)
+        finbert_signals, finbert_status = self._finbert_classify(analyzed_announcements)
+        _t_llm = time.perf_counter()
         self._emit_progress("finbert_completed", status=finbert_status, signal_count=len(finbert_signals))
         self._check_cancel(ctx)
         signal_map = {item["announcement_id"]: item for item in finbert_signals}
@@ -492,12 +617,12 @@ class AnnouncementReaderAgent(AgentBase):
         if self.use_llm and self.llm_configured:
             if gate_active:
                 llm_candidates = [
-                    item for item in eligible_announcements
+                    item for item in analyzed_announcements
                     if item["id"] in rule_ids
                     or (signal_map.get(item["id"], {}).get("max_score") or 0) >= self.gate_threshold
                 ]
             else:
-                llm_candidates = eligible_announcements
+                llm_candidates = analyzed_announcements
             self._emit_progress("llm_started", document_count=len(llm_candidates))
             (
                 llm_factors,
@@ -514,6 +639,7 @@ class AnnouncementReaderAgent(AgentBase):
             llm_candidates, llm_factors, llm_per_announcement = [], [], {}
             rejected_llm, rejected_llm_context, failed_llm = 0, 0, 0
             llm_status = "disabled" if not self.use_llm else "not_configured"
+        _t_f1 = time.perf_counter()
         self._emit_progress(
             "llm_completed",
             status=llm_status,
@@ -543,27 +669,12 @@ class AnnouncementReaderAgent(AgentBase):
 
         f1 = self._build_f1(announcements, factors, as_of)
         self._emit_progress("finalizing", risk_factor_count=len(factors))
-        f1_vector = None
-        f1_vector_backend = "not_generated: EMBEDDING_BACKEND is not bge"
-        if EMBEDDING_BACKEND == "bge" and factors:
-            texts = [
-                f"{item['taxonomy_l2']}:{item['description']}:{item['evidence']}"
-                for item in factors
-            ]
-            try:
-                from ..skills.embedding import embed
-
-                vectors = embed(texts, allow_fallback=False)
-                f1_vector = vectors.mean(axis=0).tolist()
-                f1_vector_backend = f"bge:{EMBEDDING_MODEL}:risk_factor_mean"
-            except Exception as exc:
-                f1_vector_backend = f"not_generated:{type(exc).__name__}:{str(exc)[:120]}"
         parsed = [
-            item for item in eligible_announcements
+            item for item in analyzed_announcements
             if "_parsed" in item.get("text_status", "")
         ]
         attempted = [
-            item for item in eligible_announcements
+            item for item in analyzed_announcements
             if item.get("text_status") != "not_fetched"
         ]
         title_excluded = [
@@ -634,18 +745,14 @@ class AnnouncementReaderAgent(AgentBase):
         }
         if fullrun_enabled and current_data_available:
             fullrun_documents = [
-                item for item in eligible_announcements if (item.get("text") or "").strip()
+                item for item in analyzed_announcements if (item.get("text") or "").strip()
             ]
             try:
                 self._emit_progress(
                     "fullrun_f1_started", document_count=len(fullrun_documents)
                 )
-                from ..skills.fullrun_online_semantics import FullRunOnlineSemanticPipeline
-
-                rows, fullrun_upstream_audit = FullRunOnlineSemanticPipeline().analyze(
-                    fullrun_documents,
-                    identity.get("secucode") or ctx.company,
-                    cancel_event=getattr(ctx, "cancel_event", None),
+                rows, fullrun_upstream_audit = self._run_fullrun_subprocess(
+                    fullrun_documents, identity.get("secucode") or ctx.company
                 )
                 ctx.semantic.f1_announcement_risk_rows = rows
             except Exception as exc:
@@ -680,8 +787,6 @@ class AnnouncementReaderAgent(AgentBase):
             ),
             "upstream": fullrun_upstream_audit,
         }
-        ctx.semantic.f1_vector = f1_vector
-        ctx.semantic.f1_vector_backend = f1_vector_backend
         # F6 监管问询函特征：由本 Agent 的公告列表（巨潮官方源）计算，
         # 供预测建模使用（口径与离线 F6 表一致；窗口内无问询公告 → 全 0）
         try:
@@ -697,6 +802,40 @@ class AnnouncementReaderAgent(AgentBase):
         except Exception as e:
             _logger.warning("[F6 问询特征计算失败] %s", e)
             ctx.semantic.f6_features = {}
+        # 分步耗时归因：区分网络抓取/PDF下载与规则、FinBERT、LLM 各通道，
+        # 否则 Reader 慢时无法定位是巨潮接口慢还是 LLM 慢。
+        _t_end = time.perf_counter()
+        source_timing = (
+            getattr(self.source, "last_timing_ms", None)
+            or getattr(getattr(self.source, "online_source", None), "last_timing_ms", None)
+            or {}
+        )
+        timing_ms = {
+            "fetch_total_ms": int((_t_fetch - _t_total) * 1000),
+            "metadata_ms": source_timing.get("metadata_ms"),
+            "pdf_ms": source_timing.get("pdf_ms"),
+            "pdf_downloaded": source_timing.get("pdf_downloaded"),
+            "pdf_total": source_timing.get("pdf_total"),
+            "rule_ms": int((_t_finbert - _t_rule) * 1000),
+            "finbert_ms": int((_t_llm - _t_finbert) * 1000),
+            "llm_ms": int((_t_f1 - _t_llm) * 1000),
+            "aggregate_ms": int((_t_end - _t_f1) * 1000),
+            "total_ms": int((_t_end - _t_total) * 1000),
+        }
+        _logger.info(
+            "[AnnouncementReader] 分步耗时: 公告检索+PDF=%.1fs (元数据=%.1fs, PDF=%.1fs, %s/%s 份) "
+            "规则=%.2fs FinBERT=%.2fs LLM=%.1fs 汇总=%.2fs 总计=%.1fs",
+            timing_ms["fetch_total_ms"] / 1000,
+            (timing_ms["metadata_ms"] or 0) / 1000,
+            (timing_ms["pdf_ms"] or 0) / 1000,
+            timing_ms["pdf_downloaded"], timing_ms["pdf_total"],
+            timing_ms["rule_ms"] / 1000,
+            timing_ms["finbert_ms"] / 1000,
+            timing_ms["llm_ms"] / 1000,
+            timing_ms["aggregate_ms"] / 1000,
+            timing_ms["total_ms"] / 1000,
+        )
+        ctx.semantic.timing_ms = timing_ms
         ctx.semantic.channel_summary = {
             "rule": {
                 "status": "enabled" if self.use_rule else "disabled",
@@ -763,12 +902,13 @@ class AnnouncementReaderAgent(AgentBase):
             "lookback_days": ANNOUNCE_WINDOW_DAYS,
             "announcement_count": len(announcements),
             "analysis_eligible_count": len(eligible_announcements),
+            "analyzed_document_count": len(analyzed_announcements),
             "title_excluded_count": len(title_excluded),
             "title_filter_version": FILTER_VERSION,
             "pdf_attempted_count": len(attempted),
             "pdf_parsed_count": len(parsed),
             "pdf_parsed_ratio": round(len(parsed) / len(attempted), 4) if attempted else None,
-            "not_fetched_count": len(eligible_announcements) - len(attempted),
+            "not_fetched_count": len(analyzed_announcements) - len(attempted),
             "not_fulltext_count": len(attempted) - len(parsed),
             "document_limit_truncated": len(attempted) < len(eligible_announcements),
             "evidence_valid_ratio": f1["scalar_features"]["evidence_valid_ratio"],
@@ -781,7 +921,6 @@ class AnnouncementReaderAgent(AgentBase):
             "ocr_succeeded_pages": ocr_succeeded_pages,
             "ocr_failed_pages": ocr_failed_pages,
             "ocr_skipped_pages": ocr_skipped_pages,
-            "f1_vector_backend": f1_vector_backend,
             "f1_model_feature_status": ctx.semantic.f1_model_audit,
             "competition_history_available": historical_context.get("available", False),
             "competition_history_match_status": historical_context.get("match_status", "not_configured"),
@@ -790,9 +929,10 @@ class AnnouncementReaderAgent(AgentBase):
         ctx.semantic.stats = {
             "announcement_count": len(announcements),
             "analysis_eligible_count": len(eligible_announcements),
+            "analyzed_document_count": len(analyzed_announcements),
             "title_excluded_count": len(title_excluded),
             "llm_processed_count": len(llm_candidates),
-            "gated_count": len(eligible_announcements) - len(llm_candidates) if gate_active else 0,
+            "gated_count": len(analyzed_announcements) - len(llm_candidates) if gate_active else 0,
             "risk_factor_count": len(factors),
             "high_severity_count": sum(item["severity"] >= 4 for item in factors),
             "risk_event_count_30d": f1["scalar_features"]["risk_event_count_30d"],

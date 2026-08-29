@@ -136,7 +136,6 @@ def build_graph(use_llm=False, use_finbert=False, use_rule=True,
     from .announcement_reader import AnnouncementReaderAgent
     from .attributor import AttributorAgent
     from .case_retriever import CaseRetrieverAgent
-    from .chunk_retriever import ChunkRetrieverAgent
     from .financial_detector import FinancialDetectorAgent
     from .predictor import PredictorAgent
     from .reporter import ReporterAgent
@@ -159,7 +158,6 @@ def build_graph(use_llm=False, use_finbert=False, use_rule=True,
     g.add_node("predictor", _tolerant_node(PredictorAgent, timeout=120))
     g.add_node("case", _tolerant_node(
         lambda: CaseRetrieverAgent(use_semantic=use_semantic_cases), timeout=180))
-    g.add_node("chunk", _tolerant_node(ChunkRetrieverAgent, timeout=60))
     g.add_node("attribution", _node_factory(
         lambda: AttributorAgent(use_llm=use_llm), timeout=60, name="Attributor"))
     g.add_node("report", _node_factory(ReporterAgent, timeout=60, name="Reporter"))
@@ -168,8 +166,7 @@ def build_graph(use_llm=False, use_finbert=False, use_rule=True,
     g.add_edge("announcement", "financial")
     g.add_edge("financial", "predictor")
     g.add_edge("predictor", "case")
-    g.add_edge("case", "chunk")
-    g.add_edge("chunk", "attribution")
+    g.add_edge("case", "attribution")
     g.add_edge("attribution", "report")
     g.add_edge("report", END)
 

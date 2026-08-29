@@ -765,13 +765,6 @@
         <div class="step-status">待执行</div>
       </div>
     </div>
-    <div class="pipeline-step" data-agent="ChunkRetriever" data-section="section-attribution" onclick="selectStep(this, '段落召回')">
-      <div class="step-icon">🧩</div>
-      <div>
-        <div class="step-title">段落召回 Agent</div>
-        <div class="step-status">待执行</div>
-      </div>
-    </div>
     <div class="pipeline-step" data-agent="Attributor" data-section="section-attribution" onclick="selectStep(this, '归因分析')">
       <div class="step-icon">💡</div>
       <div>
@@ -812,14 +805,14 @@
         <div class="param-row">
           <label>公告研读上限</label>
           <select class="param-select" id="paramMaxDocs">
-            <option value="50">50 份（极速）</option>
-            <option value="100" selected>100 份（标准）</option>
-            <option value="150">150 份（完整）</option>
+            <option value="50" selected>50 份（标准）</option>
+            <option value="100">100 份（完整）</option>
+            <option value="150">150 份（全部）</option>
           </select>
         </div>
         <div class="param-toggle">
           <span style="font-size: 13px; color: var(--text-primary);">LLM 精细抽取</span>
-          <div class="switch" id="switchLLM" onclick="this.classList.toggle('on')"></div>
+          <div class="switch on" id="switchLLM" onclick="this.classList.toggle('on')"></div>
         </div>
         <div class="param-toggle">
           <span style="font-size: 13px; color: var(--text-primary);">BGE 语义检索</span>
@@ -1146,7 +1139,6 @@
     { key: 'FinancialDetector', name: '财务异常', icon: '📊', section: 'section-financial', detail: 'financial' },
     { key: 'Predictor', name: '预测建模', icon: '🧮', section: 'section-risk', detail: 'predictor' },
     { key: 'CaseRetriever', name: '案例匹配', icon: '🔍', section: 'section-cases', detail: 'cases' },
-    { key: 'ChunkRetriever', name: '段落召回', icon: '🧩', section: 'section-attribution', detail: 'attribution' },
     { key: 'Attributor', name: '归因分析', icon: '💡', section: 'section-attribution', detail: 'attribution' },
     { key: 'Reporter', name: '报告生成', icon: '📝', section: 'section-report', detail: 'report' },
   ];
@@ -1335,7 +1327,7 @@
     if (wsConnection) { try { wsConnection.close(); } catch (e) {} wsConnection = null; }
 
     const windowVal = parseWindow();
-    const maxDocs = parseInt(document.getElementById('paramMaxDocs').value) || 100;
+    const maxDocs = parseInt(document.getElementById('paramMaxDocs').value) || 50;
     const useLLM = getParamSwitch('switchLLM');
     const useBGE = getParamSwitch('switchBGE');
 
@@ -1620,6 +1612,7 @@
     const lowRiskSignals = review.lowRiskSignals || [];
     const displayRows = risks.concat(lowRiskSignals);
     const excludedSignals = review.excludedSignals || [];
+    const pdfInfo = data.announcementPdfs || {};
     const highCount = risks.filter(r => r.level === '高').length;
     const midCount = risks.filter(r => r.level === '中').length;
     const lowCount = risks.filter(r => r.level === '低').length + lowRiskSignals.length;
@@ -1714,6 +1707,11 @@
           <div class="metric-label">已排除信号</div>
           <div class="metric-value" style="color: #64748B;">${excludedCount}</div>
           <div class="metric-sub">标题 / 语境 / 证据门槛</div>
+        </div>
+        <div class="tech-metric-card">
+          <div class="metric-label">获取公告 PDF</div>
+          <div class="metric-value">${pdfInfo.fetched ?? '—'}</div>
+          <div class="metric-sub">深读 ${pdfInfo.analyzed ?? '—'} 份 · 近一年 ${pdfInfo.metadata_total ?? '—'} 份中按时间最近选取</div>
         </div>
       </div>
 
@@ -2191,7 +2189,7 @@
     `;
   }
 
-  // ==================== 归因分析 Agent 详情页（含段落召回） ====================
+  // ==================== 归因分析 Agent 详情页 ====================
   function renderAttributionDetail(data) {
     if (!data) {
       document.getElementById('detailBody').innerHTML = '<div class="empty-state">请先选择公司</div>';
@@ -2220,7 +2218,7 @@
         <div class="attr-factor" style="font-size: 12px;">${e.factor || '风险因子'} ${e.source ? `<span style="color: var(--text-muted); margin-left: 6px;">来源：${e.source}</span>` : ''}</div>
         <div class="attr-evidence" style="font-size: 12px; line-height: 1.6; margin-top: 4px;">${e.evidence || '—'}</div>
       </div>
-    `).join('') : '<div class="empty-state" style="padding: 20px;">暂无段落召回证据</div>';
+    `).join('') : '<div class="empty-state" style="padding: 20px;">暂无归因证据</div>';
 
     const narrativeHtml = narrative ? `
       <div class="report-section">
@@ -2261,7 +2259,7 @@
 
         <div class="report-preview" style="margin: 0;">
           <div class="report-preview-header" style="border-bottom: none; padding-bottom: 0;">
-            <div class="report-preview-title">段落召回 / 归因证据</div>
+            <div class="report-preview-title">归因证据</div>
           </div>
           <div style="padding: 20px;">
             ${evidenceHtml}
@@ -2707,6 +2705,12 @@
     `;
   }
 
+  function pdfLine(data) {
+    const ap = data.announcementPdfs || {};
+    if (ap.fetched === undefined || ap.fetched === null) return '';
+    return `<p>公告数据：近一年 <b>${ap.metadata_total ?? '—'}</b> 份公告，本次按时间最近获取 <b>${ap.fetched}</b> 份 PDF（深读 ${ap.analyzed ?? '—'} 份，成功解析 ${ap.parsed ?? '—'} 份）。</p>`;
+  }
+
   function renderOverview(data) {
     document.getElementById('overviewBody').innerHTML = `
       <div class="report-section">
@@ -2714,6 +2718,7 @@
         <p>公司名称：<b>${data.name || '—'}</b>（${data.code || '—'}）</p>
         <p>未来 ${parseWindow()} 天收到问询函概率：<b style="color:${getRiskColor(data.level)}">${data.risk !== undefined ? data.risk.toFixed(1) : '—'}%</b>，风险等级：<b>${data.levelText || '—'}</b>。</p>
         <p>预测置信度：<b>${data.confidence !== undefined ? data.confidence.toFixed(2) : '—'}</b>，风险因子数：<b>${data.factors !== undefined ? data.factors : '—'}</b>。</p>
+        ${pdfLine(data)}
       </div>
       <div class="report-section">
         <div class="report-section-title"><span class="num">2</span>核心结论</div>

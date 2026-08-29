@@ -21,6 +21,7 @@ Skill: risk_report_render —— 生成可解释预警报告（Markdown / JSON�
 from datetime import datetime
 
 from .evidence_policy import publishable_evidence
+from ..llm import chat  # 公告原文解读用；未配置 key 时调用失败走降级跳过
 
 
 # ================= 报告编号 =================
@@ -123,8 +124,72 @@ SUMMARY_SYSTEM = (
 )
 
 
+INTERPRETATION_SYSTEM = (
+    "你是证券监管风控分析师。请严格依据给定的事实与公告原文证据撰写《公告风险原文解读》，"
+    "禁止编造或引入任何外部事实；证据不足时必须明确说明。输出使用 Markdown。"
+)
+
+
+def build_interpretation_facts(ctx, max_chars=7000):
+    """把执行摘要事实 + 已核验证据原文 + 近期公告标题压缩成解读输入。"""
+    lines = [build_summary_facts(ctx), "", "【公告证据清单（按公告分组，均为原文摘录）】"]
+    groups = {}
+    for factor in sorted(
+        publishable_evidence(ctx.semantic.risk_factors),
+        key=lambda f: -(f.get("severity") or 0),
+    ):
+        groups.setdefault(
+            factor.get("announcement_title") or factor.get("announcement_id") or "未知公告",
+            [],
+        ).append(factor)
+    for title, factors in list(groups.items())[:12]:
+        first = factors[0]
+        lines.append(
+            f"- 公告《{title}》{first.get('announcement_date') or ''}（{len(factors)} 条证据）"
+        )
+        for factor in factors[:3]:
+            evidence = (factor.get("evidence") or "")[:180]
+            lines.append(
+                f"  · [{factor.get('label') or factor.get('taxonomy_l2') or ''}] "
+                f"严重度{factor.get('severity')}：{evidence}"
+            )
+    titles = [
+        item.get("title", "") for item in (ctx.semantic.announcements or [])[:20]
+        if item.get("title")
+    ]
+    if titles:
+        lines.append("")
+        lines.append("【近期公告标题（近一年，按时间降序前 20）】")
+        lines.extend(f"- {t}" for t in titles)
+    return "\n".join(lines)[:max_chars]
+
+
+def announcement_interpretation(ctx):
+    """LLM 公告风险原文解读；关闭 LLM 或失败时返回空（报告跳过该节）。"""
+    if not getattr(ctx, "use_llm_summary", False):
+        return ""
+    try:
+        facts = build_interpretation_facts(ctx)
+        prompt = (
+            "基于以下事实与公告原文证据，输出《公告风险原文解读》（Markdown，两部分）：\n"
+            "## 逐条解读\n"
+            "对每条已核验风险事件输出一小段：**[标签]** 发生了什么（依据证据原文）、"
+            "为何可能引发监管关注、严重程度判断。\n"
+            "## 总体研判\n"
+            "结合公告标题全貌与风险概率，一段话说明该公司当前公告风险面貌与需重点跟踪事项。\n\n"
+            f"事实与证据如下：\n{facts}"
+        )
+        text = chat(
+            system=INTERPRETATION_SYSTEM, prompt=prompt, temperature=0.3, max_tokens=1800
+        )
+        return (text or "").strip()
+    except Exception as exc:
+        print(f"[reporter] 公告原文解读生成失败，报告跳过该节: {exc}")
+        return ""
+
+
 # ================= JSON 报告 =================
-def render_json(ctx, executive_summary=""):
+def render_json(ctx, executive_summary="", announcement_interpretation=""):
     """把 ctx 全量转成结构化报告 dict（八章）。"""
     pred = ctx.prediction or {}
     fin = ctx.financial
@@ -143,6 +208,7 @@ def render_json(ctx, executive_summary=""):
         "quality": quality,
         "model_version": pred.get("model_version", ""),
         "executive_summary": executive_summary or rules_summary(ctx),
+        "announcement_interpretation": announcement_interpretation or "",
         "profile": {
             "industry": fin.industry,
             "report_period": (fin.indicators or {}).get("report_period"),
@@ -194,7 +260,7 @@ def render_json(ctx, executive_summary=""):
 
 
 # ================= Markdown 报告（八章） =================
-def render_markdown(ctx, executive_summary=""):
+def render_markdown(ctx, executive_summary="", announcement_interpretation=""):
     """生成风控函件式 Markdown 预警报告。"""
     pred = ctx.prediction or {}
     fin = ctx.financial
@@ -297,7 +363,18 @@ def render_markdown(ctx, executive_summary=""):
     add("")
 
     # ---------- ⑦ 相似历史问询案例 ----------
-    add(f"## 六、相似历史问询案例（Top {len(ctx.cases)}，含时间穿越控制）")
+    # ---------- ⑥.5 公告风险原文解读（LLM，基于公告原文证据） ----------
+    add(f"## 六、公告风险原文解读（AI 生成，仅依据已核验证据原文）")
+    add("")
+    if announcement_interpretation:
+        add(announcement_interpretation)
+    else:
+        add("- （LLM 精细抽取未开启或解读生成失败，本节跳过；已核验证据见上节原文）")
+    add("")
+    add("---")
+    add("")
+
+    add(f"## 七、相似历史问询案例（Top {len(ctx.cases)}，含时间穿越控制）")
     add("")
     for c in ctx.cases:
         score = c.get("rrf_score") or c.get("similarity")
@@ -315,7 +392,7 @@ def render_markdown(ctx, executive_summary=""):
     add("")
 
     # ---------- ⑧ 证据与推理链路 + 局限性 + 免责 ----------
-    add("## 七、证据与推理链路")
+    add("## 八、证据与推理链路")
     add("")
     for e in att.get("evidence_citations", []):
         add(f"- `{e.get('evidence_id')}` [{e.get('source')}] {str(e.get('snippet', ''))[:120]}")
@@ -324,7 +401,7 @@ def render_markdown(ctx, executive_summary=""):
     for t in ctx.trace_log:
         add(f"- {t.get('agent')} ｜ {t.get('status', 'done')}｜ {t.get('latency_ms', '')}ms ｜ {str(t.get('output_summary', ''))[:60]}")
     add("")
-    add("## 八、局限性说明")
+    add("## 九、局限性说明")
     add("")
     add("- 概率为模型输出，非事实认定；实时特征覆盖率见报告头，缺失列以训练集中位数兜底。")
     add("- 相似案例基于历史问询函语义/标签匹配，仅供参照，不构成同因推断。")

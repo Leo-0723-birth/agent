@@ -166,9 +166,37 @@ def agents():
 
 @app.get("/api/health")
 async def health():
-    realtime_verified = os.getenv("REALTIME_READY", "").strip().lower() in {"1", "true", "yes"}
     model_manifest = PROJECT_ROOT / "backend" / "models" / "predictor" / "models_manifest.json"
     reports_manifest = PROJECT_ROOT / "backend" / "data" / "output" / "reports" / "manifest.json"
+    # realtime_ready 用真实产物检查而非环境变量：三窗口×三模型文件全部在位
+    # 才标记就绪；REALTIME_READY 环境变量仍可显式覆盖（测试/演示用）。
+    predictor_dir = PROJECT_ROOT / "backend" / "models" / "predictor"
+    required_models = [
+        predictor_dir / f"model_{backend}_{w}d.{ext}"
+        for w in ("30", "60", "90")
+        for backend, ext in (("rf", "pkl"), ("lgb", "txt"), ("xgb", "json"))
+    ]
+    models_complete = all(p.is_file() for p in required_models)
+    env_override = os.getenv("REALTIME_READY", "").strip().lower()
+    if env_override in {"0", "false", "no"}:
+        realtime_verified = False
+    elif env_override in {"1", "true", "yes"}:
+        realtime_verified = True
+    else:
+        realtime_verified = model_manifest.is_file() and models_complete
+    # F1 训练同口径实时上游的真实开关状态（与 AnnouncementReader 的判定一致）：
+    # enabled=三套上游模型已配置/auto=配置后自动启动/disabled=显式关闭。
+    f1_mode = os.getenv("F1_ONLINE_SEMANTICS_ENABLED", "auto").strip().lower()
+    f1_models_configured = all(
+        os.getenv(name) and os.path.exists(os.getenv(name))
+        for name in ("F1_BGE_MODEL_PATH", "F1_RERANK_MODEL_PATH", "F1_FINBERT_MODEL_PATH")
+    )
+    if f1_mode in {"1", "true", "yes", "on"} or (f1_mode == "auto" and f1_models_configured):
+        f1_pipeline_status = "enabled"
+    elif f1_mode == "auto":
+        f1_pipeline_status = "auto_awaiting_models"
+    else:
+        f1_pipeline_status = "disabled"
     return {
         "status": "ok",
         "liveness": "ok",
@@ -179,9 +207,10 @@ async def health():
         "realtime_status": "verified" if realtime_verified else "unverified",
         "checks": {
             "model_manifest": model_manifest.is_file(),
+            "predictor_models": models_complete,
             "offline_reports": reports_manifest.is_file(),
             "external_sources": "not_probed",
-            "f1_same_pipeline": "required",
+            "f1_same_pipeline": f1_pipeline_status,
         },
     }
 
@@ -270,16 +299,6 @@ async def scan_status(task_id: str):
     }
 
 
-@app.get("/api/mock/{code}", response_model=AnalyzeResponse)
-async def mock_company(code: str):
-    """前端联调用固定结构数据；有离线快照时优先返回真实快照。
-
-    code 支持股票代码或公司简称/全名。
-    """
-    normalized = _resolve_company_code(code)
-    result = get_offline_result(normalized, 60)
-    if result is None:
-        raise HTTPException(status_code=404, detail=f"未找到 {normalized} 的 mock/离线报告")
     return result
 
 

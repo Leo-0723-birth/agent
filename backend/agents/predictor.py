@@ -95,6 +95,14 @@ class PredictorAgent(AgentBase):
         except OSError:
             return "manifest-unavailable"
 
+    def _model_version(self) -> str:
+        """以模型清单内容哈希作为可复核版本，清单缺失时明确降级。"""
+        path = self.model_dir / "models_manifest.json"
+        try:
+            return "manifest-sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+        except OSError:
+            return "manifest-unavailable"
+
     # ================= XGBoost-Cox 生存模型接口（可选，预留） =================
     def _load_survival(self):
         """加载 XGBoost-Cox 生存模型（单模型产出 30/60/90d 概率）。

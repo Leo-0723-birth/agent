@@ -108,7 +108,7 @@ class SweepingOrchestrator(AgentBase):
             return ctx
         # 兜底：确定性编排（langgraph 未安装/导入失败时）
         # 数据依赖：公司研读(F1+F6) ∥ 财务异常(F2-F5) 无依赖 →
-        #   预测建模 ∥ 案例匹配 ∥ chunk（依赖前两者，相互无依赖）→ 归因 → 报告
+        #   预测建模 ∥ 案例匹配（依赖前两者，相互无依赖）→ 归因 → 报告
         # 并行安全：各 Agent 写不同 ctx 字段（semantic/financial/prediction/cases）；
         #   base.run 已做异常隔离不抛出；ctx.trace_log.append 受 GIL 保护。
         from concurrent.futures import ThreadPoolExecutor
@@ -119,11 +119,10 @@ class SweepingOrchestrator(AgentBase):
             for f in futs:
                 f.result()
         company = ctx.company or company       # 公告研读解析名称后向下游传播标准代码
-        # Phase 3-4.5 并行：预测/案例/chunk 依赖前两者但相互无依赖
-        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="sweep") as pool:
+        # Phase 3-4.5 并行：预测/案例依赖前两者但相互无依赖
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="sweep") as pool:
             futs = [pool.submit(self._run_predict, company, ctx),
-                    pool.submit(self._run_cases, company, ctx),
-                    pool.submit(self._run_chunks, company, ctx)]
+                    pool.submit(self._run_cases, company, ctx)]
             for f in futs:
                 f.result()
         self._run_attribution(company, ctx)    # Phase 5
@@ -200,19 +199,6 @@ class SweepingOrchestrator(AgentBase):
         agent = AttributorAgent(use_llm=self.use_llm)
         agent.progress_callback = self._agent_callback("attribution")
         agent.run(company, ctx)
-
-    def _run_chunks(self, company, ctx):
-        """chunk 级段落检索（可选）：chunk 索引缺失时自动跳过，不打断流水线。"""
-        try:
-            from .chunk_retriever import ChunkRetrieverAgent
-            agent = ChunkRetrieverAgent()
-            agent.progress_callback = self._agent_callback("chunk")
-            agent.run(company, ctx)
-        except Exception as e:
-            _logger.warning("ChunkRetriever 跳过: %s", e, exc_info=True)
-            ctx.trace_log.append({"agent": "ChunkRetriever", "status": "skipped",
-                                  "reason": f"chunk 索引不可用: {e}",
-                                  "trace_complete": True})
 
     def _run_report(self, company, ctx):
         from .reporter import ReporterAgent
