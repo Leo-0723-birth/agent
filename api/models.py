@@ -99,7 +99,7 @@ class AnalyzeResponse(BaseModel):
     traceLog: Optional[list] = Field(default_factory=list)
     similarCases: Optional[List[SimilarCaseItem]] = Field(default_factory=list)
     generatedAt: Optional[str] = ""
-    # 风险证据与 Streamlit 细节（前端仪表盘卡片数据）
+    # 风险证据与公告研读明细（前端仪表盘卡片数据）
     announcementRisks: Optional[List[AnnouncementRiskItem]] = Field(default_factory=list)
     announcementReview: Optional[dict] = Field(default_factory=dict)
     attributionEvidence: Optional[List[AttributionEvidenceItem]] = Field(default_factory=list)

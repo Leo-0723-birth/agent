@@ -11,7 +11,6 @@ onnxruntime>=1.29,<2    # RapidOCR 推理运行时
 torch>=2.0              # FinBERT2-base / BGE 向量
 transformers>=4.38
 huggingface-hub>=0.21  # 固定 revision 下载/校验公告 NLP 模型
-streamlit>=1.61.1       # 公告研读独立展示页与主系统演示页
 pytest>=7.0             # 单元测试
 
 lightgbm>=4.0            # PredictorAgent（三模型集成之一）
