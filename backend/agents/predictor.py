@@ -87,7 +87,6 @@ class PredictorAgent(AgentBase):
             if not isinstance(cfg, dict) or not isinstance(cfg.get("features"), list):
                 messages.append(f"{horizon} 缺少特征清单")
         return not messages, messages
-
     def _model_version(self) -> str:
         """以模型清单内容哈希作为可复核版本，清单缺失时明确降级。"""
         path = self.model_dir / "models_manifest.json"
@@ -441,6 +440,7 @@ class PredictorAgent(AgentBase):
         # 只有财务特征存在且训练所需 F1 已按完全相同口径生成，才允许标记实时推理。
         realtime_ok = bool(getattr(getattr(ctx, "financial", None), "features", None)) and f1_ok
         if realtime_ok:
+            ctx.meta["f1_compatibility"] = f1_audit
             return self._execute_realtime(ctx, manifest)
         reasons = []
         if not f1_ok:
@@ -495,6 +495,7 @@ class PredictorAgent(AgentBase):
         for h in self.horizons:
             p, c, s = self._infer_survival(X, feats, h)
             pred[f"probability_{h}"] = p
+            pred[f"shap_features_{h}"] = s  # per-window SHAP（供前端窗口切换）
             if h == "60d":
                 p60, conf, shap = p, c, s
         if p60 is None:
@@ -520,6 +521,7 @@ class PredictorAgent(AgentBase):
             p, c, s = self._predict_realtime(h, ctx, manifest)
             key = f"probability_{h}"
             pred[key] = p
+            pred[f"shap_features_{h}"] = s  # per-window SHAP（供前端窗口切换）
             if h == "60d":
                 p60, conf, shap = p, c, s
         if p60 is None:
@@ -572,6 +574,7 @@ class PredictorAgent(AgentBase):
             p, c, s = self._predict_one(h, row, manifest)
             key = f"probability_{h}"
             pred[key] = p
+            pred[f"shap_features_{h}"] = s  # per-window SHAP（供前端窗口切换）
             if h == "60d":
                 p60, conf, shap = p, c, s
         if p60 is None:

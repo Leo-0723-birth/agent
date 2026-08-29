@@ -28,8 +28,8 @@ except Exception:
 BASE_DIR = Path(__file__).resolve().parent.parent                 # competition_agent/
 # 本机外部数据根目录（队员各自本地盘；通过 .env 覆盖 DATA_ROOT / INQUIRY_ROOT，
 # 无需逐个改下面的绝对路径）
-DATA_ROOT = Path(os.getenv("DATA_ROOT", r"D:\BaiduNetdiskDownload"))
-INQUIRY_ROOT = Path(os.getenv("INQUIRY_ROOT", r"D:\新建文件夹"))
+DATA_ROOT = Path(os.getenv("DATA_ROOT", str(BASE_DIR / "data")))
+INQUIRY_ROOT = Path(os.getenv("INQUIRY_ROOT", str(BASE_DIR / "data" / "inquiry")))
 DATA_RAW = Path(os.getenv("DATA_RAW", str(DATA_ROOT)))  # 原始公告/问询函根目录
 DATA_DIR = BASE_DIR / "backend" / "data"
 INDEX_DIR = DATA_DIR / "index"          # 公告索引缓存（announcement_index.json）

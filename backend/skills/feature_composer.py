@@ -112,8 +112,14 @@ def compose_realtime_features(ctx, manifest_features, fill_dict=None) -> dict:
     for f in manifest_features:
         v = _clean(real.get(f))
         if v is None:
-            v = _clean(fill.get(f))
-            origin[f] = "filled"
+            # F1 语义特征（announcement_semantic_*）实时未生成时填 0.0，保证对模型无影响；
+            # 其他特征仍优先用训练集中位数填充。
+            if str(f).startswith("announcement_semantic_"):
+                v = 0.0
+                origin[f] = "filled_zero"
+            else:
+                v = _clean(fill.get(f))
+                origin[f] = "filled" if v is not None else "filled_zero"
         else:
             origin[f] = "realtime"
         vec[f] = v if v is not None else 0.0

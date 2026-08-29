@@ -46,7 +46,31 @@ from .pipeline import (
     subscribe_task,
     unsubscribe_task,
 )
+from backend.skills.company_search import search_companies
 from backend.skills.stock_code import StockCodeError, normalize_stock_code
+
+
+def _resolve_company_code(raw: str) -> str:
+    """把用户输入解析为标准化股票代码；支持代码、公司简称/全名联网搜索。
+
+    失败时抛出 HTTPException(422)。
+    """
+    try:
+        return normalize_stock_code(raw)
+    except StockCodeError:
+        pass
+    # 代码标准化失败时，按名称联网搜索（中文/字母简称）
+    try:
+        hits = search_companies(raw.strip(), limit=1)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"公司解析失败：{exc}") from exc
+    if hits:
+        return hits[0]["code"]
+    raise HTTPException(
+        status_code=422,
+        detail=f"无法识别「{raw}」，请输入股票代码（如 000001.SZ）或公司简称/全名。",
+    )
+
 
 app = FastAPI(title="监管问询扫雷预警系统 API", version="2.0")
 
@@ -83,16 +107,25 @@ async def root():
 
 @app.post("/api/analyze", response_model=list[AnalyzeResponse])
 def analyze(req: AnalyzeRequest):
-    """核心接口：输入公司代码列表，返回风险分析结果（离线数据）。"""
-    return run_pipeline(req.codes, req.window, req.use_llm, req.use_bge)
+    """核心接口：输入公司代码/简称列表，返回风险分析结果（离线数据）。"""
+    codes = []
+    for raw in req.codes:
+        try:
+            codes.append(_resolve_company_code(raw))
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"无法解析「{raw}」：{exc}") from exc
+    return run_pipeline(codes, req.window, req.use_llm, req.use_bge)
 
 
 @app.get("/api/company/{code}", response_model=AnalyzeResponse)
 def get_company(code: str):
-    """单公司查询（离线）。"""
-    results = run_pipeline([code], 60, False, True)
+    """单公司查询（离线）；code 支持股票代码或公司简称/全名。"""
+    normalized = _resolve_company_code(code)
+    results = run_pipeline([normalized], 60, False, True)
     if not results:
-        raise HTTPException(status_code=404, detail=f"未找到 {code} 的离线报告")
+        raise HTTPException(status_code=404, detail=f"未找到 {normalized} 的离线报告")
     return results[0]
 
 
@@ -116,6 +149,13 @@ def download_report(code: str, format: str = "md"):
 def companies():
     """返回所有有离线报告的公司列表。"""
     return list_available_companies()
+
+
+@app.get("/api/companies/search")
+def companies_search(q: str = "", limit: int = 10):
+    """按公司名称/代码搜索（合并本地 manifest + 腾讯 smartbox 联网），供主控按名查代码。"""
+    from backend.skills.company_search import search_companies
+    return search_companies(q, limit=limit)
 
 
 @app.get("/api/agents")
@@ -159,11 +199,16 @@ def model_metrics():
 
 @app.post("/api/scan", response_model=ScanResponse)
 async def scan(req: ScanRequest):
-    """默认秒返离线快照；realtime=true 时创建实时 Agent 任务。"""
+    """默认秒返离线快照；realtime=true 时创建实时 Agent 任务。
+
+    code 支持股票代码或公司简称/全名（会联网搜索并转成标准代码）。
+    """
     try:
-        code = normalize_stock_code(req.code)
-    except StockCodeError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        code = _resolve_company_code(req.code)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"无法解析「{req.code}」：{exc}") from exc
     req = req.model_copy(update={"code": code})
 
     if not req.realtime:
@@ -227,11 +272,11 @@ async def scan_status(task_id: str):
 
 @app.get("/api/mock/{code}", response_model=AnalyzeResponse)
 async def mock_company(code: str):
-    """前端联调用固定结构数据；有离线快照时优先返回真实快照。"""
-    try:
-        normalized = normalize_stock_code(code)
-    except StockCodeError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    """前端联调用固定结构数据；有离线快照时优先返回真实快照。
+
+    code 支持股票代码或公司简称/全名。
+    """
+    normalized = _resolve_company_code(code)
     result = get_offline_result(normalized, 60)
     if result is None:
         raise HTTPException(status_code=404, detail=f"未找到 {normalized} 的 mock/离线报告")

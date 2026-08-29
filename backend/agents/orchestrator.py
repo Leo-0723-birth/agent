@@ -106,13 +106,26 @@ class SweepingOrchestrator(AgentBase):
                 "as_of": ctx.as_of,
             })
             return ctx
-        # 兜底：确定性串行编排（langgraph 未安装/导入失败时）
-        self._run_announcement(company, ctx)   # Phase 1
+        # 兜底：确定性编排（langgraph 未安装/导入失败时）
+        # 数据依赖：公司研读(F1+F6) ∥ 财务异常(F2-F5) 无依赖 →
+        #   预测建模 ∥ 案例匹配 ∥ chunk（依赖前两者，相互无依赖）→ 归因 → 报告
+        # 并行安全：各 Agent 写不同 ctx 字段（semantic/financial/prediction/cases）；
+        #   base.run 已做异常隔离不抛出；ctx.trace_log.append 受 GIL 保护。
+        from concurrent.futures import ThreadPoolExecutor
+        # Phase 1-2 并行：公司研读与财务异常写不同字段，无竞态
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="sweep") as pool:
+            futs = [pool.submit(self._run_announcement, company, ctx),
+                    pool.submit(self._run_financial, company, ctx)]
+            for f in futs:
+                f.result()
         company = ctx.company or company       # 公告研读解析名称后向下游传播标准代码
-        self._run_financial(company, ctx)      # Phase 2
-        self._run_predict(company, ctx)        # Phase 3（占位，待填充）
-        self._run_cases(company, ctx)          # Phase 4
-        self._run_chunks(company, ctx)         # Phase 4.5（段落级证据召回，可选）
+        # Phase 3-4.5 并行：预测/案例/chunk 依赖前两者但相互无依赖
+        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="sweep") as pool:
+            futs = [pool.submit(self._run_predict, company, ctx),
+                    pool.submit(self._run_cases, company, ctx),
+                    pool.submit(self._run_chunks, company, ctx)]
+            for f in futs:
+                f.result()
         self._run_attribution(company, ctx)    # Phase 5
         self._run_report(company, ctx)         # Phase 6
         return ctx
@@ -162,6 +175,7 @@ class SweepingOrchestrator(AgentBase):
             agent.progress_callback = self._agent_callback("prediction")
             agent.run(company, ctx)
         except Exception as e:
+            _logger.warning("Predictor 跳过: %s", e, exc_info=True)
             ctx.prediction = {"probability_60d": None, "risk_level": "未预测",
                               "confidence": None, "shap_features": []}
             ctx.trace_log.append({"agent": "Predictor", "status": "skipped",
@@ -175,6 +189,7 @@ class SweepingOrchestrator(AgentBase):
             agent.progress_callback = self._agent_callback("case")
             agent.run(company, ctx)
         except Exception as e:
+            _logger.warning("CaseRetriever 跳过: %s", e, exc_info=True)
             ctx.cases = []
             ctx.trace_log.append({"agent": "CaseRetriever", "status": "skipped",
                                   "reason": f"案例检索不可用: {type(e).__name__}: {e}",
@@ -194,6 +209,7 @@ class SweepingOrchestrator(AgentBase):
             agent.progress_callback = self._agent_callback("chunk")
             agent.run(company, ctx)
         except Exception as e:
+            _logger.warning("ChunkRetriever 跳过: %s", e, exc_info=True)
             ctx.trace_log.append({"agent": "ChunkRetriever", "status": "skipped",
                                   "reason": f"chunk 索引不可用: {e}",
                                   "trace_complete": True})

@@ -1,8 +1,10 @@
-import zipfile, sys
+import zipfile, sys, os
 from xml.etree import ElementTree as ET
+from pathlib import Path
 
 W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
-path = r"C:/Users/86130/Desktop/06-智能风控与量化建模赛道-东吴证券-基于 Agentic AI 的上市公司监管问询概率预测与扫雷预警算法探索.docx"
+# 输入 docx 路径：优先取环境变量，其次取脚本同级目录，便于跨机器使用
+path = os.getenv("DOCX_PATH", str(Path(__file__).resolve().parent / "source.docx"))
 
 with zipfile.ZipFile(path) as z:
     xml = z.read('word/document.xml')

@@ -30,3 +30,18 @@ agent_v1.0_backup.py
 
 # WorkBuddy 本地会话/工具数据（不入库）
 .workbuddy/
+
+# IDE/运行配置（已迁移 FastAPI，streamlit 配置已删除）
+.run/
+.streamlit/
+
+# 开发日志与本地评测产物
+_devlog.txt
+_apidevlog.txt
+_official_eval/
+*.bak
+
+# 运行时输出（报告、trace、搜索缓存），每次运行都会重新生成，不入库
+backend/data/output/traces/
+backend/data/output/reports/
+backend/data/a_stock_list.json

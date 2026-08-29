@@ -27,6 +27,7 @@ from pathlib import Path
 
 import requests
 
+from .config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 _logger = logging.getLogger(__name__)
 
 # 默认值（会被 .env / 环境变量覆盖）
@@ -42,7 +43,8 @@ try:
     from langchain_deepseek import ChatDeepSeek
 
     LANGCHAIN_AVAILABLE = True
-except Exception:  # 未安装 langchain-deepseek 时静默降级
+except Exception as _e:  # 未安装 langchain-deepseek 时降级（记录日志便于排查）
+    _logger.warning("langchain-deepseek 不可用，将使用 requests 直连: %s: %s", type(_e).__name__, _e)
     ChatDeepSeek = None
 
 

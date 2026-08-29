@@ -519,7 +519,7 @@ class FinancialDetectorAgent(AgentBase):
 
     # ================= 批量扫雷（演示用） =================
     def sweep_batch(self, companies, window=60):
-        """批量扫雷：逐家执行 execute()，返回摘要列表（供 Streamlit 排序展示）。"""
+        """批量扫雷：逐家执行 execute()，返回摘要列表（供前端排序展示）。"""
         from ..context import Context
         reports = []
         for c in companies:
