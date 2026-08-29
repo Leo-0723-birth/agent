@@ -58,17 +58,16 @@
         "announcement_semantic_048",
         "announcement_semantic_049",
         "f2_loss_flag",
+        "f2_neg_pe_flag",
+        "f2_neg_pb_flag",
         "f2_high_debt_flag",
-        "f2_profit_ocf_diverge",
         "f2_neg_accruals_flag",
         "f2_ocf_to_profit_extreme",
-        "f2_p_roa",
         "f2_p_cfo",
         "f2_benford_flag",
         "f2_trend_deterioration",
         "f2_industry_outlier_count",
         "mkt_market_cap",
-        "mkt_log_market_cap",
         "mkt_pe_ratio",
         "mkt_pb_ratio",
         "mkt_market_cap_qoq",
@@ -95,7 +94,6 @@
         "mkt_institutional_holding_change",
         "mkt_institutional_holder_count",
         "mkt_risk_warning_count_30d",
-        "mkt_risk_warning_count_90d",
         "mkt_days_since_last_risk_warning",
         "sent_news_count_5d",
         "sent_news_count_10d",
@@ -119,11 +117,10 @@
         "gov_top10_holder_ratio",
         "gov_top1_top10_ratio",
         "gov_top1_top2_gap",
-        "gov_top10_holder_count",
-        "governance_year",
         "gov_board_size",
         "gov_independent_director_count",
         "gov_independent_director_ratio",
+        "gov_big4_auditor",
         "gov_nonstandard_audit_opinion",
         "gov_audit_firm_change",
         "gov_auditor_change",
@@ -138,7 +135,17 @@
         "f6_avg_inquiry_interval_days",
         "f6_inquiry_interval_cv",
         "f6_unreplied_count"
-      ]
+      ],
+      "shap_backend": "lgb_pred_contrib+xgb_pred_contrib (RF omitted: shap not installed)",
+      "metrics": {
+        "AUC": 0.823874,
+        "AP": 0.089328,
+        "F1": 0.150685,
+        "Precision": 0.096491,
+        "Recall": 0.34375,
+        "Top10%Recall": 0.382812,
+        "threshold": 0.111111
+      }
     },
     "60": {
       "features": [
@@ -196,13 +203,14 @@
         "f2_neg_pe_flag",
         "f2_high_debt_flag",
         "f2_profit_ocf_diverge",
+        "f2_neg_accruals_flag",
+        "f2_ocf_to_profit_extreme",
         "f2_p_roa",
         "f2_p_cfo",
         "f2_benford_flag",
         "f2_trend_deterioration",
         "f2_industry_outlier_count",
         "mkt_market_cap",
-        "mkt_log_market_cap",
         "mkt_pe_ratio",
         "mkt_pb_ratio",
         "mkt_market_cap_qoq",
@@ -253,12 +261,12 @@
         "gov_top10_holder_ratio",
         "gov_top1_top10_ratio",
         "gov_top1_top2_gap",
-        "governance_year",
+        "gov_top10_holder_count",
         "gov_board_size",
         "gov_independent_director_count",
         "gov_independent_director_ratio",
-        "gov_big4_auditor",
         "gov_nonstandard_audit_opinion",
+        "gov_audit_firm_change",
         "gov_auditor_change",
         "f6_inquiry_count_12m",
         "f6_inquiry_count_24m",
@@ -271,7 +279,17 @@
         "f6_avg_inquiry_interval_days",
         "f6_inquiry_interval_cv",
         "f6_unreplied_count"
-      ]
+      ],
+      "shap_backend": "lgb_pred_contrib+xgb_pred_contrib (RF omitted: shap not installed)",
+      "metrics": {
+        "AUC": 0.852077,
+        "AP": 0.298134,
+        "F1": 0.381356,
+        "Precision": 0.346154,
+        "Recall": 0.424528,
+        "Top10%Recall": 0.518868,
+        "threshold": 0.214286
+      }
     },
     "90": {
       "features": [
@@ -327,12 +345,9 @@
         "announcement_semantic_049",
         "f2_loss_flag",
         "f2_neg_pe_flag",
-        "f2_high_debt_flag",
         "f2_profit_ocf_diverge",
-        "f2_neg_accruals_flag",
         "f2_ocf_to_profit_extreme",
         "f2_p_roa",
-        "f2_p_cfo",
         "f2_benford_flag",
         "f2_trend_deterioration",
         "f2_industry_outlier_count",
@@ -377,7 +392,6 @@
         "sent_negative_peak_30d",
         "sent_post_count_5d",
         "sent_post_count_30d",
-        "sent_comment_count_30d",
         "sent_read_count_30d",
         "sent_post_daily_peak_30d",
         "sent_guba_sentiment_mean_30d",
@@ -388,13 +402,10 @@
         "gov_top10_holder_ratio",
         "gov_top1_top10_ratio",
         "gov_top1_top2_gap",
-        "governance_year",
         "gov_board_size",
         "gov_independent_director_count",
         "gov_independent_director_ratio",
-        "gov_big4_auditor",
         "gov_nonstandard_audit_opinion",
-        "gov_audit_firm_change",
         "gov_auditor_change",
         "f6_inquiry_count_12m",
         "f6_inquiry_count_24m",
@@ -407,7 +418,39 @@
         "f6_avg_inquiry_interval_days",
         "f6_inquiry_interval_cv",
         "f6_unreplied_count"
-      ]
+      ],
+      "shap_backend": "lgb_pred_contrib+xgb_pred_contrib (RF omitted: shap not installed)",
+      "metrics": {
+        "AUC": 0.842883,
+        "AP": 0.334306,
+        "F1": 0.394581,
+        "Precision": 0.311497,
+        "Recall": 0.538106,
+        "Top10%Recall": 0.471132,
+        "threshold": 0.202899
+      }
     }
+  },
+  "metadata": {
+    "generated_at": "2026-08-29T10:54:48.330838",
+    "data_hash": "3add4d2ac86320be",
+    "feature_count": 196,
+    "feature_families": [
+      "announcement_semantic",
+      "f2",
+      "mkt",
+      "sent",
+      "gov",
+      "f6"
+    ],
+    "f1_source": {
+      "kind": "full_run_pca50",
+      "artifact": "backend/data/modeling/raw/F1_announcement_semantic_features.parquet",
+      "artifact_sha256": "195a11c5f8a4c685ffa75ca27ef9a9686b5e2cc5aae0c73daf59915d2ac50812",
+      "source_sha256": "8c04d1d5d1eb4220290878097cdfe39ecf82a8388a1b67c8fcd455f5c76a570f",
+      "components": 50
+    },
+    "target_kind": "letter",
+    "data_path": "backend/data/modeling/processed_dataset.csv"
   }
 }

@@ -18,6 +18,7 @@
 """
 import gc
 import json
+import sys
 import time
 import warnings
 from pathlib import Path
@@ -46,6 +47,7 @@ np.random.seed(SEED)
 
 BASE = Path(__file__).resolve().parent.parent.parent          # 项目根目录
 DATA = BASE / "backend" / "data" / "modeling" / "processed_dataset.csv"
+RAW_DIR = BASE / "backend" / "data" / "modeling" / "raw"
 MODEL_DIR = BASE / "backend" / "models" / "predictor"
 OUT_DIR = BASE / "backend" / "data" / "modeling" / "output"
 FILL_DIR = BASE / "backend" / "data" / "modeling" / "fill"
@@ -179,20 +181,30 @@ for w in WINDOWS:
                               scale_pos_weight=lgb_pw, subsample=0.75, colsample_bytree=0.75,
                               subsample_freq=1, reg_alpha=0.1, reg_lambda=0.1,
                               min_child_samples=20, random_state=SEED, verbose=-1, n_jobs=-1)
-    lgbm.fit(X_tr_s, y_tr_s, sample_weight=w_tr_s, eval_set=[(X_va, y_va)], eval_metric="auc")
+    # LightGBM 必须用带真实列名的 DataFrame 训练，否则模型文本只保存
+    # Column_0...，与 manifest 的特征清单脱节，线上无法做严格口径校验。
+    X_tr_lgb = pd.DataFrame(X_tr_s, columns=feats)
+    X_va_lgb = pd.DataFrame(X_va, columns=feats)
+    X_te_lgb = pd.DataFrame(X_te, columns=feats)
+    lgbm.fit(X_tr_lgb, y_tr_s, sample_weight=w_tr_s,
+             eval_set=[(X_va_lgb, y_va)], eval_metric="auc")
     models["lgb"] = lgbm
-    probs_va["lgb"] = lgbm.predict_proba(X_va)[:, 1]
-    probs_te["lgb"] = lgbm.predict_proba(X_te)[:, 1]
+    probs_va["lgb"] = lgbm.predict_proba(X_va_lgb)[:, 1]
+    probs_te["lgb"] = lgbm.predict_proba(X_te_lgb)[:, 1]
     print(f"  LightGBM 完成 ({time.time() - t0:.0f}s)")
 
     xgbm = xgb.XGBClassifier(n_estimators=800, max_depth=6, learning_rate=0.03,
                              scale_pos_weight=xgb_pw, subsample=0.75, colsample_bytree=0.75,
                              reg_alpha=0.1, reg_lambda=1.0, random_state=SEED,
                              eval_metric="auc", verbosity=0)
-    xgbm.fit(X_tr_s, y_tr_s, sample_weight=w_tr_s, eval_set=[(X_va, y_va)], verbose=False)
+    X_tr_xgb = pd.DataFrame(X_tr_s, columns=feats)
+    X_va_xgb = pd.DataFrame(X_va, columns=feats)
+    X_te_xgb = pd.DataFrame(X_te, columns=feats)
+    xgbm.fit(X_tr_xgb, y_tr_s, sample_weight=w_tr_s,
+             eval_set=[(X_va_xgb, y_va)], verbose=False)
     models["xgb"] = xgbm
-    probs_va["xgb"] = xgbm.predict_proba(X_va)[:, 1]
-    probs_te["xgb"] = xgbm.predict_proba(X_te)[:, 1]
+    probs_va["xgb"] = xgbm.predict_proba(X_va_xgb)[:, 1]
+    probs_te["xgb"] = xgbm.predict_proba(X_te_xgb)[:, 1]
     print(f"  XGBoost 完成 ({time.time() - t0:.0f}s)")
 
     ens_va = sum(ENSEMBLE_W[m] * probs_va[m] for m in ENSEMBLE_W)
@@ -232,18 +244,30 @@ for w in WINDOWS:
     shap_map["xgb"] = models["xgb"].get_booster().predict(
         xgb.DMatrix(X_te, feature_names=feats), pred_contribs=True)[:, :-1]
     shap_map["lgb"] = models["lgb"].booster_.predict(
-        X_te, pred_contrib=True)[:, :-1]
-    import shap as shap_lib
-    rf_explainer = shap_lib.TreeExplainer(models["rf"])
-    rf_sv = rf_explainer.shap_values(X_te)
-    if isinstance(rf_sv, list):
-        shap_map["rf"] = rf_sv[1] if len(rf_sv) == 2 else rf_sv[0]
-    elif rf_sv.ndim == 3:
-        shap_map["rf"] = rf_sv[..., 1]
-    else:
-        shap_map["rf"] = rf_sv
+        X_te_lgb, pred_contrib=True)[:, :-1]
+    try:
+        import shap as shap_lib
+        rf_explainer = shap_lib.TreeExplainer(models["rf"])
+        rf_sv = rf_explainer.shap_values(X_te)
+        if isinstance(rf_sv, list):
+            shap_map["rf"] = rf_sv[1] if len(rf_sv) == 2 else rf_sv[0]
+        elif rf_sv.ndim == 3:
+            shap_map["rf"] = rf_sv[..., 1]
+        else:
+            shap_map["rf"] = rf_sv
+        shap_weights = ENSEMBLE_W
+        shap_backend = "rf_treeexplainer+lgb_pred_contrib+xgb_pred_contrib"
+    except ImportError:
+        # SHAP Python 包是可选依赖；LGB/XGB 都能原生输出 TreeSHAP。
+        # 缺包时只对可核验的两个原生贡献重新归一化，不能伪造 RF 贡献。
+        shap_weights = {
+            "lgb": ENSEMBLE_W["lgb"] / (ENSEMBLE_W["lgb"] + ENSEMBLE_W["xgb"]),
+            "xgb": ENSEMBLE_W["xgb"] / (ENSEMBLE_W["lgb"] + ENSEMBLE_W["xgb"]),
+        }
+        shap_backend = "lgb_pred_contrib+xgb_pred_contrib (RF omitted: shap not installed)"
+        print("  [SHAP降级] 未安装 shap，使用 LightGBM + XGBoost 原生贡献")
 
-    shap_ens = sum(ENSEMBLE_W[m] * shap_map[m] for m in ENSEMBLE_W)
+    shap_ens = sum(shap_weights[m] * shap_map[m] for m in shap_weights)
     top5 = np.argsort(-np.abs(shap_ens), axis=1)[:, :5]
     shap_rows = []
     for i in range(len(y_te)):
@@ -266,6 +290,7 @@ for w in WINDOWS:
         models["xgb"].get_booster().save_raw(raw_format="json"))
     manifest["windows"][str(w)] = {
         "features": feats,
+        "shap_backend": shap_backend,
         "metrics": {k: round(v, 6) for k, v in results["Ensemble_calibrated"].items()
                     if isinstance(v, (int, float))},
     }
@@ -318,14 +343,25 @@ def _data_fingerprint(df, feature_cols, windows):
 
 generated_at = pd.Timestamp.now().isoformat()
 data_hash = _data_fingerprint(df, feature_cols, WINDOWS)
+f1_import_manifest_path = RAW_DIR / "f1_full_run_manifest.json"
+try:
+    f1_import_manifest = json.loads(f1_import_manifest_path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    f1_import_manifest = {}
 manifest["metadata"] = {
     "generated_at": generated_at,
     "data_hash": data_hash,
     "feature_count": len(feature_cols),
     "feature_families": [p.rstrip("_") for p in FEATURE_FAMILY_PREFIXES],
-    "f1_source": "announcement_semantic_features",
+    "f1_source": {
+        "kind": "full_run_pca50",
+        "artifact": "backend/data/modeling/raw/F1_announcement_semantic_features.parquet",
+        "artifact_sha256": f1_import_manifest.get("output_sha256"),
+        "source_sha256": f1_import_manifest.get("source_sha256"),
+        "components": f1_import_manifest.get("pca", {}).get("components", 50),
+    },
     "target_kind": TARGET_INQUIRY_KIND,
-    "data_path": str(DATA),
+    "data_path": "backend/data/modeling/processed_dataset.csv",
 }
 (MODEL_DIR / "models_manifest.json").write_text(
     json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")

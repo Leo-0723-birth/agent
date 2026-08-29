@@ -611,6 +611,53 @@ class AnnouncementReaderAgent(AgentBase):
         ctx.semantic.per_announcement = per_announcement
         retrieval_mode = identity.get("retrieval_mode", "online")
         current_data_available = retrieval_mode != "online_unavailable"
+        # 可选的训练同口径实时 F1 上游。默认 auto：只有显式配置三套本地模型
+        # 时启动，避免普通 UI 查询意外下载数 GB 权重；设
+        # F1_ONLINE_SEMANTICS_ENABLED=true 可允许 HuggingFace 首次下载。
+        ctx.semantic.f1_announcement_risk_rows = []
+        semantic_mode = os.getenv("F1_ONLINE_SEMANTICS_ENABLED", "auto").lower()
+        configured_models = all(
+            os.getenv(name) and os.path.exists(os.getenv(name))
+            for name in (
+                "F1_BGE_MODEL_PATH", "F1_RERANK_MODEL_PATH", "F1_FINBERT_MODEL_PATH"
+            )
+        )
+        fullrun_enabled = semantic_mode in {"1", "true", "yes", "on"} or (
+            semantic_mode == "auto" and configured_models
+        )
+        fullrun_upstream_audit = {
+            "status": "disabled",
+            "reason": (
+                "未启用训练同口径三模型上游；设置 F1_ONLINE_SEMANTICS_ENABLED=true，"
+                "或配置三套 F1_*_MODEL_PATH。"
+            ),
+        }
+        if fullrun_enabled and current_data_available:
+            fullrun_documents = [
+                item for item in eligible_announcements if (item.get("text") or "").strip()
+            ]
+            try:
+                self._emit_progress(
+                    "fullrun_f1_started", document_count=len(fullrun_documents)
+                )
+                from ..skills.fullrun_online_semantics import FullRunOnlineSemanticPipeline
+
+                rows, fullrun_upstream_audit = FullRunOnlineSemanticPipeline().analyze(
+                    fullrun_documents, identity.get("secucode") or ctx.company
+                )
+                ctx.semantic.f1_announcement_risk_rows = rows
+            except Exception as exc:
+                fullrun_upstream_audit = {
+                    "status": "failed",
+                    "reason": f"{type(exc).__name__}: {exc}",
+                    "document_count": len(fullrun_documents),
+                }
+                _logger.warning("[训练同口径实时 F1 上游失败] %s", exc)
+            self._emit_progress(
+                "fullrun_f1_completed",
+                status=fullrun_upstream_audit.get("status"),
+                output_rows=len(ctx.semantic.f1_announcement_risk_rows),
+            )
         # 实时源不可达时，不能把“未取得公告”当作“公告数为 0”送入模型。
         ctx.semantic.f1_features = f1 if current_data_available else {}
         # 注意：f1_features 是本 Agent 的规则/LLM标量，不等价于模型训练所用的
@@ -619,12 +666,17 @@ class AnnouncementReaderAgent(AgentBase):
         ctx.semantic.f1_model_features = {}
         ctx.semantic.f1_model_audit = {
             "status": "not_generated",
-            "source": "online_rule_llm_scalars_only",
+            "source": "online_fullrun_rows_pending_pca" if ctx.semantic.f1_announcement_risk_rows else "online_rule_llm_scalars_only",
             "required_pipeline": "BGE-CLS→主题召回→reranker→FinBERT联合打分→208维聚合→冻结PCA50",
             "expected_dimensions": 50,
             "produced_dimensions": 0,
             "static_full_run_lookup_used": False,
-            "reason": "避免将历史全量 PCA50 或规则标量伪装为当前实时模型输入。",
+            "reason": (
+                "已生成公告×主题行，等待财务 Agent 完成后由 Predictor 执行冻结 PCA50。"
+                if ctx.semantic.f1_announcement_risk_rows else
+                "避免将历史全量 PCA50 或规则标量伪装为当前实时模型输入。"
+            ),
+            "upstream": fullrun_upstream_audit,
         }
         ctx.semantic.f1_vector = f1_vector
         ctx.semantic.f1_vector_backend = f1_vector_backend
