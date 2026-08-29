@@ -489,6 +489,20 @@ def _build_text_summary(report: dict) -> str:
 _LEVEL_FROM_SEVERITY = {1: "低", 2: "低", 3: "中", 4: "高", 5: "高"}
 
 
+def _map_announcement_pdfs(report: dict) -> dict:
+    """公告 PDF 获取情况（近一年元数据 → 按时间最近深读前 N 份）。"""
+    dq = (report.get("semantic", {}) or {}).get("data_quality", {}) or {}
+    return {
+        "fetched": dq.get("pdf_attempted_count"),
+        "parsed": dq.get("pdf_parsed_count"),
+        "analyzed": dq.get("analyzed_document_count"),
+        "metadata_total": dq.get("announcement_count"),
+        "eligible": dq.get("analysis_eligible_count"),
+        "window_days": dq.get("lookback_days"),
+        "request_limit": dq.get("analyzed_document_count") if dq.get("document_limit_truncated") else None,
+    }
+
+
 def _map_announcement_risks(report: dict) -> list[AnnouncementRiskItem]:
     """semantic.risk_factors → 公告研读风险证据表。"""
     sem = report.get("semantic", {}) or {}
@@ -928,8 +942,12 @@ class StreamingOrchestrator:
                 if runner is None:
                     raise RuntimeError(f"未找到 Agent {agent_name} 的执行入口")
 
-                # 节点级看门狗：单个 Agent 挂死只跳过它，不阻塞后续环节
+                # 节点级看门狗：单个 Agent 挂死只跳过它，不阻塞后续环节。
+                # 公告研读按深读份数扩展：F1 上游首算（rerank 交叉编码）在
+                # CPU 上约 20-40s/份为最大项，缓存后重复扫描仅剩下载/LLM。
                 timeout = self._AGENT_TIMEOUTS.get(agent_name, 120)
+                if agent_name == "AnnouncementReader":
+                    timeout += 24 * (max_documents or 0)
                 if agent_name == "Reporter":
                     ctx.meta["runtime_quality"] = _evaluate_runtime_quality(ctx)
                 outcome, error = self._run_agent(runner, company, ctx, timeout)
@@ -986,6 +1004,12 @@ class StreamingOrchestrator:
             count = max(1, int(payload.get("total", 1) or 1))
             percent = 15 + int(25 * current / count)
             message = f"正在下载/解析第 {current}/{count} 份公告 PDF"
+        elif event == "pdf_processing_completed":
+            downloaded = payload.get("downloaded")
+            total = payload.get("total")
+            if downloaded is not None:
+                message = f"公告 PDF 下载解析完成：成功获取 {downloaded}/{total} 份"
+            percent = 42
         elif event == "llm_processing":
             current = int(payload.get("current", 0) or 0)
             count = max(1, int(payload.get("total", 1) or 1))
@@ -996,7 +1020,11 @@ class StreamingOrchestrator:
             "offline_snapshot_completed": (35, "已加载官方公告离线快照"),
             "online_company_started": (8, "正在校验公司与交易所代码"),
             "online_metadata_started": (12, "正在获取公告列表"),
-            "online_metadata_completed": (15, f"已获取公告列表，共 {payload.get('announcement_count', 0)} 份"),
+            "online_metadata_completed": (
+                15,
+                f"近一年公告共 {payload.get('announcement_count', 0)} 份，"
+                f"按时间最近选取 {payload.get('pdf_count', 0)} 份 PDF 深读",
+            ),
             "pdf_processing": (percent, message),
             "pdf_processing_completed": (42, "公告 PDF 下载与 OCR 解析完成"),
             "rule_analysis_started": (45, "正在匹配风险词典"),
@@ -1128,6 +1156,7 @@ def offline_to_response_from_report(report: dict, window: int = 60) -> AnalyzeRe
         confidenceMeaning=scorecard.get("confidence_meaning", "predicted_class_score"),
         dataSource=data_source,
         dataCoverage=(report.get("profile", {}) or {}).get("coverage") or scorecard.get("coverage") or {},
+        announcementPdfs=_map_announcement_pdfs(report),
         degradedReasons=degraded_reasons,
         featureAnchor=str(scorecard.get("feature_anchor") or ""),
         modelVersion=model_version,
@@ -1405,7 +1434,10 @@ async def run_scan_task(state: TaskState, req: ScanRequest):
                         cancel_event=state.cancel_event,
                     ),
                 ),
-                timeout=600,  # 10 分钟硬上限
+                # 总超时随深读份数扩展：下载/解析/LLM/F1 切块嵌入均按份线性
+                # 增长（F1 嵌入在 OMP=2 的 CPU 上约 15-25s/份为主项），
+                # 50 份 ≈ 35 分钟，150 份 ≈ 1.5 小时。
+                timeout=max(600, 3600 + 40 * (req.max_documents or 0)),
             )
             if state.cancel_event.is_set():
                 raise PipelineCancelled("任务已取消")
@@ -1446,7 +1478,11 @@ async def run_scan_task(state: TaskState, req: ScanRequest):
             ))
     except asyncio.TimeoutError:
         state.cancel_event.set()
-        await _fallback_after_error(state, req, "实时扫雷超过 10 分钟超时。")
+        await _fallback_after_error(
+            state, req,
+            f"实时扫雷总超时（{max(600, 3600 + 40 * (req.max_documents or 0))}s，"
+            f"深读 {req.max_documents or 0} 份）。可在参数区减少公告份数后重试。"
+        )
     except Exception as exc:
         if state.cancel_event.is_set():
             state.status = "cancelled"

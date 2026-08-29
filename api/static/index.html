@@ -805,9 +805,9 @@
         <div class="param-row">
           <label>公告研读上限</label>
           <select class="param-select" id="paramMaxDocs">
-            <option value="3">3 份（极速）</option>
-            <option value="5" selected>5 份（标准）</option>
-            <option value="10">10 份（完整）</option>
+            <option value="50" selected>50 份（标准）</option>
+            <option value="100">100 份（完整）</option>
+            <option value="150">150 份（全部）</option>
           </select>
         </div>
         <div class="param-toggle">
@@ -1327,7 +1327,7 @@
     if (wsConnection) { try { wsConnection.close(); } catch (e) {} wsConnection = null; }
 
     const windowVal = parseWindow();
-    const maxDocs = parseInt(document.getElementById('paramMaxDocs').value) || 5;
+    const maxDocs = parseInt(document.getElementById('paramMaxDocs').value) || 50;
     const useLLM = getParamSwitch('switchLLM');
     const useBGE = getParamSwitch('switchBGE');
 
@@ -1608,6 +1608,7 @@
     }
 
     const risks = data.announcementRisks || [];
+    const pdfInfo = data.announcementPdfs || {};
     const highCount = risks.filter(r => r.level === '高').length;
     const midCount = risks.filter(r => r.level === '中').length;
     const lowCount = risks.filter(r => r.level === '低').length;
@@ -1697,6 +1698,11 @@
           <div class="metric-label">抽取通道</div>
           <div class="metric-value">3</div>
           <div class="metric-sub">规则引擎 / FinBERT / LLM</div>
+        </div>
+        <div class="tech-metric-card">
+          <div class="metric-label">获取公告 PDF</div>
+          <div class="metric-value">${pdfInfo.fetched ?? '—'}</div>
+          <div class="metric-sub">深读 ${pdfInfo.analyzed ?? '—'} 份 · 近一年 ${pdfInfo.metadata_total ?? '—'} 份中按时间最近选取</div>
         </div>
       </div>
 
@@ -2666,6 +2672,12 @@
     `;
   }
 
+  function pdfLine(data) {
+    const ap = data.announcementPdfs || {};
+    if (ap.fetched === undefined || ap.fetched === null) return '';
+    return `<p>公告数据：近一年 <b>${ap.metadata_total ?? '—'}</b> 份公告，本次按时间最近获取 <b>${ap.fetched}</b> 份 PDF（深读 ${ap.analyzed ?? '—'} 份，成功解析 ${ap.parsed ?? '—'} 份）。</p>`;
+  }
+
   function renderOverview(data) {
     document.getElementById('overviewBody').innerHTML = `
       <div class="report-section">
@@ -2673,6 +2685,7 @@
         <p>公司名称：<b>${data.name || '—'}</b>（${data.code || '—'}）</p>
         <p>未来 ${parseWindow()} 天收到问询函概率：<b style="color:${getRiskColor(data.level)}">${data.risk !== undefined ? data.risk.toFixed(1) : '—'}%</b>，风险等级：<b>${data.levelText || '—'}</b>。</p>
         <p>预测置信度：<b>${data.confidence !== undefined ? data.confidence.toFixed(2) : '—'}</b>，风险因子数：<b>${data.factors !== undefined ? data.factors : '—'}</b>。</p>
+        ${pdfLine(data)}
       </div>
       <div class="report-section">
         <div class="report-section-title"><span class="num">2</span>核心结论</div>

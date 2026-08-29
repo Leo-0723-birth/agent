@@ -461,8 +461,48 @@ class AnnouncementReaderAgent(AgentBase):
             "probability_status": "F1是文本特征，不是风险概率",
         }
 
-    @staticmethod
-    def _run_fullrun_subprocess(documents, company_code, timeout_seconds=900):
+    _f1_vec_cache: dict = {}
+    _f1_vec_cache_loaded = False
+
+    @classmethod
+    def _cached_cls_vectors(cls, texts, max_length):
+        """按内容哈希缓存 CLS 向量：重复扫雷时嵌入秒出（50 份全量嵌入
+        在 OMP=2 的 CPU 上需 15-25 分钟，是实时扫雷的主要耗时项）。"""
+        import hashlib
+        import json as _json
+
+        from ..config import DATA_DIR
+        from ..skills.embedding import embed_cls_shared
+
+        cache_path = Path(DATA_DIR) / "cache" / "f1_chunk_vec_cache.json"
+        if not cls._f1_vec_cache_loaded:
+            try:
+                cls._f1_vec_cache = _json.loads(cache_path.read_text(encoding="utf-8"))
+            except Exception:
+                cls._f1_vec_cache = {}
+            cls._f1_vec_cache_loaded = True
+
+        keys = [
+            hashlib.sha256(f"{max_length}|{text}".encode("utf-8")).hexdigest()
+            for text in texts
+        ]
+        missing = [i for i, key in enumerate(keys) if key not in cls._f1_vec_cache]
+        if missing:
+            vectors = embed_cls_shared([texts[i] for i in missing], max_length=max_length)
+            for i, vec in zip(missing, vectors):
+                cls._f1_vec_cache[keys[i]] = [round(float(v), 6) for v in vec]
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                entries = list(cls._f1_vec_cache.items())[-20000:]  # 容量上限防膨胀
+                cache_path.write_text(
+                    _json.dumps(dict(entries), ensure_ascii=False), encoding="utf-8"
+                )
+            except OSError:
+                pass
+        return [cls._f1_vec_cache[key] for key in keys]
+
+    @classmethod
+    def _run_fullrun_subprocess(cls, documents, company_code, timeout_seconds=900):
         """在独立进程中执行 F1 训练同口径语义上游（低内存协议）。
 
         8GB 机器的内存约束：服务端已驻留 FinBERT2+BGE，worker 若再加载
@@ -480,7 +520,9 @@ class AnnouncementReaderAgent(AgentBase):
 
         pipeline = _f1mod.FullRunOnlineSemanticPipeline()
         query_texts = [item["query_for_embedding"] for item in pipeline.themes]
-        query_vectors = embed_cls_shared(query_texts, max_length=128)
+        query_vectors = cls._cached_cls_vectors(query_texts, 128)
+        if hasattr(query_vectors, "tolist"):
+            query_vectors = query_vectors.tolist()
         docs = []
         for item in documents:
             text = str(item.get("text") or "")
@@ -488,18 +530,20 @@ class AnnouncementReaderAgent(AgentBase):
             if not pieces:
                 continue
             chunk_texts = [piece[1] for piece in pieces]
-            vectors = embed_cls_shared(chunk_texts, max_length=512)
+            vectors = cls._cached_cls_vectors(chunk_texts, 512)
+            if hasattr(vectors, "tolist"):
+                vectors = vectors.tolist()
             docs.append({
                 "announcement": item,
                 "chunk_texts": chunk_texts,
-                "chunk_vectors": vectors.tolist(),
+                "chunk_vectors": vectors,
             })
         if not docs:
             return [], {"status": "skipped", "reason": "no_chunkable_documents"}
 
         worker = Path(__file__).resolve().parents[1] / "scripts" / "f1_online_worker.py"
         payload = _json.dumps(
-            {"docs": docs, "query_vectors": query_vectors.tolist(),
+            {"docs": docs, "query_vectors": query_vectors,
              "company_code": company_code},
             ensure_ascii=False,
         ).encode("utf-8")

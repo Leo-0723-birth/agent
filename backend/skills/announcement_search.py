@@ -393,7 +393,7 @@ class CninfoAnnouncementSource:
             item["text_status"] = f"failed:{type(exc).__name__}:{str(exc)[:160]}"
         return item
 
-    def search(self, user_input, days=365, as_of=None, pdf_budget_seconds=180):
+    def search(self, user_input, days=365, as_of=None, pdf_budget_seconds=None):
         cutoff = str(as_of or date.today().isoformat())[:10]
         offline_store = getattr(self, "offline_store", None)
         if offline_store is not None:
@@ -436,7 +436,11 @@ class CninfoAnnouncementSource:
             elapsed_ms=metadata_ms,
         )
         # PDF 下载/解析总预算：超过预算的公告标记为未获取并继续（不阻塞流水线；
-        # F6 问询特征只需公告元数据 title+date，不受影响）
+        # F6 问询特征只需公告元数据 title+date，不受影响）。
+        # 预算随份数扩展（每份 ~3s 下限 180s），避免 50/100/150 份时被固定
+        # 180s 预算截断导致"获取了 N 份"远小于请求份数。
+        if pdf_budget_seconds is None:
+            pdf_budget_seconds = max(180.0, float(len(selected)) * 3.0)
         deadline = time.time() + float(pdf_budget_seconds)
         _t_pdf = time.perf_counter()
         pdf_downloaded = 0

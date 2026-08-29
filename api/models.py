@@ -78,6 +78,7 @@ class AnalyzeResponse(BaseModel):
     confidenceMeaning: str = "predicted_class_score"  # 非统计置信区间
     dataSource: str = "unknown"         # realtime / offline_lookup / offline_snapshot
     dataCoverage: dict = Field(default_factory=dict)
+    announcementPdfs: dict = Field(default_factory=dict)  # 公告 PDF 获取情况：fetched/parsed/analyzed/metadata_total/window_days
     degradedReasons: List[str] = Field(default_factory=list)
     featureAnchor: str = ""
     modelVersion: str = ""
@@ -126,8 +127,8 @@ class ScanRequest(BaseModel):
     use_llm: bool = Field(True, description="是否启用LLM精细抽取（默认开启，与FinBERT门控配合聚焦候选）")
     use_bge: bool = Field(True, description="是否启用BGE语义检索")
     max_documents: Optional[int] = Field(
-        SCAN_MAX_DOCUMENTS, ge=1, le=100,
-        description="公告研读深读文档数（PDF下载+LLM抽取的上限，越小越快）",
+        SCAN_MAX_DOCUMENTS, ge=1, le=150,
+        description="公告研读深读文档数：从近一年公告中按时间最近取前 N 份 PDF（50/100/150）",
     )
     realtime: bool = Field(False, description="默认返回离线快照；为 true 时执行实时 Agent 流水线")
     force: bool = Field(False, description="是否取消当前任务并切换到新公司")

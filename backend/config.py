@@ -89,7 +89,7 @@ ANNOUNCE_MAX_DOCUMENTS = int(os.getenv("ANNOUNCE_MAX_DOCUMENTS", "120"))
 # 实时扫雷（方案C）默认深读公告数：API 请求与扫描路径编排器统一取此值，
 # 避免各层默认值不一致导致"请求 5 份实际深读 N 份"的参数漂移。
 # 批量/全量处理仍用 ANNOUNCE_MAX_DOCUMENTS。
-SCAN_MAX_DOCUMENTS = int(os.getenv("SCAN_MAX_DOCUMENTS", "5"))
+SCAN_MAX_DOCUMENTS = int(os.getenv("SCAN_MAX_DOCUMENTS", "50"))
 # 实时扫雷是否启用 FinBERT 通道（前端未暴露该开关，由后端配置统一控制）。
 SCAN_USE_FINBERT = os.getenv("SCAN_USE_FINBERT", "true").lower() in {
     "1", "true", "yes", "on"
