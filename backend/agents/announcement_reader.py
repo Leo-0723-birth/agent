@@ -643,7 +643,9 @@ class AnnouncementReaderAgent(AgentBase):
                 from ..skills.fullrun_online_semantics import FullRunOnlineSemanticPipeline
 
                 rows, fullrun_upstream_audit = FullRunOnlineSemanticPipeline().analyze(
-                    fullrun_documents, identity.get("secucode") or ctx.company
+                    fullrun_documents,
+                    identity.get("secucode") or ctx.company,
+                    cancel_event=getattr(ctx, "cancel_event", None),
                 )
                 ctx.semantic.f1_announcement_risk_rows = rows
             except Exception as exc:

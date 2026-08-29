@@ -819,6 +819,19 @@ class StreamingOrchestrator:
         "Reporter": 60,
     }
 
+    @staticmethod
+    def _agent_timeout(agent_name: str) -> int:
+        """按运行模式给 Agent 设置可配置上限。
+
+        训练同口径实时 F1 在 CPU 上需要依次运行三套模型，不能沿用普通
+        规则研读的 420 秒上限，否则会把正常的长任务误判成无公告。
+        """
+        if agent_name == "AnnouncementReader" and os.getenv(
+            "F1_ONLINE_SEMANTICS_ENABLED", "auto"
+        ).lower() in {"1", "true", "yes", "on"}:
+            return int(os.getenv("F1_ANNOUNCEMENT_TIMEOUT_SECONDS", "3600"))
+        return StreamingOrchestrator._AGENT_TIMEOUTS.get(agent_name, 120)
+
     # Agent 类名 → SweepingOrchestrator 的 dispatch 方法名（单一来源的映射）
     _ORCH_DISPATCH = {
         "AnnouncementReader": "_run_announcement",
@@ -851,9 +864,17 @@ class StreamingOrchestrator:
         if main_cancel is not None and main_cancel.is_set():
             isolated_cancel.set()
         if ctx is not None:
+            class _CombinedCancelEvent:
+                def is_set(self):
+                    return isolated_cancel.is_set() or (
+                        main_cancel is not None and main_cancel.is_set()
+                    )
+
             for key, value in vars(ctx).items():
                 if key == "cancel_event":
-                    setattr(isolated_ctx, key, isolated_cancel)
+                    # 同时监听节点看门狗与用户取消，避免界面显示已取消但底层
+                    # BGE/reranker/FinBERT 线程仍长期占用模型资源。
+                    setattr(isolated_ctx, key, _CombinedCancelEvent())
                 else:
                     setattr(isolated_ctx, key, copy.deepcopy(value))
 
@@ -920,7 +941,7 @@ class StreamingOrchestrator:
                     raise RuntimeError(f"未找到 Agent {agent_name} 的执行入口")
 
                 # 节点级看门狗：单个 Agent 挂死只跳过它，不阻塞后续环节
-                timeout = self._AGENT_TIMEOUTS.get(agent_name, 120)
+                timeout = self._agent_timeout(agent_name)
                 if agent_name == "Reporter":
                     ctx.meta["runtime_quality"] = _evaluate_runtime_quality(ctx)
                 outcome, error = self._run_agent(runner, company, ctx, timeout)
@@ -928,6 +949,10 @@ class StreamingOrchestrator:
                 self._closed_agent_keys.add(agent_key)
 
                 if outcome == "timeout":
+                    ctx.meta.setdefault("agent_timeouts", {})[agent_name] = {
+                        "timeout_seconds": timeout,
+                        "reason": f"{display_name}语义模型处理超过 {timeout}s",
+                    }
                     ctx.trace_log.append({"agent": agent_name, "status": "timeout",
                                           "reason": f"{display_name} 超过 {timeout}s 看门狗触发", "trace_complete": True})
                     self._emit(idx, total, agent_name, agent_key, "skipped",
@@ -1015,6 +1040,11 @@ class StreamingOrchestrator:
 def _evaluate_runtime_quality(ctx) -> dict:
     """判定本次实时运行能否作为新的事实快照发布。"""
     reasons = []
+    announcement_timeout = ((getattr(ctx, "meta", {}) or {}).get(
+        "agent_timeouts", {}
+    ) or {}).get("AnnouncementReader")
+    if announcement_timeout:
+        reasons.append(announcement_timeout.get("reason") or "公告研读语义模型处理超时")
     semantic_quality = getattr(ctx.semantic, "data_quality", {}) or {}
     announcement_count = int((getattr(ctx.semantic, "stats", {}) or {}).get("announcement_count", 0) or 0)
     semantic_available = bool(semantic_quality.get("current_data_available")) or announcement_count > 0
@@ -1381,6 +1411,12 @@ async def run_scan_task(state: TaskState, req: ScanRequest):
             streamer = StreamingOrchestrator(callback=callback)
             # 去掉 asyncio.shield：超时后让 wait_for 及时返回并释放串行锁，
             # 底层线程由 StreamingOrchestrator 的节点看门狗 + cancel_event 保证有界退出。
+            fullrun_enabled = os.getenv(
+                "F1_ONLINE_SEMANTICS_ENABLED", "auto"
+            ).lower() in {"1", "true", "yes", "on"}
+            pipeline_timeout = int(os.getenv(
+                "REALTIME_PIPELINE_TIMEOUT_SECONDS", "3900" if fullrun_enabled else "600"
+            ))
             ctx = await asyncio.wait_for(
                 loop.run_in_executor(
                     None,
@@ -1394,7 +1430,7 @@ async def run_scan_task(state: TaskState, req: ScanRequest):
                         cancel_event=state.cancel_event,
                     ),
                 ),
-                timeout=600,  # 10 分钟硬上限
+                timeout=pipeline_timeout,
             )
             if state.cancel_event.is_set():
                 raise PipelineCancelled("任务已取消")
@@ -1435,7 +1471,15 @@ async def run_scan_task(state: TaskState, req: ScanRequest):
             ))
     except asyncio.TimeoutError:
         state.cancel_event.set()
-        await _fallback_after_error(state, req, "实时扫雷超过 10 分钟超时。")
+        fullrun_enabled = os.getenv(
+            "F1_ONLINE_SEMANTICS_ENABLED", "auto"
+        ).lower() in {"1", "true", "yes", "on"}
+        timeout = os.getenv(
+            "REALTIME_PIPELINE_TIMEOUT_SECONDS", "3900" if fullrun_enabled else "600"
+        )
+        await _fallback_after_error(
+            state, req, f"实时扫雷超过 {timeout} 秒运行上限。"
+        )
     except Exception as exc:
         if state.cancel_event.is_set():
             state.status = "cancelled"

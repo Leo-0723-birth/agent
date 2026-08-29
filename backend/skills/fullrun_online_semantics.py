@@ -13,6 +13,7 @@ Top-50 召回（阈值 0.42、最多 8 主题）→ bge-reranker-v2-m3 精排
 from __future__ import annotations
 
 import json
+import gc
 import os
 import re
 from collections import defaultdict
@@ -94,9 +95,16 @@ class FullRunOnlineSemanticPipeline:
         self.batch_size = int(batch_size or os.getenv("F1_ONLINE_BATCH_SIZE", "32"))
         query_bundle = json.loads(QUERY_PATH.read_text(encoding="utf-8"))
         self.themes = [query_bundle["themes"][key] for key in sorted(query_bundle["themes"])]
-        self._models = None
+        self._active_kind = None
+        self._tokenizer = None
+        self._model = None
         self._query_vectors = None
         self._rule_extractor = None
+        self._cancel_event = None
+
+    def _check_cancel(self):
+        if self._cancel_event is not None and self._cancel_event.is_set():
+            raise RuntimeError("实时公告语义处理已取消")
 
     @staticmethod
     def _load_hf(kind, model_class):
@@ -109,31 +117,39 @@ class FullRunOnlineSemanticPipeline:
         model = model_class.from_pretrained(path, **kwargs)
         return tokenizer, model, path, revision
 
-    def _load_models(self):
-        if self._models is not None:
+    def _load_stage(self, kind):
+        """只让一个大模型驻留内存，避免三模型并存造成 OOM。"""
+        if self._active_kind == kind and self._model is not None:
             return
+        self._release_stage()
         from transformers import AutoModel, AutoModelForSequenceClassification
 
-        bge_tok, bge, _, _ = self._load_hf("bge", AutoModel)
-        rr_tok, rerank, _, _ = self._load_hf("rerank", AutoModelForSequenceClassification)
-        fin_tok, finbert, _, _ = self._load_hf("finbert", AutoModelForSequenceClassification)
-        dtype_half = self.device.startswith("cuda")
-        if dtype_half:
-            bge, rerank, finbert = bge.half(), rerank.half(), finbert.half()
-        self._models = (
-            bge_tok, bge.to(self.device).eval(),
-            rr_tok, rerank.to(self.device).eval(),
-            fin_tok, finbert.to(self.device).eval(),
-        )
-        query_texts = [item["query_for_embedding"] for item in self.themes]
-        self._query_vectors = self._embed(query_texts, query=True)
+        model_class = AutoModel if kind == "bge" else AutoModelForSequenceClassification
+        tokenizer, model, _, _ = self._load_hf(kind, model_class)
+        if self.device.startswith("cuda"):
+            model = model.half()
+        self._active_kind = kind
+        self._tokenizer = tokenizer
+        self._model = model.to(self.device).eval()
+
+    def _release_stage(self):
+        """释放当前阶段权重，并归还 CPU/GPU 缓存。"""
+        self._model = None
+        self._tokenizer = None
+        self._active_kind = None
+        gc.collect()
+        if self.device.startswith("cuda") and self.torch.cuda.is_available():
+            self.torch.cuda.empty_cache()
 
     def _batches(self, values):
         for start in range(0, len(values), self.batch_size):
+            self._check_cancel()
             yield start, values[start:start + self.batch_size]
 
     def _embed(self, texts, query=False):
-        bge_tok, bge = self._models[0], self._models[1]
+        if self._active_kind != "bge":
+            raise RuntimeError("BGE 阶段尚未加载")
+        bge_tok, bge = self._tokenizer, self._model
         output = []
         for _, batch in self._batches(texts):
             encoded = bge_tok(
@@ -147,7 +163,9 @@ class FullRunOnlineSemanticPipeline:
         return np.concatenate(output) if output else np.empty((0, 1024), dtype=np.float32)
 
     def _rerank(self, queries, texts):
-        tok, model = self._models[2], self._models[3]
+        if self._active_kind != "rerank":
+            raise RuntimeError("reranker 阶段尚未加载")
+        tok, model = self._tokenizer, self._model
         output = np.empty(len(texts), dtype=np.float32)
         for start, indices in self._batches(list(range(len(texts)))):
             encoded = tok(
@@ -161,7 +179,9 @@ class FullRunOnlineSemanticPipeline:
         return output
 
     def _sentiment(self, texts):
-        tok, model = self._models[4], self._models[5]
+        if self._active_kind != "finbert":
+            raise RuntimeError("FinBERT 阶段尚未加载")
+        tok, model = self._tokenizer, self._model
         id2label = getattr(model.config, "id2label", {}) or {}
         label_indices = {}
         for index, label in id2label.items():
@@ -206,101 +226,139 @@ class FullRunOnlineSemanticPipeline:
                 counts[theme]["effective"] += 1
         return counts
 
-    def analyze(self, announcements, company_code=""):
-        self._load_models()
+    def analyze(self, announcements, company_code="", cancel_event=None):
+        self._cancel_event = cancel_event
+        work = []
         output = []
-        for announcement in announcements:
-            text = str(announcement.get("text") or "")
-            pieces = split_into_chunks(text)
-            if not pieces:
-                continue
-            chunk_texts = [item[1] for item in pieces]
-            chunk_vectors = self._embed(chunk_texts)
-            similarities = self._query_vectors @ chunk_vectors.T
-            maxima = similarities.max(axis=1)
-            active = np.flatnonzero(maxima >= 0.42)
-            if len(active) > 8:
-                active = active[np.argsort(maxima[active])[-8:]]
-            candidates = []
-            for theme_index in active:
-                top = np.argsort(similarities[theme_index])[-min(50, len(pieces)):][::-1]
-                for rank, chunk_index in enumerate(top, 1):
-                    candidates.append({
-                        "theme_index": int(theme_index), "chunk_index": int(chunk_index),
-                        "bge_score": float(similarities[theme_index, chunk_index]),
-                        "bge_rank": rank,
-                    })
-            if not candidates:
-                continue
-            queries = [self.themes[row["theme_index"]]["query_text"] for row in candidates]
-            evidence = [chunk_texts[row["chunk_index"]] for row in candidates]
-            rerank_scores = self._rerank(queries, evidence)
-            for row, score in zip(candidates, rerank_scores):
-                row["rerank_score"] = float(score)
-            selected = []
-            by_theme = defaultdict(list)
-            for row in candidates:
-                by_theme[row["theme_index"]].append(row)
-            for rows in by_theme.values():
-                selected.extend(sorted(rows, key=lambda value: -value["rerank_score"])[:20])
-            selected = sorted(selected, key=lambda value: -value["rerank_score"])[:100]
-            selected_text = [chunk_texts[row["chunk_index"]] for row in selected]
-            sentiment = self._sentiment(selected_text)
-            for row, probs, evidence_text in zip(selected, sentiment, selected_text):
-                row.update({
-                    "sent_neg": float(probs[0]), "sent_neu": float(probs[1]),
-                    "sent_pos": float(probs[2]), "evidence_text": evidence_text,
-                    "negation_flag": bool(RE_NEGATION.search(evidence_text)),
-                    "hedge_flag": bool(RE_HEDGE.search(evidence_text)),
-                    "strong_flag": bool(RE_STRONG.search(evidence_text)),
-                })
-                sigmoid = 1.0 / (1.0 + np.exp(-row["rerank_score"]))
-                context_weight = (
-                    (0.25 if row["negation_flag"] else 1.0)
-                    * (0.40 if row["hedge_flag"] else 1.0)
-                    * (1.30 if row["strong_flag"] else 1.0)
-                )
-                row["risk_strength"] = float(
-                    sigmoid * (0.5 + 0.5 * (row["sent_neg"] - row["sent_pos"]))
-                    * context_weight
-                )
-                neg_ratio = row["sent_neg"] / (row["sent_neg"] + row["sent_pos"] + 1e-6)
-                row["risk_strength_v2"] = float(
-                    sigmoid * (0.30 + 0.70 * neg_ratio) * context_weight
-                )
-            rules = self._rule_counts(text)
-            for theme_index, rows in by_theme.items():
-                rows = [row for row in selected if row["theme_index"] == theme_index]
-                if not rows:
+        try:
+            # 1) BGE：只保存轻量候选和文本，不保留 chunk embedding。
+            self._load_stage("bge")
+            query_texts = [item["query_for_embedding"] for item in self.themes]
+            self._query_vectors = self._embed(query_texts, query=True)
+            for announcement in announcements:
+                self._check_cancel()
+                text = str(announcement.get("text") or "")
+                pieces = split_into_chunks(text)
+                if not pieces:
                     continue
-                theme = self.themes[theme_index]
-                strengths = sorted((row["risk_strength_v2"] for row in rows), reverse=True)
-                rule = rules.get(theme["risk_theme"], {})
-                top = sorted(rows, key=lambda value: -value["risk_strength"])[:3]
-                output.append({
-                    "announcement_id": announcement.get("announcement_id") or announcement.get("id"),
-                    "company_code": company_code,
-                    "publish_date": announcement.get("published_at") or announcement.get("date"),
-                    "doc_type": announcement.get("category") or announcement.get("type") or "",
-                    "risk_theme": theme["risk_theme"], "l1_code": theme["l1_code"],
-                    "evidence_count": len(rows),
-                    "rerank_score_max": max(row["rerank_score"] for row in rows),
-                    "sent_neg_max": max(row["sent_neg"] for row in rows),
-                    "strong_count": sum(row["strong_flag"] for row in rows),
-                    "risk_strength_v2_top3": float(np.mean(strengths[:3])),
-                    "rule_effective_hits": int(rule.get("effective", 0)),
-                    "rule_negated_hits": int(rule.get("negated", 0)),
-                    "rule_excluded_hits": int(rule.get("excluded", 0)),
-                    "top_evidence": json.dumps([
-                        {"chunk_index": row["chunk_index"], "bge_rank": row["bge_rank"],
-                         "rerank_score": round(row["rerank_score"], 4),
-                         "risk_strength": round(row["risk_strength"], 4),
-                         "text": row["evidence_text"][:250]}
-                        for row in top
-                    ], ensure_ascii=False),
-                })
+                chunk_texts = [item[1] for item in pieces]
+                chunk_vectors = self._embed(chunk_texts)
+                similarities = self._query_vectors @ chunk_vectors.T
+                maxima = similarities.max(axis=1)
+                active = np.flatnonzero(maxima >= 0.42)
+                if len(active) > 8:
+                    active = active[np.argsort(maxima[active])[-8:]]
+                candidates = []
+                for theme_index in active:
+                    top = np.argsort(similarities[theme_index])[-min(50, len(pieces)):][::-1]
+                    for rank, chunk_index in enumerate(top, 1):
+                        candidates.append({
+                            "theme_index": int(theme_index), "chunk_index": int(chunk_index),
+                            "bge_score": float(similarities[theme_index, chunk_index]),
+                            "bge_rank": rank,
+                        })
+                if candidates:
+                    work.append({"announcement": announcement, "text": text,
+                                 "chunk_texts": chunk_texts, "candidates": candidates})
+            self._query_vectors = None
+            self._release_stage()
+
+            # 2) reranker：公告内每主题 Top-20，再取公告全局 Top-100。
+            self._load_stage("rerank")
+            for item in work:
+                self._check_cancel()
+                candidates, chunk_texts = item["candidates"], item["chunk_texts"]
+                queries = [self.themes[row["theme_index"]]["query_text"] for row in candidates]
+                evidence = [chunk_texts[row["chunk_index"]] for row in candidates]
+                rerank_scores = self._rerank(queries, evidence)
+                for row, score in zip(candidates, rerank_scores):
+                    row["rerank_score"] = float(score)
+                by_theme = defaultdict(list)
+                for row in candidates:
+                    by_theme[row["theme_index"]].append(row)
+                selected = []
+                for rows in by_theme.values():
+                    selected.extend(sorted(rows, key=lambda value: -value["rerank_score"])[:20])
+                item["selected"] = sorted(
+                    selected, key=lambda value: -value["rerank_score"]
+                )[:100]
+                item.pop("candidates", None)
+            self._release_stage()
+
+            # 3) FinBERT：只处理精排后的证据，然后生成公告×主题行。
+            self._load_stage("finbert")
+            for item in work:
+                self._check_cancel()
+                announcement, text = item["announcement"], item["text"]
+                chunk_texts, selected = item["chunk_texts"], item["selected"]
+                selected_text = [chunk_texts[row["chunk_index"]] for row in selected]
+                sentiment = self._sentiment(selected_text)
+                for row, probs, evidence_text in zip(selected, sentiment, selected_text):
+                    row.update({
+                        "sent_neg": float(probs[0]), "sent_neu": float(probs[1]),
+                        "sent_pos": float(probs[2]), "evidence_text": evidence_text,
+                        "negation_flag": bool(RE_NEGATION.search(evidence_text)),
+                        "hedge_flag": bool(RE_HEDGE.search(evidence_text)),
+                        "strong_flag": bool(RE_STRONG.search(evidence_text)),
+                    })
+                    sigmoid = 1.0 / (1.0 + np.exp(-row["rerank_score"]))
+                    context_weight = (
+                        (0.25 if row["negation_flag"] else 1.0)
+                        * (0.40 if row["hedge_flag"] else 1.0)
+                        * (1.30 if row["strong_flag"] else 1.0)
+                    )
+                    row["risk_strength"] = float(
+                        sigmoid * (0.5 + 0.5 * (row["sent_neg"] - row["sent_pos"]))
+                        * context_weight
+                    )
+                    neg_ratio = row["sent_neg"] / (
+                        row["sent_neg"] + row["sent_pos"] + 1e-6
+                    )
+                    row["risk_strength_v2"] = float(
+                        sigmoid * (0.30 + 0.70 * neg_ratio) * context_weight
+                    )
+                rules = self._rule_counts(text)
+                theme_indices = sorted({row["theme_index"] for row in selected})
+                for theme_index in theme_indices:
+                    rows = [
+                        row for row in selected if row["theme_index"] == theme_index
+                    ]
+                    if not rows:
+                        continue
+                    theme = self.themes[theme_index]
+                    strengths = sorted(
+                        (row["risk_strength_v2"] for row in rows), reverse=True
+                    )
+                    rule = rules.get(theme["risk_theme"], {})
+                    top = sorted(rows, key=lambda value: -value["risk_strength"])[:3]
+                    output.append({
+                        "announcement_id": announcement.get("announcement_id") or announcement.get("id"),
+                        "company_code": company_code,
+                        "publish_date": announcement.get("published_at") or announcement.get("date"),
+                        "doc_type": announcement.get("category") or announcement.get("type") or "",
+                        "risk_theme": theme["risk_theme"], "l1_code": theme["l1_code"],
+                        "evidence_count": len(rows),
+                        "rerank_score_max": max(row["rerank_score"] for row in rows),
+                        "sent_neg_max": max(row["sent_neg"] for row in rows),
+                        "strong_count": sum(row["strong_flag"] for row in rows),
+                        "risk_strength_v2_top3": float(np.mean(strengths[:3])),
+                        "rule_effective_hits": int(rule.get("effective", 0)),
+                        "rule_negated_hits": int(rule.get("negated", 0)),
+                        "rule_excluded_hits": int(rule.get("excluded", 0)),
+                        "top_evidence": json.dumps([
+                            {"chunk_index": row["chunk_index"], "bge_rank": row["bge_rank"],
+                             "rerank_score": round(row["rerank_score"], 4),
+                             "risk_strength": round(row["risk_strength"], 4),
+                             "text": row["evidence_text"][:250]}
+                            for row in top
+                        ], ensure_ascii=False),
+                    })
+        finally:
+            self._query_vectors = None
+            self._release_stage()
+            self._cancel_event = None
         return output, {
-            "status": "generated", "pipeline": "fullrun-online-v1",
+            "status": "generated", "pipeline": "fullrun-online-v2-staged",
             "device": self.device, "announcement_count": len(announcements),
             "announcement_theme_rows": len(output), "model_revisions": {
                 key: value[1] for key, value in MODEL_SPECS.items()
