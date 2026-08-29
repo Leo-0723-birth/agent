@@ -88,6 +88,7 @@ class AnalyzeResponse(BaseModel):
     generatedAt: Optional[str] = ""
     # 风险证据与 Streamlit 细节（前端仪表盘卡片数据）
     announcementRisks: Optional[List[AnnouncementRiskItem]] = Field(default_factory=list)
+    announcementReview: Optional[dict] = Field(default_factory=dict)
     attributionEvidence: Optional[List[AttributionEvidenceItem]] = Field(default_factory=list)
     riskFactorDetails: Optional[List[FactorItem]] = Field(default_factory=list)
     financialAnomalies: Optional[List[FinancialAnomalyItem]] = Field(default_factory=list)

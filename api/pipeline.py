@@ -527,6 +527,122 @@ def _map_announcement_risks(report: dict) -> list[AnnouncementRiskItem]:
     return items
 
 
+def _map_announcement_review(report: dict) -> dict:
+    """把公告扫描覆盖、低风险观察和未发布候选整理为前端审计信息。
+
+    低风险观察只描述扫描覆盖和证据核验结果，不把规则候选伪装成公司风险事实；
+    被标题、语境或发布门槛排除的内容以聚合审计项单独展示。
+    """
+    semantic = report.get("semantic", {}) or {}
+    quality = semantic.get("data_quality", {}) or {}
+    channels = semantic.get("channel_summary", {}) or {}
+    rule_channel = channels.get("rule", {}) or {}
+
+    def _count(value) -> int:
+        try:
+            return max(0, int(value or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    as_of = str(quality.get("as_of") or report.get("as_of") or "")[:10] or "—"
+    lookback_days = _count(quality.get("lookback_days")) or 365
+    reviewed_count = _count(
+        quality.get("announcement_count", semantic.get("announcement_count", 0))
+    )
+    eligible_count = _count(quality.get("analysis_eligible_count"))
+    attempted_count = _count(
+        quality.get("pdf_attempted_count", quality.get("analyzed_document_count", 0))
+    )
+    parsed_count = _count(quality.get("pdf_parsed_count"))
+    title_excluded_count = _count(quality.get("title_excluded_count"))
+    not_fulltext_count = _count(quality.get("not_fulltext_count"))
+    suppressed_count = _count(rule_channel.get("suppressed_count"))
+    candidate_count = _count(semantic.get("candidate_count"))
+    verified_count = len(publishable_evidence(semantic.get("risk_factors", []) or []))
+    unpublished_count = max(0, candidate_count - verified_count)
+
+    low_signals: list[dict] = []
+    if reviewed_count:
+        low_signals.append({
+            "date": as_of,
+            "level": "低",
+            "l1": "审计观察",
+            "l2": "公告覆盖",
+            "description": f"近 {lookback_days} 天已获取 {reviewed_count} 份公告，{eligible_count} 份进入风险语义分析。",
+            "evidence": "该项反映公告披露与扫描覆盖情况，属于常规观察，不代表已发生风险事件。",
+            "title": "公告扫描覆盖汇总",
+            "sourceUrl": "",
+            "isObservation": True,
+        })
+    if attempted_count:
+        coverage_pct = round(parsed_count / attempted_count * 100) if attempted_count else 0
+        low_signals.append({
+            "date": as_of,
+            "level": "低",
+            "l1": "审计观察",
+            "l2": "正文解析",
+            "description": f"深读 {attempted_count} 份公告，成功解析 {parsed_count} 份，正文解析覆盖率约 {coverage_pct}%。",
+            "evidence": f"未取得完整正文的 {not_fulltext_count} 份公告不会被直接判定为风险事实。",
+            "title": "公告正文解析质量",
+            "sourceUrl": "",
+            "isObservation": True,
+        })
+    if candidate_count and not verified_count:
+        low_signals.append({
+            "date": as_of,
+            "level": "低",
+            "l1": "审计观察",
+            "l2": "交叉核验",
+            "description": f"规则通道产生 {candidate_count} 条待复核候选，本次没有候选达到事实证据发布门槛。",
+            "evidence": "单通道关键词命中仅作召回线索；未经原文事实语境及多通道核验，不作为风险事实展示。",
+            "title": "候选信号交叉核验结果",
+            "sourceUrl": "",
+            "isObservation": True,
+        })
+
+    excluded: list[dict] = []
+    if title_excluded_count:
+        excluded.append({
+            "category": "标题过滤",
+            "count": title_excluded_count,
+            "reason": "公司章程、议事规则、候选人声明等制度或程序性公告不进入风险抽取。",
+            "basis": f"标题过滤规则 {quality.get('title_filter_version') or '当前版本'}",
+        })
+    if suppressed_count:
+        excluded.append({
+            "category": "语境排除",
+            "count": suppressed_count,
+            "reason": "否定表述、假设条款、法规引用或报表模板命中已被抑制。",
+            "basis": "规则引擎事实语境与否定检测",
+        })
+    if unpublished_count:
+        excluded.append({
+            "category": "未发布候选",
+            "count": unpublished_count,
+            "reason": "仅规则命中或尚未取得 LLM 原文核验一致，不作为事实风险对外发布。",
+            "basis": "证据发布策略：LLM 原文校验或规则与 LLM 交叉一致",
+        })
+    if not_fulltext_count:
+        excluded.append({
+            "category": "全文不足",
+            "count": not_fulltext_count,
+            "reason": "未获得可核验完整正文，保留为覆盖缺口，不据此形成风险结论。",
+            "basis": "逐字证据完整性校验",
+        })
+
+    return {
+        "reviewedCount": reviewed_count,
+        "eligibleCount": eligible_count,
+        "verifiedCount": verified_count,
+        "candidateCount": candidate_count,
+        "lowRiskSignals": low_signals,
+        "excludedSignals": excluded,
+        "excludedCount": sum(item["count"] for item in excluded),
+        "source": quality.get("source") or "公告扫描审计",
+        "asOf": as_of,
+    }
+
+
 # ---------- 新增：风险归因原文 ----------
 
 def _map_attribution_evidence(report: dict) -> list[AttributionEvidenceItem]:
@@ -1135,6 +1251,7 @@ def offline_to_response_from_report(report: dict, window: int = 60) -> AnalyzeRe
         similarCases=_map_similar_cases(report),
         generatedAt=report.get("generated_at", ""),
         announcementRisks=_map_announcement_risks(report),
+        announcementReview=_map_announcement_review(report),
         attributionEvidence=_map_attribution_evidence(report),
         riskFactorDetails=_map_risk_factor_details(report),
         riskByWindow=risk_by_window,
