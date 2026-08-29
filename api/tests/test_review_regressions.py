@@ -124,3 +124,35 @@ def test_legacy_report_is_explicitly_unverified():
     assert response.dataSource == "legacy_snapshot_unverified"
     assert response.modelVersion == "legacy-unversioned"
     assert response.degradedReasons
+
+
+def test_announcement_review_keeps_low_risk_and_excluded_audit_visible():
+    report = _report("000415.SZ", "2026-08-29", 0.2)
+    report["semantic"] = {
+        "announcement_count": 202,
+        "risk_factors": [],
+        "candidate_count": 12,
+        "risk_factor_candidates": [],
+        "channel_summary": {"rule": {"suppressed_count": 3}},
+        "data_quality": {
+            "as_of": "2026-08-29",
+            "lookback_days": 365,
+            "announcement_count": 202,
+            "analysis_eligible_count": 181,
+            "title_excluded_count": 21,
+            "pdf_attempted_count": 100,
+            "pdf_parsed_count": 60,
+            "not_fulltext_count": 40,
+            "title_filter_version": "test-v1",
+        },
+    }
+
+    response = pipeline.offline_to_response_from_report(report)
+    review = response.announcementReview
+
+    assert review["reviewedCount"] == 202
+    assert len(review["lowRiskSignals"]) == 3
+    assert {item["category"] for item in review["excludedSignals"]} == {
+        "标题过滤", "语境排除", "未发布候选", "全文不足",
+    }
+    assert review["excludedCount"] == 76

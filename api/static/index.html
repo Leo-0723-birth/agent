@@ -812,9 +812,9 @@
         <div class="param-row">
           <label>公告研读上限</label>
           <select class="param-select" id="paramMaxDocs">
-            <option value="3" selected>3 份（极速）</option>
-            <option value="5">5 份（标准）</option>
-            <option value="10">10 份（完整）</option>
+            <option value="50">50 份（极速）</option>
+            <option value="100" selected>100 份（标准）</option>
+            <option value="150">150 份（完整）</option>
           </select>
         </div>
         <div class="param-toggle">
@@ -1335,7 +1335,7 @@
     if (wsConnection) { try { wsConnection.close(); } catch (e) {} wsConnection = null; }
 
     const windowVal = parseWindow();
-    const maxDocs = parseInt(document.getElementById('paramMaxDocs').value) || 3;
+    const maxDocs = parseInt(document.getElementById('paramMaxDocs').value) || 100;
     const useLLM = getParamSwitch('switchLLM');
     const useBGE = getParamSwitch('switchBGE');
 
@@ -1616,12 +1616,18 @@
     }
 
     const risks = data.announcementRisks || [];
+    const review = data.announcementReview || {};
+    const lowRiskSignals = review.lowRiskSignals || [];
+    const displayRows = risks.concat(lowRiskSignals);
+    const excludedSignals = review.excludedSignals || [];
     const highCount = risks.filter(r => r.level === '高').length;
     const midCount = risks.filter(r => r.level === '中').length;
-    const lowCount = risks.filter(r => r.level === '低').length;
+    const lowCount = risks.filter(r => r.level === '低').length + lowRiskSignals.length;
     const uniqueTitles = new Set(risks.map(r => r.title).filter(Boolean));
-    const docCount = uniqueTitles.size;
-    const total = risks.length;
+    const docCount = Number(review.reviewedCount) || uniqueTitles.size;
+    const verifiedCount = risks.length;
+    const total = displayRows.length;
+    const excludedCount = Number(review.excludedCount) || 0;
 
     // 排序状态（本次渲染使用默认按日期降序）
     let sortKey = 'date';
@@ -1634,7 +1640,7 @@
     }
 
     function renderRows() {
-      const rows = risks.slice().sort((a, b) => {
+      const rows = displayRows.slice().sort((a, b) => {
         let va = a[sortKey] || '';
         let vb = b[sortKey] || '';
         if (sortKey === 'level') {
@@ -1648,16 +1654,19 @@
       });
       const tbody = document.getElementById('announcementDetailTableBody');
       if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px;">暂无公告风险信号</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px;">本次暂无可展示信号或审计观察</td></tr>';
         return;
       }
       tbody.innerHTML = rows.map((r, i) => `
-        <tr class="${r.level === '高' ? 'high-risk-row' : ''}">
+        <tr class="${r.level === '高' ? 'high-risk-row' : ''}" style="${r.isObservation ? 'background:#F8FBFF;' : ''}">
           <td>${r.date || '—'}</td>
           <td><span class="risk-level-tag ${r.level === '高' ? 'high' : r.level === '中' ? 'mid' : 'low'}">${r.level || '—'}</span></td>
           <td><span class="l-tag">${r.l1 || '—'}</span></td>
           <td><span class="l-tag">${r.l2 || '—'}</span></td>
-          <td><div class="desc-text" title="${escapeHtml(r.description || '')}">${escapeHtml(r.description || '—')}</div></td>
+          <td>
+            ${r.isObservation ? '<span style="display:inline-block;margin-bottom:4px;padding:1px 6px;border-radius:10px;background:#E8F3FF;color:#185FA5;font-size:10px;">非风险事实 · 常规观察</span>' : ''}
+            <div class="desc-text" title="${escapeHtml(r.description || '')}">${escapeHtml(r.description || '—')}</div>
+          </td>
           <td><div class="evidence-text" title="${escapeHtml(r.evidence || '')}">${escapeHtml(r.evidence || '—')}</div></td>
           <td>
             <div class="title-text" title="${escapeHtml(r.title || '')}">${escapeHtml(r.title || '—')}</div>
@@ -1676,7 +1685,7 @@
         <div style="display: flex; gap: 16px; align-items: baseline; justify-content: flex-end;">
           <div style="display: flex; align-items: baseline; gap: 4px;">
             <span style="font-size: 28px; font-weight: 600; color: ${total ? '#EF4444' : '#10B981'}; line-height: 1;">${total}</span>
-            <span style="font-size: 11px; color: var(--text-muted); line-height: 1;">风险信号</span>
+            <span style="font-size: 11px; color: var(--text-muted); line-height: 1;">展示信号</span>
           </div>
           <div style="display: flex; align-items: baseline; gap: 4px;">
             <span style="font-size: 22px; font-weight: 600; line-height: 1;">${docCount}</span>
@@ -1702,16 +1711,16 @@
           <div class="metric-sub">常规提示</div>
         </div>
         <div class="tech-metric-card">
-          <div class="metric-label">抽取通道</div>
-          <div class="metric-value">3</div>
-          <div class="metric-sub">规则引擎 / FinBERT / LLM</div>
+          <div class="metric-label">已排除信号</div>
+          <div class="metric-value" style="color: #64748B;">${excludedCount}</div>
+          <div class="metric-sub">标题 / 语境 / 证据门槛</div>
         </div>
       </div>
 
       <div class="report-section" style="margin-bottom: 24px;">
-        <div class="report-section-title"><span class="num">1</span>公告风险信号清单</div>
+        <div class="report-section-title"><span class="num">1</span>公告信号与低风险观察</div>
         <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">
-          共 ${total} 条信号 · 高风险 ${highCount} · 中风险 ${midCount} · 低风险 ${lowCount}
+          共展示 ${total} 条 · 已核验风险 ${verifiedCount} · 高风险 ${highCount} · 中风险 ${midCount} · 低风险/常规观察 ${lowCount}
         </div>
         <div class="evidence-table-card" style="padding: 0;">
           <table class="data-table evidence-table" style="margin: 0;">
@@ -1732,11 +1741,35 @@
       </div>
 
       <div class="report-section" style="margin-bottom: 24px;">
-        <div class="report-section-title"><span class="num">2</span>公告研读说明</div>
+        <div class="report-section-title"><span class="num">2</span>已排除与未发布信号</div>
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">
+          共 ${excludedCount} 项次被过滤、抑制或暂不发布；这些记录保留用于审计，但不计入公司风险结论。
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;">
+          ${excludedSignals.length ? excludedSignals.map(item => `
+            <div class="evidence-table-card" style="padding:14px;border-left:3px solid #94A3B8;">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;">
+                <strong style="font-size:13px;color:var(--text-primary);">${escapeHtml(item.category || '排除项')}</strong>
+                <span style="font-size:18px;font-weight:700;color:#64748B;">${Number(item.count) || 0}</span>
+              </div>
+              <div style="font-size:12px;color:var(--text-secondary);line-height:1.65;">${escapeHtml(item.reason || '—')}</div>
+              <div style="font-size:11px;color:var(--text-muted);line-height:1.5;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">依据：${escapeHtml(item.basis || '审计规则')}</div>
+            </div>
+          `).join('') : `
+            <div class="evidence-table-card" style="padding:16px;color:var(--text-muted);font-size:13px;grid-column:1/-1;">
+              本次报告未记录明确的排除项；系统仍会持续执行标题、否定语境和逐字证据校验。
+            </div>
+          `}
+        </div>
+      </div>
+
+      <div class="report-section" style="margin-bottom: 24px;">
+        <div class="report-section-title"><span class="num">3</span>公告研读说明</div>
         <div class="evidence-table-card" style="padding: 16px; font-size: 13px; color: var(--text-secondary); line-height: 1.7;">
           公告研读 Agent 通过规则引擎、FinBERT 语义分类和可选 LLM 精细抽取三通道，从上市公司公告中识别监管问询相关风险信号。
           每条信号给出日期、风险等级、L1/L2 分类、风险描述、原文证据及公告标题，并预留查看原文链接。
-          当前展示数据来自离线快照；后续可通过 <code>/api/announcements/{code}</code> 接口补充原始公告列表与全文。
+          低风险观察用于说明扫描覆盖和核验结果，不代表已发生风险；被标题、语境或证据门槛排除的候选会单独保留审计记录，不计入风险结论。
+          当前数据来源：${escapeHtml(review.source || '离线报告')}，数据锚点：${escapeHtml(review.asOf || data.generatedAt || '—')}。
         </div>
       </div>
     `;
