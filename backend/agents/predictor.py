@@ -34,8 +34,9 @@ from .base import AgentBase
 # 避免 orchestrator pool 中每个实例重复读取全量 CSV 与 9 个模型（内存成倍）。
 # 实时任务由 _scan_lock 串行，离线路径不实例化 Predictor，故无需额外加锁。
 _shared_df = None
-_shared_manifest = None
-_shared_models: dict = {}   # horizon -> {"rf", "lgb", "xgb"}
+_shared_manifests: dict = {}  # absolute manifest path -> parsed manifest
+_shared_models: dict = {}     # (absolute model dir, horizon) -> {"rf", "lgb", "xgb"}
+_shared_calibrators: dict = {}  # (absolute model dir, horizon) -> calibrator or None
 
 
 class PredictorAgent(AgentBase):
@@ -55,14 +56,14 @@ class PredictorAgent(AgentBase):
 
     # ================= 懒加载 =================
     def _load_manifest(self):
-        global _shared_manifest
-        if _shared_manifest is None:
-            p = self.model_dir / "models_manifest.json"
+        p = (self.model_dir / "models_manifest.json").resolve()
+        key = str(p)
+        if key not in _shared_manifests:
             if p.exists():
-                _shared_manifest = json.loads(p.read_text(encoding="utf-8"))
+                _shared_manifests[key] = json.loads(p.read_text(encoding="utf-8"))
             else:
-                _shared_manifest = {"windows": {}}
-        return _shared_manifest
+                _shared_manifests[key] = {"windows": {}}
+        return _shared_manifests[key]
 
     def _load_df(self):
         global _shared_df
@@ -86,6 +87,14 @@ class PredictorAgent(AgentBase):
             if not isinstance(cfg, dict) or not isinstance(cfg.get("features"), list):
                 messages.append(f"{horizon} 缺少特征清单")
         return not messages, messages
+
+    def _model_version(self) -> str:
+        """以模型清单内容哈希作为可复核版本，清单缺失时明确降级。"""
+        path = self.model_dir / "models_manifest.json"
+        try:
+            return "manifest-sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+        except OSError:
+            return "manifest-unavailable"
 
     # ================= XGBoost-Cox 生存模型接口（可选，预留） =================
     def _load_survival(self):
@@ -142,10 +151,13 @@ class PredictorAgent(AgentBase):
             return None, None, []
 
     def _load_models(self, horizon):
-        if horizon in _shared_models:
-            return _shared_models[horizon]
+        cache_key = (str(self.model_dir.resolve()), horizon)
+        if cache_key in _shared_models:
+            return _shared_models[cache_key]
         w = horizon.replace("d", "")
         loaded = {}
+        manifest = self._load_manifest()
+        feats = manifest.get("windows", {}).get(w, {}).get("features", [])
         try:
             import joblib
             loaded["rf"] = joblib.load(self.model_dir / f"model_rf_{w}d.pkl")
@@ -156,18 +168,32 @@ class PredictorAgent(AgentBase):
         except Exception:
             loaded["rf"] = None
         try:
+            model_text = (self.model_dir / f"model_lgb_{w}d.txt").read_text(encoding="utf-8")
+            header = {}
+            for line in model_text.splitlines()[:20]:
+                if "=" in line:
+                    name, value = line.split("=", 1)
+                    header[name] = value
+            artifact_count = int(header.get("max_feature_idx", "-1")) + 1
+            artifact_names = header.get("feature_names", "").split()
+            if (not feats or artifact_count != len(feats)
+                    or len(artifact_names) != len(feats) or artifact_names != feats):
+                raise ValueError(
+                    f"LightGBM 特征维度不一致: model={artifact_count}, "
+                    f"names={len(artifact_names)}, manifest={len(feats)}, "
+                    f"names_match={artifact_names == feats}"
+                )
             import lightgbm as lgb
-            loaded["lgb"] = lgb.Booster(
-                model_str=(self.model_dir / f"model_lgb_{w}d.txt").read_text(encoding="utf-8"))
-        except Exception:
+            loaded["lgb"] = lgb.Booster(model_str=model_text)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("跳过不可用的 LightGBM %s：%s", horizon, exc)
             loaded["lgb"] = None
         try:
             import xgboost as xgb
             loaded["xgb"] = xgb.Booster(
                 model_file=str(self.model_dir / f"model_xgb_{w}d.json"))
             # 校验 booster feature_names 与 manifest 一致
-            manifest = self._load_manifest()
-            feats = manifest.get("windows", {}).get(w, {}).get("features", [])
             if feats:
                 xgb_names = loaded["xgb"].feature_names or []
                 if xgb_names and xgb_names != feats:
@@ -178,7 +204,7 @@ class PredictorAgent(AgentBase):
                     )
         except Exception:
             loaded["xgb"] = None
-        _shared_models[horizon] = loaded
+        _shared_models[cache_key] = loaded
         return loaded
 
     def _risk_thresholds(self, horizon):
@@ -202,6 +228,18 @@ class PredictorAgent(AgentBase):
             return "中"
         return "低"
 
+    def _ensemble_health(self):
+        """返回实际可用的模型成员，避免把降级集成误报为完整三模型。"""
+        health = {}
+        for horizon in self.horizons:
+            models = self._load_models(horizon)
+            available = [name for name in ("rf", "lgb", "xgb") if models.get(name) is not None]
+            health[horizon] = {
+                "available": available,
+                "missing": [name for name in ("rf", "lgb", "xgb") if name not in available],
+            }
+        return health
+
     def _load_calibrator(self, horizon):
         """加载概率校准器（训练时用验证集拟合的 isotonic 校准）。
 
@@ -209,8 +247,9 @@ class PredictorAgent(AgentBase):
         否则线上概率与训练报告指标口径不一致。文件缺失时返回 None，调用方降级为
         未校准概率（并记录一次警告日志）。
         """
-        if horizon in _shared_calibrators:
-            return _shared_calibrators[horizon]
+        cache_key = (str(self.model_dir.resolve()), horizon)
+        if cache_key in _shared_calibrators:
+            return _shared_calibrators[cache_key]
         w = horizon.replace("d", "")
         cal = None
         p = self.model_dir / f"calibrator_{w}d.joblib"
@@ -225,7 +264,7 @@ class PredictorAgent(AgentBase):
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning("加载校准器 %s 失败：%s", p, e)
-        _shared_calibrators[horizon] = cal
+        _shared_calibrators[cache_key] = cal
         return cal
 
     # ================= 查表（as-of） =================
@@ -289,7 +328,9 @@ class PredictorAgent(AgentBase):
 
         # 概率校准：与训练脚本口径一致（isotonic，验证集拟合）
         p = p_raw
-        calibrator = self._load_calibrator(horizon)
+        # 校准器是在完整三模型集成分数上拟合的。任一成员缺失时不可继续套用，
+        # 否则会把两模型降级分数伪装成训练口径下的校准概率。
+        calibrator = self._load_calibrator(horizon) if len(raw_probs) == 3 else None
         if calibrator is not None:
             try:
                 p = float(calibrator.predict([[p_raw]])[0])
@@ -448,6 +489,13 @@ class PredictorAgent(AgentBase):
                     conf = round(max(p60, 1 - p60), 4)
                     break
 
+        pred["model_health"] = self._ensemble_health()
+        pred["probability_calibration"] = (
+            "isotonic_calibrated"
+            if all(not item["missing"] for item in pred["model_health"].values())
+            else "degraded_uncalibrated_partial_ensemble"
+        )
+
         pred["confidence"] = conf
         pred["risk_level"] = self._risk_level_from_prob(p60, "60d")
         pred["shap_features"] = shap
@@ -492,6 +540,13 @@ class PredictorAgent(AgentBase):
                     p60 = pred[f"probability_{h}"]
                     conf = round(max(p60, 1 - p60), 4)
                     break
+
+        pred["model_health"] = self._ensemble_health()
+        pred["probability_calibration"] = (
+            "isotonic_calibrated"
+            if all(not item["missing"] for item in pred["model_health"].values())
+            else "degraded_uncalibrated_partial_ensemble"
+        )
 
         pred["confidence"] = conf
         pred["risk_level"] = self._risk_level_from_prob(p60, "60d")

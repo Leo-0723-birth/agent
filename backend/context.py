@@ -27,6 +27,7 @@ class Semantic:
     per_announcement: dict = field(default_factory=dict)    # 每份公告的抽取结果
     f1_features: dict = field(default_factory=dict)         # F1 标量/类别/窗口特征
     f1_model_features: dict = field(default_factory=dict)   # 与训练 manifest 精确同口径的 F1 特征；未生成时禁止实时推理
+    f1_model_audit: dict = field(default_factory=dict)      # F1 模型输入口径/覆盖率审计；不得用历史 PCA 静态值伪造实时特征
     f6_features: dict = field(default_factory=dict)         # F6 监管问询函特征（公告研读计算，12 维 f6_*）
     f1_vector: list | None = None                           # 可选 BGE 语义向量
     f1_vector_backend: str = "not_generated"               # bge / not_generated

@@ -613,6 +613,19 @@ class AnnouncementReaderAgent(AgentBase):
         current_data_available = retrieval_mode != "online_unavailable"
         # 实时源不可达时，不能把“未取得公告”当作“公告数为 0”送入模型。
         ctx.semantic.f1_features = f1 if current_data_available else {}
+        # 注意：f1_features 是本 Agent 的规则/LLM标量，不等价于模型训练所用的
+        # announcement_semantic_000~049。严禁按公司或日期从全量历史 PCA 表查值后
+        # 冒充当前在线特征；在完整同口径流水线接入前，显式保留为空并写审计原因。
+        ctx.semantic.f1_model_features = {}
+        ctx.semantic.f1_model_audit = {
+            "status": "not_generated",
+            "source": "online_rule_llm_scalars_only",
+            "required_pipeline": "BGE-CLS→主题召回→reranker→FinBERT联合打分→208维聚合→冻结PCA50",
+            "expected_dimensions": 50,
+            "produced_dimensions": 0,
+            "static_full_run_lookup_used": False,
+            "reason": "避免将历史全量 PCA50 或规则标量伪装为当前实时模型输入。",
+        }
         ctx.semantic.f1_vector = f1_vector
         ctx.semantic.f1_vector_backend = f1_vector_backend
         # F6 监管问询函特征：由本 Agent 的公告列表（巨潮官方源）计算，
@@ -715,6 +728,7 @@ class AnnouncementReaderAgent(AgentBase):
             "ocr_failed_pages": ocr_failed_pages,
             "ocr_skipped_pages": ocr_skipped_pages,
             "f1_vector_backend": f1_vector_backend,
+            "f1_model_feature_status": ctx.semantic.f1_model_audit,
             "competition_history_available": historical_context.get("available", False),
             "competition_history_match_status": historical_context.get("match_status", "not_configured"),
             "competition_history_document_count": historical_context.get("document_count", 0),
