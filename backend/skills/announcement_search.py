@@ -144,6 +144,8 @@ class CninfoAnnouncementSource:
             else None
         )
         self.last_snapshot_info = {}
+        # 最近一次 search() 的分步耗时（metadata/pdf），供调用方归因
+        self.last_timing_ms = {}
 
     def _emit_progress(self, event, **payload):
         callback = getattr(self, "progress_callback", None)
@@ -419,20 +421,25 @@ class CninfoAnnouncementSource:
             secucode=company.get("secucode", ""),
         )
         self._emit_progress("online_metadata_started", days=int(days), as_of=cutoff)
+        _t_meta = time.perf_counter()
         announcements = self._list_metadata(company, cutoff, days)
         for item in announcements:
             apply_title_policy(item, mark_unfetched=True)
         eligible = [item for item in announcements if is_analysis_eligible(item)]
         selected = eligible if self.max_documents is None else eligible[: self.max_documents]
+        metadata_ms = int((time.perf_counter() - _t_meta) * 1000)
         self._emit_progress(
             "online_metadata_completed",
             announcement_count=len(announcements),
             eligible_count=len(eligible),
             pdf_count=len(selected),
+            elapsed_ms=metadata_ms,
         )
         # PDF 下载/解析总预算：超过预算的公告标记为未获取并继续（不阻塞流水线；
         # F6 问询特征只需公告元数据 title+date，不受影响）
         deadline = time.time() + float(pdf_budget_seconds)
+        _t_pdf = time.perf_counter()
+        pdf_downloaded = 0
         for position, item in enumerate(selected, 1):
             if time.time() > deadline:
                 item["text_status"] = "not_fetched_budget"
@@ -444,9 +451,20 @@ class CninfoAnnouncementSource:
                 title=item.get("title", ""),
             )
             self._process_pdf(item)
+            pdf_downloaded += 1
+        pdf_ms = int((time.perf_counter() - _t_pdf) * 1000)
+        # 供调用方（AnnouncementReader）做耗时归因；事件里也带一份给前端。
+        self.last_timing_ms = {
+            "metadata_ms": metadata_ms,
+            "pdf_ms": pdf_ms,
+            "pdf_downloaded": pdf_downloaded,
+            "pdf_total": len(selected),
+        }
         self._emit_progress(
             "pdf_processing_completed",
             total=len(selected),
+            downloaded=pdf_downloaded,
+            elapsed_ms=pdf_ms,
         )
         return company, announcements
 

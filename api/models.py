@@ -5,6 +5,18 @@ from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+from backend.config import SCAN_MAX_DOCUMENTS
+
+# 模型实际训练的预测窗口；任意 window 吸附到最近的支持窗口，
+# 避免"请求 45 天却静默按 60 天计算"且响应不透明的参数不一致。
+SUPPORTED_WINDOWS = (30, 60, 90)
+
+
+def _snap_window(value: int) -> int:
+    if value in SUPPORTED_WINDOWS:
+        return value
+    return min(SUPPORTED_WINDOWS, key=lambda w: (abs(w - value), -w))
+
 
 class FactorItem(BaseModel):
     name: str
@@ -95,22 +107,35 @@ class AnalyzeResponse(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     codes: List[str] = Field(..., description="公司代码列表，如 ['000063.SZ']")
-    window: int = Field(60, description="预测窗口天数")
+    window: int = Field(60, description="预测窗口天数（非 30/60/90 时吸附到最近窗口）")
     use_llm: bool = Field(False, description="是否启用LLM精细抽取")
     use_bge: bool = Field(True, description="是否启用BGE语义检索")
+
+    @field_validator("window")
+    @classmethod
+    def snap_window(cls, value: int) -> int:
+        return _snap_window(value)
 
 
 # ==================== 方案 C：实时扫雷 ====================
 
 class ScanRequest(BaseModel):
     code: str = Field(..., description="公司代码，如 000001.SZ")
-    window: int = Field(60, ge=1, le=365, description="预测窗口天数")
+    window: int = Field(60, ge=1, le=365, description="预测窗口天数（非 30/60/90 时吸附到最近窗口）")
     as_of: Optional[str] = Field(None, description="分析截止日期（YYYY-MM-DD），空则默认今天")
     use_llm: bool = Field(False, description="是否启用LLM精细抽取（演示建议关闭，可大幅提速）")
     use_bge: bool = Field(True, description="是否启用BGE语义检索")
-    max_documents: Optional[int] = Field(5, ge=1, le=100, description="公告研读最大文档数（越小越快）")
+    max_documents: Optional[int] = Field(
+        SCAN_MAX_DOCUMENTS, ge=1, le=100,
+        description="公告研读深读文档数（PDF下载+LLM抽取的上限，越小越快）",
+    )
     realtime: bool = Field(False, description="默认返回离线快照；为 true 时执行实时 Agent 流水线")
     force: bool = Field(False, description="是否取消当前任务并切换到新公司")
+
+    @field_validator("window")
+    @classmethod
+    def snap_window(cls, value: int) -> int:
+        return _snap_window(value)
 
     @field_validator("as_of")
     @classmethod

@@ -28,7 +28,7 @@ from .models import (
     FinancialAnomalyItem,
     SimilarCaseItem,
 )
-from backend.config import PREDICTOR_HORIZONS, PREDICTOR_MODEL_DIR, RISK_THRESHOLDS
+from backend.config import PREDICTOR_HORIZONS, PREDICTOR_MODEL_DIR, RISK_THRESHOLDS, SCAN_MAX_DOCUMENTS
 from backend.skills.evidence_policy import publishable_evidence
 
 REPORTS_DIR = PROJECT_ROOT / "backend" / "data" / "output" / "reports"
@@ -758,7 +758,7 @@ _orchestrator_pool: OrderedDict[str, "SweepingOrchestrator"] = OrderedDict()
 _orchestrator_pool_lock = threading.Lock()
 
 
-def get_orchestrator(use_llm: bool, use_finbert: bool, use_semantic_cases: bool = True, max_documents: int | None = 5):
+def get_orchestrator(use_llm: bool, use_finbert: bool, use_semantic_cases: bool = True, max_documents: int | None = SCAN_MAX_DOCUMENTS):
     """获取带 LRU 淘汰的 Orchestrator。key 按参数组合区分。
 
     限制最大缓存数量，避免参数组合过多时内存无限增长；命中时移动到队尾。
@@ -834,6 +834,12 @@ class StreamingOrchestrator:
         self.callback = callback
         self._active_agents: dict[str, tuple] = {}
         self._closed_agent_keys: set[str] = set()
+        self._run_start: float | None = None
+
+    def _elapsed_since_start(self) -> int:
+        if self._run_start is None:
+            return 0
+        return int((time.time() - self._run_start) * 1000)
 
     def _run_agent(self, runner, company, ctx, timeout):
         """在 daemon 线程执行单个 Agent，join(timeout) 看门狗。
@@ -883,7 +889,7 @@ class StreamingOrchestrator:
         return "ok", None
 
     def run(self, company: str, window: int = 60, as_of: str | None = None,
-            use_llm: bool = False, use_bge: bool = True, max_documents: int | None = 5,
+            use_llm: bool = False, use_bge: bool = True, max_documents: int | None = SCAN_MAX_DOCUMENTS,
             cancel_event: threading.Event | None = None):
         from backend.context import Context
 
@@ -906,6 +912,7 @@ class StreamingOrchestrator:
 
             total = len(self._AGENT_ORDER)
             start_total = time.time()
+            self._run_start = start_total
 
             for idx, (agent_name, agent_key, display_name, desc) in enumerate(self._AGENT_ORDER, start=1):
                 if getattr(ctx, "cancel_event", None) is not None and ctx.cancel_event.is_set():
@@ -959,7 +966,9 @@ class StreamingOrchestrator:
             status=status,
             progress_percent=progress_percent,
             message=message,
-            elapsed_ms=elapsed_ms,
+            # 事件级 elapsed_ms：任务启动至今的真实耗时；调用方显式传了
+            # 节点级 latency 时以调用方为准。
+            elapsed_ms=elapsed_ms or self._elapsed_since_start(),
         ))
 
     def _detail_callback(self, payload):
@@ -980,6 +989,11 @@ class StreamingOrchestrator:
             count = max(1, int(payload.get("total", 1) or 1))
             percent = 15 + int(25 * current / count)
             message = f"正在下载/解析第 {current}/{count} 份公告 PDF"
+        elif event == "llm_processing":
+            current = int(payload.get("current", 0) or 0)
+            count = max(1, int(payload.get("total", 1) or 1))
+            percent = 84 + int(8 * current / count)
+            message = f"LLM 精细抽取第 {current}/{count} 份公告"
         event_map = {
             "offline_snapshot_started": (8, "正在检查官方公告离线快照"),
             "offline_snapshot_completed": (35, "已加载官方公告离线快照"),

@@ -23,6 +23,7 @@
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 import requests
@@ -204,10 +205,23 @@ class _DeepSeekClient:
         if os.getenv("DEEPSEEK_THINKING", "0") != "1":
             payload["thinking"] = {"type": "disabled"}
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        # 每次调用记录耗时与用量：LangChain 通道有 httpx 日志，requests 直连
+        # 此前完全静默，导致 Reader 慢时无法区分是网络抓取慢还是 LLM 慢。
+        _t0 = time.perf_counter()
         resp = requests.post(url, json=payload, headers=headers, timeout=120)
+        elapsed = time.perf_counter() - _t0
         if resp.status_code != 200:
+            _logger.warning("[LLM] %s 调用失败 %.1fs: %s %s", self.model, elapsed,
+                            resp.status_code, resp.text[:200])
             raise RuntimeError(f"LLM 调用失败: {resp.status_code} {resp.text[:300]}")
-        return resp.json()["choices"][0]["message"]["content"]
+        data = resp.json()
+        usage = data.get("usage") or {}
+        _logger.info(
+            "[LLM] %s %.1fs prompt=%s completion=%s json=%s",
+            self.model, elapsed, usage.get("prompt_tokens"), usage.get("completion_tokens"),
+            json_mode,
+        )
+        return data["choices"][0]["message"]["content"]
 
 
 # ============================================================

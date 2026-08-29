@@ -86,6 +86,10 @@ RISK_THRESHOLDS = {"high": 0.6, "medium": 0.3}   # 风险等级阈值
 ANNOUNCE_WINDOW_DAYS = 365    # 公告检索窗口（天）
 F1_DECAY_HALF_LIFE_DAYS = int(os.getenv("F1_DECAY_HALF_LIFE_DAYS", "180"))  # F1 时间衰减半衰期（天）：age=180d → 权重0.5
 ANNOUNCE_MAX_DOCUMENTS = int(os.getenv("ANNOUNCE_MAX_DOCUMENTS", "120"))
+# 实时扫雷（方案C）默认深读公告数：API 请求与扫描路径编排器统一取此值，
+# 避免各层默认值不一致导致"请求 5 份实际深读 N 份"的参数漂移。
+# 批量/全量处理仍用 ANNOUNCE_MAX_DOCUMENTS。
+SCAN_MAX_DOCUMENTS = int(os.getenv("SCAN_MAX_DOCUMENTS", "5"))
 ANNOUNCE_PDF_CACHE = Path(
     os.getenv("ANNOUNCE_PDF_CACHE", str(DATA_DIR / "cache" / "pdfs"))
 )
