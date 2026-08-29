@@ -765,13 +765,6 @@
         <div class="step-status">待执行</div>
       </div>
     </div>
-    <div class="pipeline-step" data-agent="ChunkRetriever" data-section="section-attribution" onclick="selectStep(this, '段落召回')">
-      <div class="step-icon">🧩</div>
-      <div>
-        <div class="step-title">段落召回 Agent</div>
-        <div class="step-status">待执行</div>
-      </div>
-    </div>
     <div class="pipeline-step" data-agent="Attributor" data-section="section-attribution" onclick="selectStep(this, '归因分析')">
       <div class="step-icon">💡</div>
       <div>
@@ -1146,7 +1139,6 @@
     { key: 'FinancialDetector', name: '财务异常', icon: '📊', section: 'section-financial', detail: 'financial' },
     { key: 'Predictor', name: '预测建模', icon: '🧮', section: 'section-risk', detail: 'predictor' },
     { key: 'CaseRetriever', name: '案例匹配', icon: '🔍', section: 'section-cases', detail: 'cases' },
-    { key: 'ChunkRetriever', name: '段落召回', icon: '🧩', section: 'section-attribution', detail: 'attribution' },
     { key: 'Attributor', name: '归因分析', icon: '💡', section: 'section-attribution', detail: 'attribution' },
     { key: 'Reporter', name: '报告生成', icon: '📝', section: 'section-report', detail: 'report' },
   ];
@@ -2158,7 +2150,7 @@
     `;
   }
 
-  // ==================== 归因分析 Agent 详情页（含段落召回） ====================
+  // ==================== 归因分析 Agent 详情页 ====================
   function renderAttributionDetail(data) {
     if (!data) {
       document.getElementById('detailBody').innerHTML = '<div class="empty-state">请先选择公司</div>';
@@ -2187,7 +2179,7 @@
         <div class="attr-factor" style="font-size: 12px;">${e.factor || '风险因子'} ${e.source ? `<span style="color: var(--text-muted); margin-left: 6px;">来源：${e.source}</span>` : ''}</div>
         <div class="attr-evidence" style="font-size: 12px; line-height: 1.6; margin-top: 4px;">${e.evidence || '—'}</div>
       </div>
-    `).join('') : '<div class="empty-state" style="padding: 20px;">暂无段落召回证据</div>';
+    `).join('') : '<div class="empty-state" style="padding: 20px;">暂无归因证据</div>';
 
     const narrativeHtml = narrative ? `
       <div class="report-section">
@@ -2228,7 +2220,7 @@
 
         <div class="report-preview" style="margin: 0;">
           <div class="report-preview-header" style="border-bottom: none; padding-bottom: 0;">
-            <div class="report-preview-title">段落召回 / 归因证据</div>
+            <div class="report-preview-title">归因证据</div>
           </div>
           <div style="padding: 20px;">
             ${evidenceHtml}

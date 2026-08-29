@@ -152,13 +152,6 @@ RULE_RISKS_JSONL = Path(os.getenv("RULE_RISKS_JSONL", str(INQUIRY_ROOT / "02_监
 EVAL_GT_NORMALIZED_CSV = Path(os.getenv("EVAL_GT_NORMALIZED_CSV", str(INQUIRY_ROOT / "02_监管问询" / "05_标签评测与报告" / "evaluation_ground_truth_normalized.csv")))
 CASE_EXCERPT_CHARS = 1200      # 案例原文摘录截断长度
 
-# ---------- chunk 级段落检索（chunk_retriever / build_chunk_index） ----------
-CHUNK_DB_PATH = VECTOR_DB_DIR / "chunk_db.json"        # chunk 元数据（段落级）
-CHUNK_VEC_PATH = VECTOR_DB_DIR / "chunk_vectors.npy"   # chunk 向量（BGE 1024 维）
-CHUNK_TOP_K = 8                 # chunk 检索返回 Top-K
-CHUNK_INDEX_JSONL = Path(os.getenv("CHUNK_INDEX_JSONL",
-    str(INQUIRY_ROOT / "02_监管问询" / "03_向量索引与Chroma" / "inquiry_embedding_index.jsonl")))
-
 # ---------- 预测建模（PredictorAgent / train_models） ----------
 PREDICTOR_MODEL_DIR = Path(BASE_DIR) / "backend" / "models" / "predictor"   # 模型+清单
 MODELING_DATASET = Path(BASE_DIR) / "backend" / "data" / "modeling" / "processed_dataset.csv"  # 查表推理用

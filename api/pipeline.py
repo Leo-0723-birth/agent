@@ -804,7 +804,6 @@ class StreamingOrchestrator:
         ("FinancialDetector", "financial", "财务异常", "检测财务指标异常与偏离度"),
         ("Predictor", "prediction", "预测建模", "XGBoost + SHAP 计算问询概率"),
         ("CaseRetriever", "case", "案例匹配", "BGE 语义检索历史问询案例"),
-        ("ChunkRetriever", "chunk", "段落召回", "chunk 级证据召回（可选）"),
         ("Attributor", "attribution", "归因分析", "聚合归因解释与风险叙事"),
         ("Reporter", "report", "报告生成", "渲染风控简报并落盘"),
     ]
@@ -814,7 +813,6 @@ class StreamingOrchestrator:
         "FinancialDetector": 240,
         "Predictor": 120,
         "CaseRetriever": 180,
-        "ChunkRetriever": 60,
         "Attributor": 60,
         "Reporter": 60,
     }
@@ -825,7 +823,6 @@ class StreamingOrchestrator:
         "FinancialDetector": "_run_financial",
         "Predictor": "_run_predict",
         "CaseRetriever": "_run_cases",
-        "ChunkRetriever": "_run_chunks",
         "Attributor": "_run_attribution",
         "Reporter": "_run_report",
     }
@@ -942,13 +939,8 @@ class StreamingOrchestrator:
                     self._emit(idx, total, agent_name, agent_key, "skipped",
                                f"{display_name} Agent 超时跳过（{latency} ms）", latency, 100)
                 elif outcome == "error":
-                    # 段落召回失败可跳过，不打断流水线
-                    if agent_name == "ChunkRetriever":
-                        ctx.trace_log.append({"agent": agent_name, "status": "skipped", "reason": str(error), "trace_complete": True})
-                        self._emit(idx, total, agent_name, agent_key, "skipped", f"{display_name} Agent 跳过：{error}", latency, 100)
-                    else:
-                        self._emit(idx, total, agent_name, agent_key, "error", f"{display_name} Agent 失败：{error}", latency, 100)
-                        raise error
+                    self._emit(idx, total, agent_name, agent_key, "error", f"{display_name} Agent 失败：{error}", latency, 100)
+                    raise error
                 else:
                     self._emit(idx, total, agent_name, agent_key, "done", f"{display_name} Agent 完成（{latency} ms）", latency, 100)
 
