@@ -85,7 +85,7 @@ RISK_THRESHOLDS = {"high": 0.6, "medium": 0.3}   # 风险等级阈值
 # ---------- 公告研读 ----------
 ANNOUNCE_WINDOW_DAYS = 365    # 公告检索窗口（天）
 F1_DECAY_HALF_LIFE_DAYS = int(os.getenv("F1_DECAY_HALF_LIFE_DAYS", "180"))  # F1 时间衰减半衰期（天）：age=180d → 权重0.5
-ANNOUNCE_MAX_DOCUMENTS = int(os.getenv("ANNOUNCE_MAX_DOCUMENTS", "120"))
+ANNOUNCE_MAX_DOCUMENTS = int(os.getenv("ANNOUNCE_MAX_DOCUMENTS", "150"))
 ANNOUNCE_PDF_CACHE = Path(
     os.getenv("ANNOUNCE_PDF_CACHE", str(DATA_DIR / "cache" / "pdfs"))
 )

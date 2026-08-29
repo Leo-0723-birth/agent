@@ -108,7 +108,7 @@ class ScanRequest(BaseModel):
     as_of: Optional[str] = Field(None, description="分析截止日期（YYYY-MM-DD），空则默认今天")
     use_llm: bool = Field(False, description="是否启用LLM精细抽取（演示建议关闭，可大幅提速）")
     use_bge: bool = Field(True, description="是否启用BGE语义检索")
-    max_documents: Optional[int] = Field(5, ge=1, le=100, description="公告研读最大文档数（越小越快）")
+    max_documents: Optional[int] = Field(100, ge=1, le=150, description="公告研读最大文档数（越小越快）")
     realtime: bool = Field(False, description="默认返回离线快照；为 true 时执行实时 Agent 流水线")
     force: bool = Field(False, description="是否取消当前任务并切换到新公司")
 
