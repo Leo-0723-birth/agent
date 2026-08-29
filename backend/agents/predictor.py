@@ -87,13 +87,6 @@ class PredictorAgent(AgentBase):
             if not isinstance(cfg, dict) or not isinstance(cfg.get("features"), list):
                 messages.append(f"{horizon} 缺少特征清单")
         return not messages, messages
-    def _model_version(self) -> str:
-        """以模型清单内容哈希作为可复核版本，清单缺失时明确降级。"""
-        path = self.model_dir / "models_manifest.json"
-        try:
-            return "manifest-sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()[:12]
-        except OSError:
-            return "manifest-unavailable"
 
     def _model_version(self) -> str:
         """以模型清单内容哈希作为可复核版本，清单缺失时明确降级。"""
@@ -445,18 +438,24 @@ class PredictorAgent(AgentBase):
             return self._execute_survival(ctx, code, as_of)
         from ..skills.feature_composer import realtime_f1_compatibility
         f1_ok, f1_audit = realtime_f1_compatibility(ctx, manifest)
-        # 只有财务特征存在且训练所需 F1 已按完全相同口径生成，才允许标记实时推理。
-        realtime_ok = bool(getattr(getattr(ctx, "financial", None), "features", None)) and f1_ok
+        # 竞赛演示：只要财务特征存在就直接走实时推理；缺失的 F1 语义特征由
+        # feature_composer 统一填 0，不再因 F1 口径不完整而降级到离线查表。
+        realtime_ok = bool(getattr(getattr(ctx, "financial", None), "features", None))
         if realtime_ok:
+            reasons = []
+            if not f1_ok:
+                reasons.append(
+                    f"实时F1语义特征不完整（缺少 {f1_audit['missing']}/{f1_audit['required']} 个），已按 0 填充"
+                )
+            ctx.meta["prediction_degraded_reasons"] = reasons
             ctx.meta["f1_compatibility"] = f1_audit
             return self._execute_realtime(ctx, manifest)
         reasons = []
+        reasons.append("实时财务特征不可用，已回退历史查表")
         if not f1_ok:
             reasons.append(
-                f"实时F1与训练特征口径不一致（缺少 {f1_audit['missing']}/{f1_audit['required']} 个语义特征），已回退历史查表"
+                f"实时F1语义特征不完整（缺少 {f1_audit['missing']}/{f1_audit['required']} 个）"
             )
-        if not getattr(getattr(ctx, "financial", None), "features", None):
-            reasons.append("实时财务特征不可用，已回退历史查表")
         ctx.meta["prediction_degraded_reasons"] = reasons
         ctx.meta["f1_compatibility"] = f1_audit
         return self._execute_lookup(ctx, manifest, code, as_of)
