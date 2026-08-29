@@ -32,34 +32,41 @@ from backend.config import PREDICTOR_HORIZONS, PREDICTOR_MODEL_DIR, RISK_THRESHO
 from backend.skills.evidence_policy import publishable_evidence
 
 REPORTS_DIR = PROJECT_ROOT / "backend" / "data" / "output" / "reports"
+LEGACY_REPORTS_DIR = PROJECT_ROOT / "backend" / "data" / "output" / "reports_legacy"
 MODELS_MANIFEST_PATH = PREDICTOR_MODEL_DIR / "models_manifest.json"
 
 # ---------- 公司代码 → 最新离线报告 ----------
 
 # manifest.json 内存缓存（mtime 失效）：避免每次离线查询都全量解析清单
 _manifest_cache: list[dict] | None = None
-_manifest_cache_mtime: float | None = None
+_manifest_cache_mtime: tuple[int | None, ...] | None = None
 
 # 单个报告 JSON 内存缓存（mtime 失效）：避免同一公司多次查询都读盘
 _report_cache: dict[str, tuple[float, dict]] = {}
 
 
 def _load_manifest() -> list[dict]:
-    """读取 manifest.json（带 mtime 失效的内存缓存）。"""
+    """读取当前及归档 manifest（带 mtime 失效的内存缓存）。"""
     global _manifest_cache, _manifest_cache_mtime
-    path = REPORTS_DIR / "manifest.json"
-    try:
-        mtime = path.stat().st_mtime
-    except OSError:
-        return []
-    if _manifest_cache is not None and _manifest_cache_mtime == mtime:
+    paths = (
+        REPORTS_DIR / "manifest.json",
+        LEGACY_REPORTS_DIR / "manifest_legacy.json",
+    )
+    mtimes = tuple(
+        path.stat().st_mtime_ns if path.is_file() else None for path in paths
+    )
+    if _manifest_cache is not None and _manifest_cache_mtime == mtimes:
         return _manifest_cache
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        _manifest_cache = payload if isinstance(payload, list) else []
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        _manifest_cache = []
-    _manifest_cache_mtime = mtime
+    combined: list[dict] = []
+    for path in paths:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(payload, list):
+                combined.extend(item for item in payload if isinstance(item, dict))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+    _manifest_cache = combined
+    _manifest_cache_mtime = mtimes
     return _manifest_cache
 
 
@@ -79,6 +86,14 @@ def _read_report_path(path: Path) -> dict | None:
         return data
     except (OSError, UnicodeError, json.JSONDecodeError, TypeError):
         return None
+
+
+def _resolve_report_file(filename: str) -> Path:
+    """兼容主线归档：优先当前报告目录，缺失时只读历史报告目录。"""
+    current = REPORTS_DIR / str(filename or "")
+    if current.is_file():
+        return current
+    return LEGACY_REPORTS_DIR / str(filename or "")
 
 
 def _is_usable_report(report: dict | None) -> bool:
@@ -111,18 +126,36 @@ def _is_usable_report(report: dict | None) -> bool:
 def _candidate_entries(company: str) -> list[dict]:
     manifest = _load_manifest()
     normalized = company.upper().replace(".", "_")
-    return [
+    entries = [
         e for e in manifest
         if str(e.get("company", "")).upper().replace(".", "_") == normalized
-        and (REPORTS_DIR / str(e.get("json_file", ""))).is_file()
+        and _resolve_report_file(str(e.get("json_file", ""))).is_file()
     ]
+    known_files = {str(entry.get("json_file", "")) for entry in entries}
+    # 归档迁移可能早于 manifest 写回；此时从同公司文件名恢复只读索引。
+    for directory in (REPORTS_DIR, LEGACY_REPORTS_DIR):
+        for path in directory.glob(f"{normalized}_*.json"):
+            if path.name in known_files or path.name.startswith("manifest"):
+                continue
+            report = _read_report_path(path)
+            if not report:
+                continue
+            entries.append({
+                "company": report.get("company") or company,
+                "as_of": report.get("as_of"),
+                "generated_at": report.get("generated_at"),
+                "json_file": path.name,
+                "md_file": path.with_suffix(".md").name,
+            })
+            known_files.add(path.name)
+    return entries
 
 
 def _select_report_entry(company: str, as_of: str | None = None) -> tuple[dict, dict] | None:
     """选择可用报告；历史查询按 report.as_of<=请求日取最近一份。"""
     candidates: list[tuple[str, str, dict, dict]] = []
     for entry in _candidate_entries(company):
-        path = REPORTS_DIR / str(entry.get("json_file", ""))
+        path = _resolve_report_file(str(entry.get("json_file", "")))
         report = _read_report_path(path)
         if not _is_usable_report(report):
             continue
@@ -138,7 +171,7 @@ def _select_report_entry(company: str, as_of: str | None = None) -> tuple[dict, 
 
 def _latest_report_file(company: str, as_of: str | None = None) -> Path | None:
     selected = _select_report_entry(company, as_of)
-    return REPORTS_DIR / selected[0]["json_file"] if selected else None
+    return _resolve_report_file(selected[0]["json_file"]) if selected else None
 
 
 def get_model_metrics() -> dict:
@@ -201,7 +234,7 @@ def get_report_download_path(company: str, fmt: str = "md") -> Path | None:
         return None
     entry, _ = selected
     file_key = "md_file" if fmt == "md" else "json_file"
-    path = REPORTS_DIR / str(entry.get(file_key, ""))
+    path = _resolve_report_file(str(entry.get(file_key, "")))
     return path if path.is_file() else None
 
 
