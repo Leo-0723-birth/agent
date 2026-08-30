@@ -73,6 +73,9 @@ LLM_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
 LLM_TEMPERATURE = 0.1        # 低温度：推理稳定（方案 5.4）
 LLM_MAX_TOKENS = 2000
 LLM_THINKING = os.getenv("DEEPSEEK_THINKING", "0") == "1"
+# 同一流水线内并发 LLM 请求上限（公告研读多份正文并行抽取 / 报告多段并行生成）。
+# DeepSeek 对并发请求较友好，4 并发能在不触发限流的前提下把多份公告的抽取耗时压到 ~1/4。
+LLM_CONCURRENCY = int(os.getenv("LLM_CONCURRENCY", "4"))
 
 # ---------- Embedding ----------
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5")  # 或 stella-base-zh-v3

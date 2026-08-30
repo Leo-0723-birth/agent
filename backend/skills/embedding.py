@@ -102,7 +102,9 @@ def embed_cls_shared(texts, max_length=512):
     正文块 512），与案例检索的 mean pooling 不同，不能混用。
     """
     import torch
-    tok, model = _bge_load()
+    f1_bge_path = os.getenv("F1_BGE_MODEL_PATH")
+    prefer_dir = f1_bge_path if (f1_bge_path and Path(f1_bge_path).exists()) else None
+    tok, model = _bge_load(prefer_dir=prefer_dir)
     device = _BGE.get("device", "cpu")
     output = []
     batch_size = 32

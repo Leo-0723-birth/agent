@@ -20,6 +20,7 @@ from ..config import (
     FINBERT_GATE,
     FINBERT_ENABLED,
     FINBERT_GATE_ENABLED,
+    LLM_CONCURRENCY,
     MAX_TEXT_CHARS,
 )
 from ..llm import chat_json
@@ -264,28 +265,15 @@ class AnnouncementReaderAgent(AgentBase):
                 )
         return signals, "experimental_unvalidated"
 
-    def _llm_extract(self, company_name, announcements, cancel_event=None):
-        factors, rejected, rejected_context, failed, per_announcement = [], 0, 0, 0, {}
-        # 子进度只对有正文的公告计数：无正文的直接标记 no_full_text，
-        # 避免进度显示“第 1/147 份”而其中绝大多数实际是秒过跳过。
-        total_docs = sum(1 for item in announcements if (item.get("text") or "").strip())
-        processed = 0
-        for item in announcements:
-            if cancel_event is not None and cancel_event.is_set():
-                raise RuntimeError("任务已取消")
-            text = item.get("text") or ""
-            if not text:
-                per_announcement[item["id"]] = {"llm_factors": [], "status": "no_full_text"}
-                continue
-            processed += 1
-            self._emit_progress(
-                "llm_processing",
-                current=processed,
-                total=total_docs,
-                title=item.get("title", ""),
-            )
-            prompt_text = text[: self.max_text_chars]
-            prompt = f"""你是上市公司公告证据抽取器。只能依据给出的公告正文，不得补充外部事实。
+    def _llm_extract_item(self, company_name, item):
+        """单份公告的 LLM 抽取（线程安全，供并发调用）。
+
+        返回 (per_announcement_entry, accepted_factors, rejected, rejected_context, failed)，
+        其中 failed 为 0/1（该份是否失败），accepted_factors 为已核验的风险要素列表。
+        """
+        text = item.get("text") or ""
+        prompt_text = text[: self.max_text_chars]
+        prompt = f"""你是上市公司公告证据抽取器。只能依据给出的公告正文，不得补充外部事实。
 公司：{company_name}
 公告：{item.get('title', '')}
 日期：{item.get('date', '')}
@@ -299,86 +287,139 @@ class AnnouncementReaderAgent(AgentBase):
 3. 法规引用、公司章程、管理制度、董监高职责或任职资格、禁止性/条件性条款、会计政策、表头、目录、附件模板不得识别为风险。
 4. “如发生、若发生、存在下列情形之一、不得、应当、有权”等假设或规范描述不是已发生事实。
 5. 描述其他公司、行业或历史案例时不得归因于本公司；无法区分时不输出。"""
-            try:
-                # max_tokens 需容纳 thinking(reasoning) + 答案：v4-flash 推理会占用约 2000 token
-                result = self.llm_callable("", prompt, max_tokens=6000)
-            except Exception as exc:
-                failed += 1
-                per_announcement[item["id"]] = {
-                    "llm_factors": [],
-                    "status": "failed",
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
+        try:
+            # max_tokens 需容纳 thinking(reasoning) + 答案：v4-flash 推理会占用约 2000 token
+            result = self.llm_callable("", prompt, max_tokens=6000)
+        except Exception as exc:
+            return (
+                {"llm_factors": [], "status": "failed",
+                 "error": f"{type(exc).__name__}: {exc}"},
+                [], 0, 0, 1,
+            )
+        if not isinstance(result, dict) or "risk_factors" not in result:
+            return ({"llm_factors": [], "status": "invalid_response"}, [], 0, 0, 1)
+        accepted = []
+        rejected = 0
+        rejected_context = 0
+        for raw in result.get("risk_factors", []):
+            evidence = str(raw.get("evidence") or "").strip()
+            start = prompt_text.find(evidence) if evidence else -1
+            if start < 0:
+                rejected += 1
                 continue
-            if not isinstance(result, dict) or "risk_factors" not in result:
-                failed += 1
-                per_announcement[item["id"]] = {
-                    "llm_factors": [],
-                    "status": "invalid_response",
-                }
+            l1 = str(raw.get("taxonomy_l1") or "OTHER").upper()
+            if l1 not in {*"ABCDEFGH", "OTHER"}:
+                l1 = "OTHER"
+            label = str(raw.get("taxonomy_l2") or "OTHER").upper()
+            if not re.fullmatch(r"(?:[A-H]\d{2}(?:-CANDIDATE)?|OTHER)", label):
+                label = "OTHER"
+            assertion_type = str(raw.get("assertion_type") or "").lower()
+            context_reason = contextual_suppression_reason(
+                label=label,
+                text=prompt_text,
+                start=start,
+                end=start + len(evidence),
+            )
+            if (assertion_type and assertion_type != "actual_event") or context_reason:
+                rejected_context += 1
                 continue
-            accepted = []
-            for raw in result.get("risk_factors", []):
-                evidence = str(raw.get("evidence") or "").strip()
-                start = prompt_text.find(evidence) if evidence else -1
-                if start < 0:
-                    rejected += 1
-                    continue
-                l1 = str(raw.get("taxonomy_l1") or "OTHER").upper()
-                if l1 not in {*"ABCDEFGH", "OTHER"}:
-                    l1 = "OTHER"
-                label = str(raw.get("taxonomy_l2") or "OTHER").upper()
-                if not re.fullmatch(r"(?:[A-H]\d{2}(?:-CANDIDATE)?|OTHER)", label):
-                    label = "OTHER"
-                assertion_type = str(raw.get("assertion_type") or "").lower()
-                context_reason = contextual_suppression_reason(
-                    label=label,
-                    text=prompt_text,
-                    start=start,
-                    end=start + len(evidence),
-                )
-                if (assertion_type and assertion_type != "actual_event") or context_reason:
-                    rejected_context += 1
-                    continue
-                event_key = _event_key(item["id"], label)
-                factor = {
-                    "risk_id": _risk_id(event_key, "llm_evidence_validated", start),
-                    "event_key": event_key,
-                    "category": l1,
-                    "label": label,
-                    "risk_label": label,
-                    "description": str(raw.get("description") or ""),
-                    "severity": _severity(raw.get("severity")),
-                    "confidence": None,
-                    "matched_keyword": "",
-                    "evidence": evidence,
-                    "evidence_start": start,
-                    "evidence_end": start + len(evidence),
-                    "evidence_field": "pdf_text",
-                    "text_extraction": (
-                        "rapidocr" if item.get("ocr_succeeded_pages", 0) else "pdf_text"
-                    ),
-                    "ocr_status": item.get("ocr_status", "not_reported"),
-                    "ocr_mean_confidence": item.get("ocr_mean_confidence"),
-                    "evidence_valid": True,
-                    "announcement_id": item["id"],
-                    "announcement_title": item.get("title", ""),
-                    "announcement_date": item.get("date", ""),
-                    "source_url": item.get("source_url", ""),
-                    "pdf_url": item.get("pdf_url", ""),
-                    "method": "llm_evidence_validated",
-                    "rule_id": "",
-                    "taxonomy_l1": l1,
-                    "taxonomy_l2": label,
-                    "negation_checked": False,
-                    "agreement_status": "llm_only",
-                    "assertion_type": assertion_type or "actual_event_validated",
-                    "event_subject": str(raw.get("subject") or ""),
-                    "event_action": str(raw.get("event_action") or ""),
+            event_key = _event_key(item["id"], label)
+            factor = {
+                "risk_id": _risk_id(event_key, "llm_evidence_validated", start),
+                "event_key": event_key,
+                "category": l1,
+                "label": label,
+                "risk_label": label,
+                "description": str(raw.get("description") or ""),
+                "severity": _severity(raw.get("severity")),
+                "confidence": None,
+                "matched_keyword": "",
+                "evidence": evidence,
+                "evidence_start": start,
+                "evidence_end": start + len(evidence),
+                "evidence_field": "pdf_text",
+                "text_extraction": (
+                    "rapidocr" if item.get("ocr_succeeded_pages", 0) else "pdf_text"
+                ),
+                "ocr_status": item.get("ocr_status", "not_reported"),
+                "ocr_mean_confidence": item.get("ocr_mean_confidence"),
+                "evidence_valid": True,
+                "announcement_id": item["id"],
+                "announcement_title": item.get("title", ""),
+                "announcement_date": item.get("date", ""),
+                "source_url": item.get("source_url", ""),
+                "pdf_url": item.get("pdf_url", ""),
+                "method": "llm_evidence_validated",
+                "rule_id": "",
+                "taxonomy_l1": l1,
+                "taxonomy_l2": label,
+                "negation_checked": False,
+                "agreement_status": "llm_only",
+                "assertion_type": assertion_type or "actual_event_validated",
+                "event_subject": str(raw.get("subject") or ""),
+                "event_action": str(raw.get("event_action") or ""),
+            }
+            accepted.append(factor)
+        return ({"llm_factors": accepted, "status": "ok"}, accepted,
+                rejected, rejected_context, 0)
+
+    def _llm_extract(self, company_name, announcements, cancel_event=None):
+        factors, rejected, rejected_context, failed, per_announcement = [], 0, 0, 0, {}
+        # 子进度只对有正文的公告计数：无正文的直接标记 no_full_text，
+        # 避免进度显示“第 1/147 份”而其中绝大多数实际是秒过跳过。
+        with_text = [item for item in announcements if (item.get("text") or "").strip()]
+        for item in announcements:
+            if not (item.get("text") or "").strip():
+                per_announcement[item["id"]] = {"llm_factors": [], "status": "no_full_text"}
+        total_docs = len(with_text)
+        if not with_text:
+            return factors, per_announcement, rejected, rejected_context, failed
+
+        # 多份公告正文抽取相互独立，用线程池并发请求 LLM（requests 线程安全）。
+        # 单份 ~2s、10 份顺序跑 ~20s；4 并发可压到 ~5-6s。
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        max_workers = max(1, min(LLM_CONCURRENCY, total_docs))
+        results = {}  # 保持与 with_text 相同顺序，输出确定性不受并发完成顺序影响
+        if max_workers <= 1:
+            for idx, item in enumerate(with_text):
+                if cancel_event is not None and cancel_event.is_set():
+                    raise RuntimeError("任务已取消")
+                results[idx] = self._llm_extract_item(company_name, item)
+        else:
+            with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                future_to_idx = {
+                    ex.submit(self._llm_extract_item, company_name, item): idx
+                    for idx, item in enumerate(with_text)
                 }
-                factors.append(factor)
-                accepted.append(factor)
-            per_announcement[item["id"]] = {"llm_factors": accepted, "status": "ok"}
+                for future in as_completed(future_to_idx):
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise RuntimeError("任务已取消")
+                    idx = future_to_idx[future]
+                    try:
+                        results[idx] = future.result()
+                    except Exception as exc:
+                        results[idx] = (
+                            {"llm_factors": [], "status": "failed",
+                             "error": f"{type(exc).__name__}: {exc}"},
+                            [], 0, 0, 1,
+                        )
+
+        processed = 0
+        for idx, item in enumerate(with_text):
+            entry, acc, rej, rejctx, fail = results[idx]
+            per_announcement[item["id"]] = entry
+            factors.extend(acc)
+            rejected += rej
+            rejected_context += rejctx
+            failed += fail
+            processed += 1
+            self._emit_progress(
+                "llm_processing",
+                current=processed,
+                total=total_docs,
+                title=item.get("title", ""),
+            )
         return factors, per_announcement, rejected, rejected_context, failed
 
     def _build_f1(self, announcements, factors, as_of):
@@ -499,7 +540,8 @@ class AnnouncementReaderAgent(AgentBase):
 
     @classmethod
     def _run_fullrun_subprocess(
-        cls, documents, company_code, timeout_seconds=900, progress_callback=None
+        cls, documents, company_code, timeout_seconds=900, progress_callback=None,
+        cancel_event=None,
     ):
         """在独立进程中执行 F1 训练同口径语义上游（低内存协议）。
 
@@ -546,6 +588,8 @@ class AnnouncementReaderAgent(AgentBase):
             query_vectors = query_vectors.tolist()
         docs = []
         for position, item in enumerate(documents, 1):
+            if cancel_event is not None and cancel_event.is_set():
+                raise RuntimeError("任务已取消")
             text = str(item.get("text") or "")
             pieces = _f1mod.split_into_chunks(text)
             if not pieces:
@@ -583,6 +627,7 @@ class AnnouncementReaderAgent(AgentBase):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         stderr_lines = []
+        stdout_chunks = []
 
         def drain_stderr():
             for raw in iter(proc.stderr.readline, b""):
@@ -597,22 +642,48 @@ class AnnouncementReaderAgent(AgentBase):
                     except Exception:
                         pass
 
+        def drain_stdout():
+            stdout_chunks.append(proc.stdout.read())
+
         stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
         stderr_thread.start()
+        # stdout 必须与 stderr 一样并发 drain：结果 JSON（含 top_evidence 全文）可能
+        # 超过管道缓冲区（Windows 默认 64KB），若等 proc.wait() 返回后再 read，
+        # 子进程会因 stdout 写满而阻塞，父进程又在 wait() 等待退出，双方互相等待
+        # 造成死锁（表现为进度停在"FinBERT 门控完成"后不再推进）。
+        stdout_thread = threading.Thread(target=drain_stdout, daemon=True)
+        stdout_thread.start()
         proc.stdin.write(payload)
         proc.stdin.close()
+        # 轮询等待而非一次性 wait(timeout)：F1 上游（reranker 冷启动 / FinBERT
+        # 门控）是本流水线最长的非协作取消阶段，若用户此时取消，这里能在 ≤0.5s
+        # 内杀掉子进程并向上抛"任务已取消"，从而释放 _scan_lock，避免后续任务
+        # 卡在"已排队，等待模型资源"直到 timeout_seconds（可达 3600s）耗尽。
+        _poll = 0.5
+        _deadline = time.monotonic() + timeout_seconds
         try:
-            proc.wait(timeout=timeout_seconds)
+            while True:
+                if cancel_event is not None and cancel_event.is_set():
+                    proc.kill()
+                    proc.wait()
+                    raise RuntimeError("任务已取消")
+                try:
+                    proc.wait(timeout=_poll)
+                    break
+                except subprocess.TimeoutExpired:
+                    if time.monotonic() >= _deadline:
+                        raise
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait()
             raise
-        stdout_data = proc.stdout.read()
+        stdout_thread.join(timeout=5)
         stderr_thread.join(timeout=5)
         if proc.returncode != 0:
             raise RuntimeError(
                 f"F1 上游子进程退出码 {proc.returncode}：{' | '.join(stderr_lines[-5:])[-300:]}"
             )
+        stdout_data = stdout_chunks[0] if stdout_chunks else b""
         result = _json.loads(stdout_data.decode("utf-8"))
         try:
             result_cache.parent.mkdir(parents=True, exist_ok=True)
@@ -822,9 +893,14 @@ class AnnouncementReaderAgent(AgentBase):
                 rows, fullrun_upstream_audit = self._run_fullrun_subprocess(
                     fullrun_documents, identity.get("secucode") or ctx.company,
                     progress_callback=self._emit_progress,
+                    cancel_event=getattr(ctx, "cancel_event", None),
                 )
                 ctx.semantic.f1_announcement_risk_rows = rows
             except Exception as exc:
+                # 取消需立即向上抛出（尽快释放串行锁），不能当作普通失败继续跑。
+                cancel = getattr(ctx, "cancel_event", None)
+                if cancel is not None and cancel.is_set():
+                    raise
                 fullrun_upstream_audit = {
                     "status": "failed",
                     "reason": f"{type(exc).__name__}: {exc}",

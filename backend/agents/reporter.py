@@ -135,8 +135,19 @@ class ReporterAgent(AgentBase):
 
     # ============ 主入口 ============
     def execute(self, company, ctx):
-        summary = self._executive_summary(ctx)
-        interpretation = risk_report_render.announcement_interpretation(ctx)
+        # 执行摘要与公告原文解读是两路独立 LLM 调用（各自失败自动降级），并行执行，
+        # 把报告生成阶段的 ~10-20s 串行 LLM 耗时压缩到约等于最慢一路。
+        if getattr(ctx, "use_llm_summary", False):
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                summary_fut = ex.submit(self._executive_summary, ctx)
+                interp_fut = ex.submit(risk_report_render.announcement_interpretation, ctx)
+                summary = summary_fut.result()
+                interpretation = interp_fut.result()
+        else:
+            summary = self._executive_summary(ctx)
+            interpretation = risk_report_render.announcement_interpretation(ctx)
         report_json = risk_report_render.render_json(
             ctx, executive_summary=summary, announcement_interpretation=interpretation
         )

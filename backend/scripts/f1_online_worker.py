@@ -146,8 +146,17 @@ def main() -> int:
     else:
         result = {"rows": rows, "audit": audit}
 
-    stdout.write(json.dumps(result, ensure_ascii=False))
-    stdout.flush()
+    # stdout 必须以 UTF-8 字节显式写出：Windows 上文本流 stdout 默认用
+    # 控制台编码（中文系统为 GBK/cp936），父进程按 UTF-8 解码会报
+    # "utf-8 codec can't decode byte ..." 而丢失整份结果。
+    result_bytes = json.dumps(result, ensure_ascii=False).encode("utf-8")
+    buffer = getattr(stdout, "buffer", None)
+    if buffer is not None:
+        buffer.write(result_bytes)
+        buffer.flush()
+    else:
+        stdout.write(json.dumps(result, ensure_ascii=False))
+        stdout.flush()
     return 0
 
 

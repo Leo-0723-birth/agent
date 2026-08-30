@@ -384,8 +384,70 @@ class FinancialDetectorAgent(AgentBase):
             ctx.name = resolved.get("company_name") or ctx.name
         ctx.company = code
 
-        # 2. 公司资料（行业判断）
-        profile = self.fetcher.fetch_company_profile(code)
+        # 2-3.7 并行抓取五路独立外部数据：公司资料 / 财务指标 / 市场(F3) / 舆情(F4) / 治理(F5)。
+        #     这些全是外部 HTTP 调用且相互独立，串行时网络超时会累加
+        #     （资料15s+财务15s+F3+F4 30s+F5 30s ≈ 100s）；并行后总耗时约等于最慢一路，
+        #     且各路的超时/失败互不影响（各自 try/except 降级）。
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutTimeout
+        from ..skills.crawl_sentiment import crawl_sentiment_features
+        from ..skills.crawl_governance import crawl_governance_features
+        from ..skills.feature_loader import load_latest_features
+
+        def _fetch_profile():
+            try:
+                return self.fetcher.fetch_company_profile(code)
+            except Exception as e:
+                _logger.warning("[公司资料抓取失败] %s: %s", code, e)
+                return None
+
+        def _fetch_financials():
+            try:
+                return self.fetcher.fetch_financials(code)
+            except Exception as e:
+                _logger.warning("[财务指标抓取失败] %s: %s", code, e)
+                return None
+
+        def _fetch_market():
+            try:
+                return {k: _safe_float(v) for k, v in
+                        market_fetch.crawl_market_features(code).items()}
+            except Exception as e:
+                _logger.warning("[F3 抓取失败] %s: %s", code, e)
+                return {}
+
+        def _crawl_with_fallback(fam, crawler):
+            # 在线抓取（带 30s 硬超时）→ 失败/超时回退离线预处理表（训练同源）。
+            self._check_cancel(ctx, "财务异常检测任务已取消")
+            feats = None
+            try:
+                with ThreadPoolExecutor(max_workers=1) as ex:
+                    feats = ex.submit(crawler, code).result(timeout=30)
+            except FutTimeout:
+                _logger.warning("[%s 在线抓取超时(30s)，回退离线表] %s", fam, code)
+            except Exception as e:
+                _logger.warning("[%s 在线抓取失败，回退离线表] %s: %s", fam, code, e)
+            if feats is None:
+                try:
+                    feats = load_latest_features(code, fam)
+                except Exception as e:
+                    _logger.warning("[%s 离线表加载失败] %s: %s", fam, code, e)
+                    feats = {}
+            return {k: _safe_float(v) for k, v in (feats or {}).items()}
+
+        with ThreadPoolExecutor(max_workers=5) as ex:
+            profile_fut = ex.submit(_fetch_profile)
+            financials_fut = ex.submit(_fetch_financials)
+            market_fut = ex.submit(_fetch_market)
+            f4_fut = ex.submit(_crawl_with_fallback, "F4", crawl_sentiment_features)
+            f5_fut = ex.submit(_crawl_with_fallback, "F5", crawl_governance_features)
+            profile = profile_fut.result()
+            df = financials_fut.result()
+            mkt_features = market_fut.result()
+            f4_features = f4_fut.result()
+            f5_features = f5_fut.result()
+        f456_features = {**f4_features, **f5_features}
+
+        # 2. 行业判断（profile 已在并行阶段抓取完成）
         industry = profile.get("industry") if profile else None
         ctx.financial.industry = industry or ""
 
@@ -396,8 +458,7 @@ class FinancialDetectorAgent(AgentBase):
             ctx.financial.risk_level = "跳过"
             return ctx
 
-        # 3. 爬取财务指标（最新一期）
-        df = self.fetcher.fetch_financials(code)
+        # 3. 财务指标（df 已在并行阶段抓取完成）
         if df is None or len(df) == 0:
             ctx.financial.skip = True
             ctx.financial.skip_reason = "财务数据获取失败（网络受限或无数据）"
@@ -417,54 +478,6 @@ class FinancialDetectorAgent(AgentBase):
                                f2_latest.iloc[-1][f2_calc.F2_FEATURE_NAMES].items()}
         except Exception as e:
             _logger.warning("[F2 计算失败] %s: %s", code, e)
-
-        # 3.6 F3 市场特征（35 维在线，队友 crawl_market 迁移；失败降级空）
-        mkt_features = {}
-        try:
-            mkt_features = {k: _safe_float(v) for k, v in
-                            market_fetch.crawl_market_features(code).items()}
-        except Exception as e:
-            _logger.warning("[F3 抓取失败] %s: %s", code, e)
-
-        # 3.7 F4/F5 特征（在线爬取优先 → 离线预处理表兜底，在线带超时保护）
-        #     在线：股吧舆情(F4)/股东治理(F5)，保证拿到近日最新数据；
-        #     超时/失败/公司不在线时回退离线预处理表（训练同源，取最新一期）。
-        #     F6 监管问询函特征：由【公告研读 Agent】从巨潮公告计算（见
-        #     backend/skills/inquiry_features.py），财务侧不输出 F6。
-        f456_features = {}
-        try:
-            from ..skills.crawl_sentiment import crawl_sentiment_features
-            from ..skills.crawl_governance import crawl_governance_features
-            online_crawlers = {
-                "F4": crawl_sentiment_features,
-                "F5": crawl_governance_features,
-            }
-            from ..skills.feature_loader import load_latest_features
-            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutTimeout
-
-            def _run_with_timeout(fn, *args, timeout=30):
-                with ThreadPoolExecutor(max_workers=1) as ex:
-                    return ex.submit(fn, *args).result(timeout=timeout)
-
-            self._check_cancel(ctx, "财务异常检测任务已取消")
-            for fam, crawler in online_crawlers.items():
-                self._check_cancel(ctx, "财务异常检测任务已取消")
-                feats = None
-                try:
-                    feats = _run_with_timeout(crawler, code, timeout=30)   # 在线：近日最新数据
-                except FutTimeout:
-                    _logger.warning("[%s 在线抓取超时(30s)，回退离线表] %s", fam, code)
-                except Exception as e:
-                    _logger.warning("[%s 在线抓取失败，回退离线表] %s: %s", fam, code, e)
-                if feats is None:
-                    try:
-                        feats = load_latest_features(code, fam)             # 离线表兜底
-                    except Exception as e:
-                        _logger.warning("[%s 离线表加载失败] %s: %s", fam, code, e)
-                        feats = {}
-                f456_features.update({k: _safe_float(v) for k, v in (feats or {}).items()})
-        except Exception as e:
-            _logger.warning("[F4/F5 加载失败] %s: %s", code, e)
 
         # 4. 行业对标 Z-Score（可选）
         benchmarks = self.industry_benchmark(code, indicators)

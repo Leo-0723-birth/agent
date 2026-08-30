@@ -1640,12 +1640,15 @@ async def run_scan_task(state: TaskState, req: ScanRequest):
                     ),
                 ),
                 # 总超时随深读份数扩展：下载/解析/LLM/F1 切块嵌入均按份线性
-                # 增长（F1 嵌入在 OMP=2 的 CPU 上约 15-25s/份为主项），
-                # 50 份 ≈ 35 分钟，150 份 ≈ 1.5 小时。
+                # 增长（F1 嵌入在 OMP=2 的 CPU 上约 15-25s/份为主项）。
+                # 不再用固定 3600s 基数把 15 份公告的实时任务推到 70 分钟——
+                # 那会让一个卡住的任务长期霸占 _scan_lock，后续任务一直
+                # "已排队，等待模型资源"。取消路径由 cancel_event 在 ≤0.5s 内
+                # 杀掉 F1 子进程负责；此处仅作无人取消时的兜底上限。
                 timeout=max(
                     pipeline_timeout,
                     600,
-                    3600 + 40 * (req.max_documents or 0),
+                    900 + 40 * (req.max_documents or 0),
                 ),
             )
             if state.cancel_event.is_set():
@@ -1696,7 +1699,7 @@ async def run_scan_task(state: TaskState, req: ScanRequest):
         effective_timeout = max(
             configured_timeout,
             600,
-            3600 + 40 * (req.max_documents or 0),
+            900 + 40 * (req.max_documents or 0),
         )
         await _fallback_after_error(
             state, req,

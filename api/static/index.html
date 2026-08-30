@@ -624,6 +624,8 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .loading-text { font-size: 14px; color: #64748B; }
   .loading-agent { font-size: 12px; color: #94A3B8; margin-top: 4px; }
+  .loading-cancel { margin-top: 8px; padding: 8px 18px; border: 1px solid #FCA5A5; background: #FEF2F2; color: #DC2626; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+  .loading-cancel:hover { background: #FEE2E2; border-color: #F87171; transform: translateY(-1px); box-shadow: 0 2px 8px rgba(220,38,38,0.15); }
 
   .detail-view { display: none; }
   .detail-view.active { display: block; }
@@ -641,6 +643,7 @@
     <div id="loadingProgressBar" style="width:0%; height:100%; background:var(--brand-primary); transition:width 0.3s;"></div>
   </div>
   <div class="loading-status" id="loadingStatus" style="display:none; margin-top:10px; font-size:12px; color:var(--text-secondary);">0 / 7</div>
+  <button class="loading-cancel" id="cancelScanBtn" style="display:none;" onclick="cancelCurrentScan()">✕ 取消搜索</button>
 </div>
 
 <header class="app-header">
@@ -1184,6 +1187,7 @@
     const progress = document.getElementById('loadingProgress');
     const status = document.getElementById('loadingStatus');
     const text = document.getElementById('loadingText');
+    const cancelBtn = document.getElementById('cancelScanBtn');
 
     if (show) {
       if (options.realtime) {
@@ -1196,12 +1200,29 @@
         status.style.display = 'none';
         text.textContent = 'Agent 流水线执行中...';
       }
+      // 仅实时扫雷显示「取消搜索」；离线查询秒级完成无需取消
+      cancelBtn.style.display = options.realtime ? 'inline-flex' : 'none';
     } else {
       clearInterval(window._loadingTimer);
       progress.style.display = 'none';
       status.style.display = 'none';
+      cancelBtn.style.display = 'none';
       document.getElementById('loadingProgressBar').style.width = '0%';
     }
+  }
+
+  // 取消当前实时扫雷任务：后端 DELETE 会设置 cancel_event，卡在 F1 子进程时
+  // ≤0.5s 杀掉子进程并释放串行锁；排队中的任务会直接取消其协程等待。
+  async function cancelCurrentScan() {
+    const taskId = AppState.currentTaskId;
+    if (taskId) {
+      try { await fetch(`${API_BASE}/api/scan/${taskId}`, { method: 'DELETE' }); } catch (e) {}
+      AppState.set('currentTaskId', null);
+    }
+    if (wsConnection) { try { wsConnection.close(); } catch (e) {} wsConnection = null; }
+    showLoading(false);
+    AppState.set('scanStatus', 'idle');
+    resetAgentStates();
   }
 
   function updateLoadingProgress(step, total, message) {
