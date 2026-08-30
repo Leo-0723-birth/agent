@@ -3,7 +3,7 @@
 """单公司在线公告的全量流水线同口径语义特征生成器。
 
 口径固定为：600/100 字符切块 → BGE-large-zh-v1.5 CLS → 公告内主题
-Top-50 召回（阈值 0.42、最多 8 主题）→ bge-reranker-v2-m3 精排
+Top-N 召回（默认 30，阈值 0.42、最多 8 主题）→ bge-reranker-v2-m3 精排
 （每主题 Top-20、每公告 Top-100）→ finbert-tone-chinese 情绪与确定性语境
 门控 → 公告×主题行。输出可直接交给 ``FullRunF1Transformer``。
 
@@ -47,6 +47,13 @@ RE_STRONG = re.compile(
     r"立案(?:调查|告知书)|行政处罚|违规(?:担保|占用)|资金占用余额|"
     r"被实施(?:退市)?风险警示|终止上市|持续经营(?:能力)?(?:存在)?重大不确定"
 )
+
+# reranker 精排召回宽度：每主题召回 Top-N 候选 chunk 送入交叉编码器，精排后只保留
+# 每主题 Top-20、每公告 Top-100。交叉编码器耗时随候选对数线性放大，是公告研读最耗时
+# 的一步：50 为训练口径；默认降到 30 直接省约 40% 精排计算量，对最终 Top-20 结果
+# 几乎无影响（bi-encoder 已把真正相关的 chunk 排在召回前列）。可设
+# F1_RERANK_RECALL_PER_THEME=50 恢复训练同口径，或更低（如 20~25）进一步加速。
+RECALL_PER_THEME = int(os.getenv("F1_RERANK_RECALL_PER_THEME", "30"))
 
 
 def split_into_chunks(text, size=600, overlap=100, minimum=60):
@@ -253,7 +260,7 @@ class FullRunOnlineSemanticPipeline:
             active = active[np.argsort(maxima[active])[-8:]]
         candidates = []
         for theme_index in active:
-            top = np.argsort(similarities[theme_index])[-min(50, len(chunk_texts)):][::-1]
+            top = np.argsort(similarities[theme_index])[-min(RECALL_PER_THEME, len(chunk_texts)):][::-1]
             for rank, chunk_index in enumerate(top, 1):
                 candidates.append({
                     "theme_index": int(theme_index), "chunk_index": int(chunk_index),
@@ -401,7 +408,7 @@ class FullRunOnlineSemanticPipeline:
                 active = active[np.argsort(maxima[active])[-8:]]
             candidates = []
             for theme_index in active:
-                top = np.argsort(similarities[theme_index])[-min(50, len(chunk_texts)):][::-1]
+                top = np.argsort(similarities[theme_index])[-min(RECALL_PER_THEME, len(chunk_texts)):][::-1]
                 for rank, chunk_index in enumerate(top, 1):
                     candidates.append({
                         "theme_index": int(theme_index),

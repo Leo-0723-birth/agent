@@ -93,6 +93,14 @@ ANNOUNCE_MAX_DOCUMENTS = int(os.getenv("ANNOUNCE_MAX_DOCUMENTS", "15"))
 # 避免各层默认值不一致导致"请求 5 份实际深读 N 份"的参数漂移。
 # 批量/全量处理仍用 ANNOUNCE_MAX_DOCUMENTS。
 SCAN_MAX_DOCUMENTS = int(os.getenv("SCAN_MAX_DOCUMENTS", "15"))
+# 实时扫雷实际深读上限：UI「公告研读范围」可选 50/100/150 份（大数量仅用于展示与
+# 近一年元数据口径），真正下载 PDF+OCR+规则+FinBERT+LLM 深读只取风险相关度最高的
+# Top-N 份，避免大份数把单份耗时线性放大到数十分钟。
+SCAN_DEEP_READ_CAP = int(os.getenv("SCAN_DEEP_READ_CAP", "15"))
+# F1 训练同口径三模型（BGE→主题召回→reranker→FinBERT）实际处理份数上限：三模型是
+# 公告研读最耗时项（BGE 切块嵌入 + reranker 交叉编码约 40-60s/份），只对深读集合里
+# 风险相关度最高的前 N 份跑，保证整条 Agent 流水线约 10 分钟内完成。
+SCAN_F1_DOC_CAP = int(os.getenv("SCAN_F1_DOC_CAP", "8"))
 # 实时扫雷是否启用 FinBERT 通道（前端未暴露该开关，由后端配置统一控制）。
 SCAN_USE_FINBERT = os.getenv("SCAN_USE_FINBERT", "true").lower() in {
     "1", "true", "yes", "on"

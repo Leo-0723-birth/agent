@@ -22,6 +22,8 @@ from ..config import (
     FINBERT_GATE_ENABLED,
     LLM_CONCURRENCY,
     MAX_TEXT_CHARS,
+    SCAN_DEEP_READ_CAP,
+    SCAN_F1_DOC_CAP,
 )
 from ..llm import chat_json
 from ..run_config import RunConfig
@@ -723,8 +725,12 @@ class AnnouncementReaderAgent(AgentBase):
             analyzed_announcements = marked
         else:
             from ..skills.announcement_search import CninfoAnnouncementSource
+            # 深读份数封顶：与 search() 内一致，避免离线/回退路径绕过上限。
+            deep_read_limit = (
+                self.max_documents if self.max_documents is not None else SCAN_DEEP_READ_CAP
+            )
             analyzed_announcements = CninfoAnnouncementSource.select_for_deep_read(
-                eligible_announcements, self.max_documents
+                eligible_announcements, min(deep_read_limit, SCAN_DEEP_READ_CAP)
             )
 
         self._emit_progress("rule_analysis_started", document_count=len(analyzed_announcements))
@@ -886,6 +892,10 @@ class AnnouncementReaderAgent(AgentBase):
             fullrun_documents = [
                 item for item in analyzed_announcements if (item.get("text") or "").strip()
             ]
+            # 三模型（BGE→reranker→FinBERT）是公告研读最耗时项，只对深读集合里
+            # 风险相关度最高的前 SCAN_F1_DOC_CAP 份跑，规则/FinBERT/LLM 仍覆盖
+            # 完整深读集合。这样把整条流水线压到约 10 分钟内完成。
+            fullrun_documents = fullrun_documents[:SCAN_F1_DOC_CAP]
             try:
                 self._emit_progress(
                     "fullrun_f1_started", document_count=len(fullrun_documents)

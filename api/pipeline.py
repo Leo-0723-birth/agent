@@ -28,7 +28,7 @@ from .models import (
     FinancialAnomalyItem,
     SimilarCaseItem,
 )
-from backend.config import PREDICTOR_HORIZONS, PREDICTOR_MODEL_DIR, RISK_THRESHOLDS, SCAN_MAX_DOCUMENTS, SCAN_USE_FINBERT
+from backend.config import PREDICTOR_HORIZONS, PREDICTOR_MODEL_DIR, RISK_THRESHOLDS, SCAN_DEEP_READ_CAP, SCAN_MAX_DOCUMENTS, SCAN_USE_FINBERT
 from backend.skills.evidence_policy import publishable_evidence
 
 REPORTS_DIR = PROJECT_ROOT / "backend" / "data" / "output" / "reports"
@@ -1119,7 +1119,7 @@ class StreamingOrchestrator:
                 if agent_name == "AnnouncementReader":
                     timeout = max(
                         self._agent_timeout(agent_name),
-                        timeout + 24 * (max_documents or 0),
+                        timeout + 24 * min(max_documents or 0, SCAN_DEEP_READ_CAP),
                     )
                 if agent_name == "Reporter":
                     ctx.meta["runtime_quality"] = _evaluate_runtime_quality(ctx)
@@ -1205,7 +1205,7 @@ class StreamingOrchestrator:
             "online_metadata_completed": (
                 15,
                 f"近一年公告共 {payload.get('announcement_count', 0)} 份，"
-                f"按时间最近选取 {payload.get('pdf_count', 0)} 份 PDF 深读",
+                f"按风险相关度精选 {payload.get('pdf_count', 0)} 份高相关公告深读",
             ),
             "pdf_processing": (percent, message),
             "pdf_processing_completed": (42, "公告 PDF 下载与 OCR 解析完成"),
@@ -1648,7 +1648,7 @@ async def run_scan_task(state: TaskState, req: ScanRequest):
                 timeout=max(
                     pipeline_timeout,
                     600,
-                    900 + 40 * (req.max_documents or 0),
+                    900 + 40 * min((req.max_documents or 0), SCAN_DEEP_READ_CAP),
                 ),
             )
             if state.cancel_event.is_set():
@@ -1699,7 +1699,7 @@ async def run_scan_task(state: TaskState, req: ScanRequest):
         effective_timeout = max(
             configured_timeout,
             600,
-            900 + 40 * (req.max_documents or 0),
+            900 + 40 * min((req.max_documents or 0), SCAN_DEEP_READ_CAP),
         )
         await _fallback_after_error(
             state, req,

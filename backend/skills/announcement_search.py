@@ -37,6 +37,7 @@ from ..config import (
     OCR_MAX_PAGES_PER_DOCUMENT,
     OCR_MIN_CONFIDENCE,
     OCR_MIN_PAGE_CHARS,
+    SCAN_DEEP_READ_CAP,
 )
 from .announcement_context_filter import apply_title_policy, is_analysis_eligible
 from .offline_announcement_snapshot import OfflineAnnouncementSnapshotStore
@@ -455,7 +456,12 @@ class CninfoAnnouncementSource:
             apply_title_policy(item, mark_unfetched=True)
         eligible = [item for item in announcements if is_analysis_eligible(item)]
         selected = self.select_for_deep_read(announcements, self.max_documents)
-        selected_ids = {item.get("id") for item in selected}
+        # 实际深读上限：UI 可选 50/100/150 份（selected 用于展示与元数据口径），
+        # 但真正下载 PDF+OCR+三模型深读只取风险相关度最高的 Top-N，避免大份数
+        # 把单份耗时线性放大（F1 三模型约 40-60s/份）导致数十分钟才能跑完。
+        deep_read_limit = min(len(selected), SCAN_DEEP_READ_CAP)
+        deep_read = selected[:deep_read_limit]
+        selected_ids = {item.get("id") for item in deep_read}
         for item in announcements:
             item["deep_read_selected"] = item.get("id") in selected_ids
         metadata_ms = int((time.perf_counter() - _t_meta) * 1000)
@@ -463,26 +469,27 @@ class CninfoAnnouncementSource:
             "online_metadata_completed",
             announcement_count=len(announcements),
             eligible_count=len(eligible),
-            pdf_count=len(selected), selection_strategy="metadata_risk_relevance",
+            pdf_count=len(deep_read),
+            selected_count=len(selected),
+            selection_strategy="metadata_risk_relevance",
             elapsed_ms=metadata_ms,
         )
         # PDF 下载/解析总预算：超过预算的公告标记为未获取并继续（不阻塞流水线；
         # F6 问询特征只需公告元数据 title+date，不受影响）。
-        # 预算随份数扩展（每份 ~3s 下限 180s），避免 50/100/150 份时被固定
-        # 180s 预算截断导致"获取了 N 份"远小于请求份数。
+        # 预算按实际深读份数扩展（每份 ~3s 下限 180s）。
         if pdf_budget_seconds is None:
-            pdf_budget_seconds = max(180.0, float(len(selected)) * 3.0)
+            pdf_budget_seconds = max(180.0, float(len(deep_read)) * 3.0)
         deadline = time.time() + float(pdf_budget_seconds)
         _t_pdf = time.perf_counter()
         pdf_downloaded = 0
-        for position, item in enumerate(selected, 1):
+        for position, item in enumerate(deep_read, 1):
             if time.time() > deadline:
                 item["text_status"] = "not_fetched_budget"
                 continue
             self._emit_progress(
                 "pdf_processing",
                 current=position,
-                total=len(selected),
+                total=len(deep_read),
                 title=item.get("title", ""),
             )
             self._process_pdf(item)
@@ -493,11 +500,11 @@ class CninfoAnnouncementSource:
             "metadata_ms": metadata_ms,
             "pdf_ms": pdf_ms,
             "pdf_downloaded": pdf_downloaded,
-            "pdf_total": len(selected),
+            "pdf_total": len(deep_read),
         }
         self._emit_progress(
             "pdf_processing_completed",
-            total=len(selected),
+            total=len(deep_read),
             downloaded=pdf_downloaded,
             elapsed_ms=pdf_ms,
         )

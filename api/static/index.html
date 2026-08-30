@@ -806,10 +806,11 @@
           </select>
         </div>
         <div class="param-row">
-          <label>高相关公告深读数</label>
+          <label>公告研读范围（份）</label>
           <select class="param-select" id="paramMaxDocs">
-            <option value="10">10 份（快速）</option>
-            <option value="15" selected>15 份（推荐）</option>
+            <option value="50">50 份</option>
+            <option value="100" selected>100 份（推荐）</option>
+            <option value="150">150 份</option>
           </select>
         </div>
         <div class="param-toggle">
@@ -822,7 +823,7 @@
         </div>
         <div class="param-row" id="realtimeHint" style="display:none; margin-top:8px;">
           <div style="font-size:12px;color:var(--text-secondary);background:#FEF3C7;padding:8px 10px;border-radius:6px;">
-            ⚡ 实时扫雷会真实调用 7 个 Agent，首次加载 BGE/OCR 模型约 15-30 秒，全程约 1-4 分钟。演示推荐默认使用离线快照。
+            ⚡ 实时扫雷会真实调用 7 个 Agent，按风险相关度精选 Top-15 份高相关公告深读（BGE/reranker/FinBERT 三模型只跑前 8 份），整条流水线约 10 分钟内完成。演示推荐默认使用离线快照。
           </div>
         </div>
       </div>
@@ -1347,7 +1348,7 @@
     if (wsConnection) { try { wsConnection.close(); } catch (e) {} wsConnection = null; }
 
     const windowVal = parseWindow();
-    const maxDocs = parseInt(document.getElementById('paramMaxDocs').value) || 15;
+    const maxDocs = parseInt(document.getElementById('paramMaxDocs').value) || 100;
     const useLLM = getParamSwitch('switchLLM');
     const useBGE = getParamSwitch('switchBGE');
 
